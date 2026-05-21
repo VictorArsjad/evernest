@@ -41,6 +41,18 @@ export interface BottleFeed {
   created_at: string;
 }
 
+export type DiaperType = "wet" | "soiled" | "mixed";
+
+export interface Diaper {
+  id: string;
+  baby_id: string;
+  occurred_at: string;
+  type: DiaperType;
+  notes?: string | null;
+  source: string;
+  created_at: string;
+}
+
 export interface ApiError {
   error: {
     code: string;

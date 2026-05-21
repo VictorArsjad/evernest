@@ -1,13 +1,29 @@
+// Today screen, CP2 layout (Option C):
+//   - 2x3 tile grid: 5 event kinds + a compact "Today" summary tile
+//   - Unified recent-events list across all kinds, newest first
+// Tiles for kinds that aren't shipped yet are visibly "Soon" placeholders
+// rather than dead links — incremental CP2 slices wire them as they land.
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 import { format, isToday, parseISO } from "date-fns";
 
 import { useAuthStore } from "../lib/authStore";
-import { useBabies, useBottleFeeds, useHouseholds, useLogout } from "../lib/queries";
+import {
+  useBabies,
+  useBottleFeeds,
+  useDiapers,
+  useHouseholds,
+  useLogout,
+} from "../lib/queries";
+import type { BottleFeed, Diaper } from "../lib/types";
 
 export const Route = createFileRoute("/_app/")({
   component: TodayPage,
 });
+
+type RecentEvent =
+  | { kind: "bottle"; at: string; data: BottleFeed }
+  | { kind: "diaper"; at: string; data: Diaper };
 
 function TodayPage() {
   const nav = useNavigate();
@@ -19,10 +35,6 @@ function TodayPage() {
   const babies = useBabies(householdId);
   const baby = babies.data?.[0] ?? null;
 
-  // CP1 redirects to onboarding when the user has no household yet. Babies
-  // without households is impossible (we always seed a settings row), but if
-  // somehow a user lands with 0 babies in a household we re-route to onboarding
-  // for the simpler "add a baby" flow too.
   useEffect(() => {
     if (households.isSuccess && households.data.length === 0) {
       nav({ to: "/onboarding" });
@@ -45,6 +57,7 @@ function TodayPage() {
   }, []);
 
   const feeds = useBottleFeeds(baby?.id ?? null, todayStart, todayEnd);
+  const diapers = useDiapers(baby?.id ?? null, todayStart, todayEnd);
 
   if (households.isLoading || babies.isLoading) {
     return <PageShell title="…">Loading…</PageShell>;
@@ -54,6 +67,13 @@ function TodayPage() {
   }
 
   const totalMl = feeds.data?.reduce((s, f) => s + Number(f.amount_ml), 0) ?? 0;
+  const diaperCount = diapers.data?.length ?? 0;
+
+  // Merge today's events into a single time-sorted list.
+  const recent: RecentEvent[] = [
+    ...(feeds.data ?? []).map<RecentEvent>((f) => ({ kind: "bottle", at: f.occurred_at, data: f })),
+    ...(diapers.data ?? []).map<RecentEvent>((d) => ({ kind: "diaper", at: d.occurred_at, data: d })),
+  ].sort((a, b) => (a.at > b.at ? -1 : 1));
 
   return (
     <PageShell
@@ -61,49 +81,146 @@ function TodayPage() {
       subtitle={user ? `Signed in as ${user.display_name}` : undefined}
       onSignOut={() => logout.mutate()}
     >
-      <div className="card flex flex-col gap-1 p-5">
-        <span className="text-xs uppercase tracking-wide text-white/50">Today</span>
-        <span className="text-3xl font-semibold">{totalMl} ml</span>
-        <span className="text-xs text-white/50">
-          across {feeds.data?.length ?? 0} bottle feed{(feeds.data?.length ?? 0) === 1 ? "" : "s"}
-        </span>
-      </div>
-
-      <Link to="/log/bottle" className="btn-primary text-lg" search={{ babyId: baby.id }}>
-        Log bottle feed
-      </Link>
+      <section className="grid grid-cols-3 gap-3">
+        <Tile to="/log/bottle" babyId={baby.id} icon="🍼" label="Bottle" accent="peach" />
+        <SoonTile icon="👶" label="Nursing" accent="mint" />
+        <SoonTile icon="💧" label="Pumping" accent="sky" />
+        <Tile to="/log/diaper" babyId={baby.id} icon="🧷" label="Diaper" accent="lemon" />
+        <SoonTile icon="📏" label="Growth" accent="lilac" />
+        <SummaryTile totalMl={totalMl} diaperCount={diaperCount} />
+      </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-white/70">Today's feeds</h2>
-        {feeds.data && feeds.data.length === 0 && (
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-sm font-medium text-white/70">Recent</h2>
+          <span className="text-xs text-white/40">today</span>
+        </div>
+        {recent.length === 0 && (
           <p className="rounded-xl bg-bg-surface p-4 text-sm text-white/50">
-            No feeds logged today yet. Tap the button above to add one.
+            Nothing logged today yet. Tap a tile above to add one.
           </p>
         )}
         <ul className="flex flex-col gap-2">
-          {feeds.data?.map((f) => {
-            const occurred = parseISO(f.occurred_at);
-            return (
-              <li key={f.id} className="card flex items-center justify-between p-4">
-                <div>
-                  <div className="text-base font-medium">{Number(f.amount_ml)} ml</div>
-                  <div className="text-xs text-white/50">
-                    {f.milk_source === "breast" ? "Expressed breastmilk" : "Formula"}
-                    {f.notes ? ` · ${f.notes}` : ""}
-                  </div>
-                </div>
-                <div className="text-right text-sm tabular-nums text-white/70">
-                  {format(occurred, "HH:mm")}
-                  {!isToday(occurred) && (
-                    <div className="text-xs text-white/40">{format(occurred, "MMM d")}</div>
-                  )}
-                </div>
-              </li>
-            );
-          })}
+          {recent.map((ev) => (
+            <RecentRow key={`${ev.kind}-${ev.data.id}`} ev={ev} />
+          ))}
         </ul>
       </section>
     </PageShell>
+  );
+}
+
+// --- tiles ---
+
+type Accent = "peach" | "mint" | "sky" | "lemon" | "lilac";
+
+const accentClass: Record<Accent, string> = {
+  peach: "border-orange-300/20 bg-orange-300/5",
+  mint: "border-emerald-300/20 bg-emerald-300/5",
+  sky: "border-sky-300/20 bg-sky-300/5",
+  lemon: "border-yellow-300/20 bg-yellow-300/5",
+  lilac: "border-violet-300/20 bg-violet-300/5",
+};
+
+function Tile({
+  to,
+  babyId,
+  icon,
+  label,
+  accent,
+}: {
+  to: string;
+  babyId: string;
+  icon: string;
+  label: string;
+  accent: Accent;
+}) {
+  return (
+    <Link
+      to={to}
+      search={{ babyId }}
+      className={
+        "flex aspect-square flex-col items-center justify-center gap-1 rounded-2xl border p-3 text-center transition active:scale-95 " +
+        accentClass[accent]
+      }
+    >
+      <span className="text-3xl leading-none">{icon}</span>
+      <span className="text-sm font-medium">{label}</span>
+    </Link>
+  );
+}
+
+function SoonTile({ icon, label, accent }: { icon: string; label: string; accent: Accent }) {
+  return (
+    <div
+      className={
+        "relative flex aspect-square flex-col items-center justify-center gap-1 rounded-2xl border p-3 text-center opacity-50 " +
+        accentClass[accent]
+      }
+    >
+      <span className="text-3xl leading-none grayscale">{icon}</span>
+      <span className="text-sm font-medium">{label}</span>
+      <span className="absolute right-2 top-2 rounded-full bg-white/10 px-2 py-[2px] text-[10px] uppercase tracking-wide text-white/60">
+        Soon
+      </span>
+    </div>
+  );
+}
+
+function SummaryTile({ totalMl, diaperCount }: { totalMl: number; diaperCount: number }) {
+  return (
+    <div className="flex aspect-square flex-col items-start justify-center gap-1 rounded-2xl border border-white/10 bg-bg-surface p-3">
+      <span className="text-[10px] uppercase tracking-wide text-white/40">Today</span>
+      <div className="flex items-baseline gap-1">
+        <span className="text-xl font-semibold tabular-nums">{totalMl}</span>
+        <span className="text-xs text-white/60">ml</span>
+      </div>
+      <div className="flex items-baseline gap-1">
+        <span className="text-xl font-semibold tabular-nums">{diaperCount}</span>
+        <span className="text-xs text-white/60">diapers</span>
+      </div>
+    </div>
+  );
+}
+
+// --- recent list ---
+
+function RecentRow({ ev }: { ev: RecentEvent }) {
+  const at = parseISO(ev.at);
+  return (
+    <li className="card flex items-center gap-3 p-3">
+      <div className="flex shrink-0 items-center gap-2">
+        <span className="text-2xl leading-none">
+          {ev.kind === "bottle" ? "🍼" : "🧷"}
+        </span>
+        <span className="text-sm tabular-nums text-white/60 w-12">{format(at, "HH:mm")}</span>
+      </div>
+      <div className="min-w-0 flex-1">
+        {ev.kind === "bottle" ? (
+          <>
+            <div className="text-base font-medium">
+              {Number(ev.data.amount_ml)} ml
+              <span className="ml-2 text-xs font-normal text-white/50">
+                {ev.data.milk_source === "breast" ? "expressed" : "formula"}
+              </span>
+            </div>
+            {ev.data.notes && (
+              <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="text-base font-medium capitalize">{ev.data.type} diaper</div>
+            {ev.data.notes && (
+              <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+            )}
+          </>
+        )}
+        {!isToday(at) && (
+          <div className="text-xs text-white/40">{format(at, "MMM d")}</div>
+        )}
+      </div>
+    </li>
   );
 }
 
@@ -119,7 +236,7 @@ function PageShell({
   children: React.ReactNode;
 }) {
   return (
-    <main className="flex flex-1 flex-col gap-4 p-5 pb-12">
+    <main className="flex flex-1 flex-col gap-5 p-5 pb-12">
       <header className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-semibold">{title}</h1>
