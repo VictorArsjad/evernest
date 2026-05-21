@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS growths;
+DROP TABLE IF EXISTS diapers;
+DROP TABLE IF EXISTS pumpings;
+DROP TABLE IF EXISTS bottle_feeds;
+DROP TABLE IF EXISTS nursing_sessions;

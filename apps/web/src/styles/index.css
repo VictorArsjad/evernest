@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+  body {
+    @apply bg-bg-base text-white antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button {
+    @apply touch-manipulation;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl bg-bg-surface border border-white/5 shadow-lg;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-base font-medium transition active:scale-[0.98];
+  }
+  .btn-primary {
+    @apply btn bg-accent text-bg-base hover:bg-accent/90;
+  }
+  .btn-ghost {
+    @apply btn bg-white/5 text-white hover:bg-white/10;
+  }
+}
