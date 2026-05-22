@@ -6,11 +6,9 @@ A baby tracking app — feedings, pumping, diapers, growth, and charts — desig
 - **Backend**: Go (`chi` router, `pgx` driver) + Postgres 16. Dockerized.
 - **Data model**: nursing sessions and bottle feeds are separate tables (a bottle can hold expressed breastmilk *or* formula — collapsing them loses real-world data). Canonical storage in ml / cm / grams; the FE converts for display.
 - **Multi-caregiver**: households contain one or more babies and one or more members. Link-based invites, no email dependency in v1.
-- **Built incrementally**: each "CP" is a usable build. See [.cursor/plans/](.cursor/plans/) for the checkpoint history.
+- **Built incrementally**: features ship in small, end-to-end usable slices rather than one big bang.
 
-## Current checkpoint: CP1 — first usable loop
-
-What you can do today:
+## What it does today
 
 - Register an account.
 - Complete onboarding (household name + baby name + DOB + sex).
@@ -18,15 +16,6 @@ What you can do today:
 - See today's feeds with a running daily total, ordered newest first.
 - Stay signed in across hard-reloads (auto-refresh via httpOnly cookie).
 - Sign out.
-
-Coming in later checkpoints (in order):
-
-- **CP2** — nursing / pumping / diapers / growth event kinds + a Go CLI that idempotently imports the BabyPlus JSON export.
-- **CP3** — daily bar charts per metric.
-- **CP4** — settings screen with unit conversion (ml/oz, cm/in, kg/lb, 24h/12h).
-- **CP5** — link-based household invites and multi-baby UI.
-- **CP6** — PWA polish (real icons + offline mutation outbox).
-- **CP7** — production docker-compose profile behind Caddy.
 
 ## Quick start
 
@@ -93,4 +82,4 @@ Run `make help` for the full target list.
 | Run web dev server         | `make web-dev`                     |
 | Lint everything            | `make lint`                        |
 | Test everything            | `make test`                        |
-| (CP2+) Import BabyPlus     | `make import-babyplus FILE=... HOUSEHOLD=...` |
+| Import BabyPlus export     | `make import-babyplus FILE=... HOUSEHOLD=...` |
