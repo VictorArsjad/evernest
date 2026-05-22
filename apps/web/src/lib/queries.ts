@@ -2,7 +2,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { useAuthStore } from "./authStore";
-import type { Baby, BottleFeed, Diaper, DiaperType, Household, TokenResponse, User } from "./types";
+import type {
+  Baby,
+  BottleFeed,
+  Diaper,
+  DiaperType,
+  Household,
+  Pumping,
+  TokenResponse,
+  User,
+} from "./types";
 
 export const qk = {
   me: ["me"] as const,
@@ -12,6 +21,8 @@ export const qk = {
     ["babies", babyId, "bottle-feeds", from ?? "", to ?? ""] as const,
   diapers: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "diapers", from ?? "", to ?? ""] as const,
+  pumpings: (babyId: string, from?: string, to?: string) =>
+    ["babies", babyId, "pumpings", from ?? "", to ?? ""] as const,
 };
 
 // --- auth ---
@@ -177,5 +188,55 @@ export function useDeleteDiaper() {
       api<void>(`/diapers/${vars.id}`, { method: "DELETE" }),
     onSuccess: (_data, vars) =>
       qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "diapers"] }),
+  });
+}
+
+// --- pumpings ---
+
+export function usePumpings(babyId: string | null, from?: string, to?: string) {
+  return useQuery({
+    queryKey: babyId ? qk.pumpings(babyId, from, to) : ["babies", "none", "pumpings"],
+    enabled: !!babyId,
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      const qs = params.toString();
+      return api<Pumping[]>(`/babies/${babyId}/pumpings${qs ? `?${qs}` : ""}`);
+    },
+  });
+}
+
+export function useCreatePumping() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      babyId: string;
+      occurred_at: string;
+      amount_ml: number;
+      duration_seconds?: number;
+      notes?: string;
+    }) =>
+      api<Pumping>(`/babies/${vars.babyId}/pumpings`, {
+        method: "POST",
+        body: {
+          occurred_at: vars.occurred_at,
+          amount_ml: vars.amount_ml,
+          duration_seconds: vars.duration_seconds,
+          notes: vars.notes || undefined,
+        },
+      }),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "pumpings"] }),
+  });
+}
+
+export function useDeletePumping() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; babyId: string }) =>
+      api<void>(`/pumpings/${vars.id}`, { method: "DELETE" }),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "pumpings"] }),
   });
 }
