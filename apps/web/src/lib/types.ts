@@ -1,5 +1,5 @@
-// Server response types. We mirror the Go structs by hand here for CP1; later
-// we may generate from the OpenAPI spec.
+// Server response types. We mirror the Go structs by hand here; later we
+// may generate from the OpenAPI spec.
 
 export interface User {
   id: string;

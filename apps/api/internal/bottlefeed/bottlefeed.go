@@ -1,6 +1,6 @@
-// Package bottlefeed implements CRUD for bottle feeds. CP1 only ships
-// POST/GET/DELETE — edits in CP1 are delete-and-recreate, which is fine for
-// the kinds of corrections users actually make (mistyped volume).
+// Package bottlefeed implements CRUD for bottle feeds. The current surface
+// is POST/GET/DELETE — edits are delete-and-recreate, which is fine for the
+// kinds of corrections users actually make (mistyped volume).
 package bottlefeed
 
 import (
@@ -92,8 +92,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Idempotent insert: if the client retries with the same id, we return
-	// the existing row instead of erroring. This makes the offline mutation
-	// outbox (CP6) safe to add without server changes.
+	// the existing row instead of erroring. This makes a future offline
+	// mutation outbox safe to add without server changes.
 	var out BottleFeed
 	err = h.store.Pool.QueryRow(r.Context(), `
 		WITH ins AS (

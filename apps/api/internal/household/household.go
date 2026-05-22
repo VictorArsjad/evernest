@@ -1,6 +1,6 @@
 // Package household exposes a minimal households API: create a household
 // (the creator becomes its 'owner') and list households the authenticated
-// user is a member of. Invite/accept flows ship in CP5.
+// user is a member of. Invite/accept flows are not yet implemented.
 package household
 
 import (
