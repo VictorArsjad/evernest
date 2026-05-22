@@ -144,7 +144,7 @@ type tokenResp struct {
 
 func decodeJSON(t *testing.T, r *http.Response, v any) {
 	t.Helper()
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		t.Fatalf("decode body (status %d): %v", r.StatusCode, err)
 	}
@@ -200,7 +200,7 @@ func TestRegisterLoginMeRefreshLogout(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("/me unauth: want 401, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// --- login with same creds ---
 	resp = te.do(t, "POST", "/v1/auth/login", map[string]any{
@@ -225,7 +225,7 @@ func TestRegisterLoginMeRefreshLogout(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("login bad pw: want 401, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// --- refresh (uses cookie set by login; cookie path is /v1/auth) ---
 	refreshCookieBeforeRotate := cookieValueFor(te, "/v1/auth", "evernest_refresh")
@@ -255,14 +255,14 @@ func TestRegisterLoginMeRefreshLogout(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("refresh with revoked token: want 401, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// --- logout with the still-valid (post-rotate) cookie via jar ---
 	resp = te.do(t, "POST", "/v1/auth/logout", nil)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("logout: want 204, got %d: %s", resp.StatusCode, readBody(resp))
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// --- after logout, replaying the same cookie -> 401 ---
 	resp = te.request(t, "POST", "/v1/auth/refresh", nil, reqOpts{
@@ -272,7 +272,7 @@ func TestRegisterLoginMeRefreshLogout(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("refresh after logout: want 401, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 func TestRegisterDuplicateEmail(t *testing.T) {
@@ -287,12 +287,12 @@ func TestRegisterDuplicateEmail(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("first register: want 201, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	resp = te.do(t, "POST", "/v1/auth/register", body)
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("duplicate register: want 409, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 func TestRegisterValidation(t *testing.T) {
@@ -312,7 +312,7 @@ func TestRegisterValidation(t *testing.T) {
 			if resp.StatusCode != tc.want {
 				t.Fatalf("want %d, got %d: %s", tc.want, resp.StatusCode, readBody(resp))
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		})
 	}
 }
@@ -341,7 +341,7 @@ func mustParseURL(raw string) *url.URL {
 }
 
 func readBody(r *http.Response) string {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	b, _ := io.ReadAll(r.Body)
 	return strings.TrimSpace(string(b))
 }
