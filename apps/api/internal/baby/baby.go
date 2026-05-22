@@ -1,7 +1,7 @@
-// Package baby manages babies inside a household. CP1 covers create + list +
-// fetch-by-id with household-membership authorization. Settings UI ships in
-// CP4 but we already insert a default baby_settings row at create-time so
-// no migration backfill is needed later.
+// Package baby manages babies inside a household: create, list, and
+// fetch-by-id with household-membership authorization. We insert a default
+// baby_settings row at create-time so the future settings UI doesn't need
+// a migration backfill.
 package baby
 
 import (
@@ -137,7 +137,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not create baby")
 		return
 	}
-	// Seed default settings; CP4 will expose a PATCH for these.
+	// Seed default settings; a future settings endpoint will expose PATCH for these.
 	_, err = tx.Exec(r.Context(), `
 		INSERT INTO baby_settings (baby_id) VALUES ($1)
 	`, b.ID)

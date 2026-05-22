@@ -1,6 +1,6 @@
 // One-screen onboarding: create the user's first household + baby.
-// CP5 will introduce a household-picker UI; until then, the user has exactly
-// one household and one baby and we route around that assumption.
+// A future household-picker UI is not yet implemented; until then, the user
+// has exactly one household and one baby and we route around that assumption.
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuthStore } from "../lib/authStore";

@@ -18,8 +18,7 @@ COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env
 
 # Pinned tool versions. KEEP IN SYNC with .github/workflows/ci.yml — both
 # local `make api-lint` and CI must run the same golangci-lint binary or
-# "passes locally, fails in CI" is back on the menu. See:
-#   Engineering/Evernest/CP2a CI postmortem
+# "passes locally, fails in CI" is back on the menu.
 GOLANGCI_LINT_VERSION ?= v2.12.2
 TOOLS_BIN := apps/api/.tools/bin
 GOLANGCI_LINT := $(TOOLS_BIN)/golangci-lint
