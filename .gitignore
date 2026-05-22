@@ -53,6 +53,9 @@ apps/web/src/styles/tailwind.generated.css
 apps/api/bin/
 apps/api/build/
 
+# Pinned dev tools cache (installed by `make api-lint`)
+apps/api/.tools/
+
 # OS
 .DS_Store
 Thumbs.db
