@@ -2,7 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { useAuthStore } from "./authStore";
-import type { Baby, BottleFeed, Household, TokenResponse, User } from "./types";
+import type { Baby, BottleFeed, Diaper, DiaperType, Household, TokenResponse, User } from "./types";
 
 export const qk = {
   me: ["me"] as const,
@@ -10,6 +10,8 @@ export const qk = {
   babies: (householdId: string) => ["households", householdId, "babies"] as const,
   bottleFeeds: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "bottle-feeds", from ?? "", to ?? ""] as const,
+  diapers: (babyId: string, from?: string, to?: string) =>
+    ["babies", babyId, "diapers", from ?? "", to ?? ""] as const,
 };
 
 // --- auth ---
@@ -127,5 +129,53 @@ export function useDeleteBottleFeed() {
       api<void>(`/bottle-feeds/${vars.id}`, { method: "DELETE" }),
     onSuccess: (_data, vars) =>
       qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "bottle-feeds"] }),
+  });
+}
+
+// --- diapers ---
+
+export function useDiapers(babyId: string | null, from?: string, to?: string) {
+  return useQuery({
+    queryKey: babyId ? qk.diapers(babyId, from, to) : ["babies", "none", "diapers"],
+    enabled: !!babyId,
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      const qs = params.toString();
+      return api<Diaper[]>(`/babies/${babyId}/diapers${qs ? `?${qs}` : ""}`);
+    },
+  });
+}
+
+export function useCreateDiaper() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      babyId: string;
+      occurred_at: string;
+      type: DiaperType;
+      notes?: string;
+    }) =>
+      api<Diaper>(`/babies/${vars.babyId}/diapers`, {
+        method: "POST",
+        body: {
+          occurred_at: vars.occurred_at,
+          type: vars.type,
+          notes: vars.notes || undefined,
+        },
+      }),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "diapers"] }),
+  });
+}
+
+export function useDeleteDiaper() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; babyId: string }) =>
+      api<void>(`/diapers/${vars.id}`, { method: "DELETE" }),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "diapers"] }),
   });
 }
