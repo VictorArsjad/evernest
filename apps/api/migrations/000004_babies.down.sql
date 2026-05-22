@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS baby_settings;
+DROP TABLE IF EXISTS babies;

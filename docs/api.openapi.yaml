@@ -1,0 +1,39 @@
+openapi: 3.1.0
+info:
+  title: Evernest API
+  version: 0.1.0
+  description: |
+    Baby tracking backend. All requests/responses are JSON. All authenticated
+    endpoints require `Authorization: Bearer <access_token>`; the refresh
+    token lives in an `httpOnly` cookie. All event POSTs accept a client-
+    supplied `id` (UUIDv7) and are idempotent via `ON CONFLICT (id) DO NOTHING`.
+servers:
+  - url: http://localhost:8080
+    description: local dev
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      responses:
+        "200": { description: ok }
+  /readyz:
+    get:
+      summary: Readiness probe (pings the DB)
+      responses:
+        "200": { description: ready }
+        "503": { description: not ready }
+  /v1/ping:
+    get:
+      summary: Sanity check inside the v1 namespace
+      responses:
+        "200":
+          description: pong
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pong: { type: string }
+# Full schemas for auth, households, babies, events, charts are
+# documented inline in handler comments and will be added here as
+# endpoints land.
