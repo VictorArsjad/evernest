@@ -82,7 +82,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := uuid.Nil
+	var id uuid.UUID
 	if req.ID != nil && *req.ID != uuid.Nil {
 		id = *req.ID
 	} else {
