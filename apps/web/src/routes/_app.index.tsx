@@ -16,16 +16,11 @@ import {
   useLogout,
   usePumpings,
 } from "../lib/queries";
-import type { BottleFeed, Diaper, Pumping } from "../lib/types";
+import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
 
 export const Route = createFileRoute("/_app/")({
   component: TodayPage,
 });
-
-type RecentEvent =
-  | { kind: "bottle"; at: string; data: BottleFeed }
-  | { kind: "diaper"; at: string; data: Diaper }
-  | { kind: "pumping"; at: string; data: Pumping };
 
 function TodayPage() {
   const nav = useNavigate();
@@ -73,21 +68,10 @@ function TodayPage() {
   const diaperCount = diapers.data?.length ?? 0;
   const pumpedMl = pumpings.data?.reduce((s, p) => s + Number(p.amount_ml), 0) ?? 0;
 
-  // Merge today's events into a single time-sorted list, newest first.
-  // Compare as instants (not strings): ISO timestamps from the API may differ
-  // in fractional-second precision or timezone offset between rows, so a
-  // lexicographic string compare can put a strictly-later instant behind an
-  // earlier one. Tiebreak on `created_at` so events sharing the same minute
-  // (very common with the "Now" presets in the log forms) render in a stable,
-  // logging-order sequence instead of swapping on every re-render.
-  const recent: RecentEvent[] = [
-    ...(feeds.data ?? []).map<RecentEvent>((f) => ({ kind: "bottle", at: f.occurred_at, data: f })),
-    ...(diapers.data ?? []).map<RecentEvent>((d) => ({ kind: "diaper", at: d.occurred_at, data: d })),
-    ...(pumpings.data ?? []).map<RecentEvent>((p) => ({ kind: "pumping", at: p.occurred_at, data: p })),
-  ].sort((a, b) => {
-    const occurredDelta = new Date(b.at).getTime() - new Date(a.at).getTime();
-    if (occurredDelta !== 0) return occurredDelta;
-    return new Date(b.data.created_at).getTime() - new Date(a.data.created_at).getTime();
+  const recent = mergeRecent({
+    bottleFeeds: feeds.data,
+    diapers: diapers.data,
+    pumpings: pumpings.data,
   });
 
   return (
