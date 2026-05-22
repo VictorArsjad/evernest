@@ -1,8 +1,8 @@
-// Today screen, CP2 layout (Option C):
+// Today screen layout:
 //   - 2x3 tile grid: 5 event kinds + a compact "Today" summary tile
 //   - Unified recent-events list across all kinds, newest first
 // Tiles for kinds that aren't shipped yet are visibly "Soon" placeholders
-// rather than dead links — incremental CP2 slices wire them as they land.
+// rather than dead links, and get wired up as each kind lands.
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 import { format, isToday, parseISO } from "date-fns";
