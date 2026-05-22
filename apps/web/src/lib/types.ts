@@ -53,6 +53,17 @@ export interface Diaper {
   created_at: string;
 }
 
+export interface Pumping {
+  id: string;
+  baby_id: string;
+  occurred_at: string;
+  amount_ml: number;
+  duration_seconds?: number | null;
+  notes?: string | null;
+  source: string;
+  created_at: string;
+}
+
 export interface ApiError {
   error: {
     code: string;

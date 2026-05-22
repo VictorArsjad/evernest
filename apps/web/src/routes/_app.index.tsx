@@ -14,8 +14,9 @@ import {
   useDiapers,
   useHouseholds,
   useLogout,
+  usePumpings,
 } from "../lib/queries";
-import type { BottleFeed, Diaper } from "../lib/types";
+import type { BottleFeed, Diaper, Pumping } from "../lib/types";
 
 export const Route = createFileRoute("/_app/")({
   component: TodayPage,
@@ -23,7 +24,8 @@ export const Route = createFileRoute("/_app/")({
 
 type RecentEvent =
   | { kind: "bottle"; at: string; data: BottleFeed }
-  | { kind: "diaper"; at: string; data: Diaper };
+  | { kind: "diaper"; at: string; data: Diaper }
+  | { kind: "pumping"; at: string; data: Pumping };
 
 function TodayPage() {
   const nav = useNavigate();
@@ -58,6 +60,7 @@ function TodayPage() {
 
   const feeds = useBottleFeeds(baby?.id ?? null, todayStart, todayEnd);
   const diapers = useDiapers(baby?.id ?? null, todayStart, todayEnd);
+  const pumpings = usePumpings(baby?.id ?? null, todayStart, todayEnd);
 
   if (households.isLoading || babies.isLoading) {
     return <PageShell title="…">Loading…</PageShell>;
@@ -68,11 +71,13 @@ function TodayPage() {
 
   const totalMl = feeds.data?.reduce((s, f) => s + Number(f.amount_ml), 0) ?? 0;
   const diaperCount = diapers.data?.length ?? 0;
+  const pumpedMl = pumpings.data?.reduce((s, p) => s + Number(p.amount_ml), 0) ?? 0;
 
   // Merge today's events into a single time-sorted list.
   const recent: RecentEvent[] = [
     ...(feeds.data ?? []).map<RecentEvent>((f) => ({ kind: "bottle", at: f.occurred_at, data: f })),
     ...(diapers.data ?? []).map<RecentEvent>((d) => ({ kind: "diaper", at: d.occurred_at, data: d })),
+    ...(pumpings.data ?? []).map<RecentEvent>((p) => ({ kind: "pumping", at: p.occurred_at, data: p })),
   ].sort((a, b) => (a.at > b.at ? -1 : 1));
 
   return (
@@ -84,10 +89,10 @@ function TodayPage() {
       <section className="grid grid-cols-3 gap-3">
         <Tile to="/log/bottle" babyId={baby.id} icon="🍼" label="Bottle" accent="peach" />
         <SoonTile icon="👶" label="Nursing" accent="mint" />
-        <SoonTile icon="💧" label="Pumping" accent="sky" />
+        <Tile to="/log/pumping" babyId={baby.id} icon="💧" label="Pumping" accent="sky" />
         <Tile to="/log/diaper" babyId={baby.id} icon="🧷" label="Diaper" accent="lemon" />
         <SoonTile icon="📏" label="Growth" accent="lilac" />
-        <SummaryTile totalMl={totalMl} diaperCount={diaperCount} />
+        <SummaryTile totalMl={totalMl} pumpedMl={pumpedMl} diaperCount={diaperCount} />
       </section>
 
       <section className="flex flex-col gap-2">
@@ -167,18 +172,31 @@ function SoonTile({ icon, label, accent }: { icon: string; label: string; accent
   );
 }
 
-function SummaryTile({ totalMl, diaperCount }: { totalMl: number; diaperCount: number }) {
+function SummaryTile({
+  totalMl,
+  pumpedMl,
+  diaperCount,
+}: {
+  totalMl: number;
+  pumpedMl: number;
+  diaperCount: number;
+}) {
   return (
-    <div className="flex aspect-square flex-col items-start justify-center gap-1 rounded-2xl border border-white/10 bg-bg-surface p-3">
+    <div className="flex aspect-square flex-col items-start justify-center gap-[2px] rounded-2xl border border-white/10 bg-bg-surface p-3">
       <span className="text-[10px] uppercase tracking-wide text-white/40">Today</span>
-      <div className="flex items-baseline gap-1">
-        <span className="text-xl font-semibold tabular-nums">{totalMl}</span>
-        <span className="text-xs text-white/60">ml</span>
-      </div>
-      <div className="flex items-baseline gap-1">
-        <span className="text-xl font-semibold tabular-nums">{diaperCount}</span>
-        <span className="text-xs text-white/60">diapers</span>
-      </div>
+      <SummaryRow icon="🍼" value={totalMl} unit="ml" />
+      <SummaryRow icon="💧" value={pumpedMl} unit="ml" />
+      <SummaryRow icon="🧷" value={diaperCount} unit="" />
+    </div>
+  );
+}
+
+function SummaryRow({ icon, value, unit }: { icon: string; value: number; unit: string }) {
+  return (
+    <div className="flex items-baseline gap-1">
+      <span className="text-xs leading-none">{icon}</span>
+      <span className="text-base font-semibold tabular-nums">{value}</span>
+      {unit && <span className="text-[10px] text-white/60">{unit}</span>}
     </div>
   );
 }
@@ -187,16 +205,15 @@ function SummaryTile({ totalMl, diaperCount }: { totalMl: number; diaperCount: n
 
 function RecentRow({ ev }: { ev: RecentEvent }) {
   const at = parseISO(ev.at);
+  const icon = ev.kind === "bottle" ? "🍼" : ev.kind === "diaper" ? "🧷" : "💧";
   return (
     <li className="card flex items-center gap-3 p-3">
       <div className="flex shrink-0 items-center gap-2">
-        <span className="text-2xl leading-none">
-          {ev.kind === "bottle" ? "🍼" : "🧷"}
-        </span>
+        <span className="text-2xl leading-none">{icon}</span>
         <span className="text-sm tabular-nums text-white/60 w-12">{format(at, "HH:mm")}</span>
       </div>
       <div className="min-w-0 flex-1">
-        {ev.kind === "bottle" ? (
+        {ev.kind === "bottle" && (
           <>
             <div className="text-base font-medium">
               {Number(ev.data.amount_ml)} ml
@@ -208,9 +225,25 @@ function RecentRow({ ev }: { ev: RecentEvent }) {
               <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
             )}
           </>
-        ) : (
+        )}
+        {ev.kind === "diaper" && (
           <>
             <div className="text-base font-medium capitalize">{ev.data.type} diaper</div>
+            {ev.data.notes && (
+              <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+            )}
+          </>
+        )}
+        {ev.kind === "pumping" && (
+          <>
+            <div className="text-base font-medium">
+              {Number(ev.data.amount_ml)} ml pumped
+              {ev.data.duration_seconds != null && (
+                <span className="ml-2 text-xs font-normal text-white/50">
+                  · {Math.round(ev.data.duration_seconds / 60)} min
+                </span>
+              )}
+            </div>
             {ev.data.notes && (
               <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
             )}
