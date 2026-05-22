@@ -61,7 +61,7 @@ func IssueRefreshToken(ctx context.Context, st *store.Store, userID uuid.UUID, t
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO refresh_tokens (id, user_id, token_hash, issued_at, expires_at, user_agent, ip)
