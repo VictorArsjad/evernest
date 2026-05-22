@@ -16,6 +16,14 @@ endif
 DATABASE_URL_LOCAL ?= postgres://evernest:evernest_dev@localhost:5432/evernest?sslmode=disable
 COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env
 
+# Pinned tool versions. KEEP IN SYNC with .github/workflows/ci.yml — both
+# local `make api-lint` and CI must run the same golangci-lint binary or
+# "passes locally, fails in CI" is back on the menu. See:
+#   Engineering/Evernest/CP2a CI postmortem
+GOLANGCI_LINT_VERSION ?= v2.12.2
+TOOLS_BIN := apps/api/.tools/bin
+GOLANGCI_LINT := $(TOOLS_BIN)/golangci-lint
+
 # ---------- environment ----------
 .PHONY: up down logs ps reset-db env-init db
 
@@ -53,8 +61,21 @@ api-run: ## Run the API server natively against the docker db
 api-test: ## Run Go tests with race detector
 	cd apps/api && go test ./... -race -count=1
 
-api-lint: ## golangci-lint (no-op if not installed)
-	@if command -v golangci-lint >/dev/null 2>&1; then cd apps/api && golangci-lint run; else echo "golangci-lint not installed, skipping"; fi
+$(GOLANGCI_LINT):
+	@echo "==> installing golangci-lint $(GOLANGCI_LINT_VERSION) into $(TOOLS_BIN)"
+	@mkdir -p $(TOOLS_BIN)
+	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/$(GOLANGCI_LINT_VERSION)/install.sh \
+		| sh -s -- -b $(TOOLS_BIN) $(GOLANGCI_LINT_VERSION)
+
+api-lint: $(GOLANGCI_LINT) ## golangci-lint (pinned version, identical to CI)
+	@INSTALLED=$$($(GOLANGCI_LINT) version --short 2>/dev/null || echo missing); \
+	WANT=$$(echo $(GOLANGCI_LINT_VERSION) | sed 's/^v//'); \
+	if [ "$$INSTALLED" != "$$WANT" ]; then \
+		echo "==> reinstalling golangci-lint (have $$INSTALLED, want $$WANT)"; \
+		rm -f $(GOLANGCI_LINT); \
+		$(MAKE) $(GOLANGCI_LINT); \
+	fi
+	cd apps/api && $(abspath $(GOLANGCI_LINT)) run --timeout=5m
 
 api-tidy: ## go mod tidy
 	cd apps/api && go mod tidy
