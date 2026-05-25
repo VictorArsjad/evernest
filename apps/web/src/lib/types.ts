@@ -81,6 +81,18 @@ export interface Nursing {
   created_at: string;
 }
 
+export interface Growth {
+  id: string;
+  baby_id: string;
+  measured_at: string;
+  weight_g?: number | null;
+  height_cm?: number | null;
+  head_circumference_cm?: number | null;
+  notes?: string | null;
+  source: string;
+  created_at: string;
+}
+
 export interface ApiError {
   error: {
     code: string;

@@ -16,7 +16,8 @@ A baby tracking app — feedings, pumping, diapers, growth, and charts — desig
 - Log a diaper change (wet / soiled / mixed, time, optional notes).
 - Log a pumping session (amount in ml, optional duration, time).
 - Log a nursing session (side: left / right / both, per-side duration in minutes, starting breast when both, time).
-- See a "Today" hub: tiles for each event kind, a compact running summary (bottle ml / nursing min / pumping ml / diaper count), and a unified Recent list across all kinds, newest first.
+- Log a growth measurement (any combination of weight in grams, height in cm, head circumference in cm; at least one required).
+- See a "Today" hub: tiles for each event kind, a compact running summary (bottle ml / nursing min / pumping ml / diaper count / latest weight), and a unified Recent list across all kinds, newest first.
 - Stay signed in across hard-reloads (auto-refresh via httpOnly cookie).
 - Sign out.
 

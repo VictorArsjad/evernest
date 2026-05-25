@@ -7,6 +7,7 @@ import type {
   BottleFeed,
   Diaper,
   DiaperType,
+  Growth,
   Household,
   Nursing,
   NursingSide,
@@ -28,6 +29,8 @@ export const qk = {
     ["babies", babyId, "pumpings", from ?? "", to ?? ""] as const,
   nursings: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "nursing-sessions", from ?? "", to ?? ""] as const,
+  growths: (babyId: string, from?: string, to?: string) =>
+    ["babies", babyId, "growths", from ?? "", to ?? ""] as const,
 };
 
 // --- auth ---
@@ -299,5 +302,57 @@ export function useDeleteNursing() {
       api<void>(`/nursing-sessions/${vars.id}`, { method: "DELETE" }),
     onSuccess: (_data, vars) =>
       qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "nursing-sessions"] }),
+  });
+}
+
+// --- growths ---
+
+export function useGrowths(babyId: string | null, from?: string, to?: string) {
+  return useQuery({
+    queryKey: babyId ? qk.growths(babyId, from, to) : ["babies", "none", "growths"],
+    enabled: !!babyId,
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      const qs = params.toString();
+      return api<Growth[]>(`/babies/${babyId}/growths${qs ? `?${qs}` : ""}`);
+    },
+  });
+}
+
+export function useCreateGrowth() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      babyId: string;
+      measured_at: string;
+      weight_g?: number;
+      height_cm?: number;
+      head_circumference_cm?: number;
+      notes?: string;
+    }) =>
+      api<Growth>(`/babies/${vars.babyId}/growths`, {
+        method: "POST",
+        body: {
+          measured_at: vars.measured_at,
+          weight_g: vars.weight_g,
+          height_cm: vars.height_cm,
+          head_circumference_cm: vars.head_circumference_cm,
+          notes: vars.notes || undefined,
+        },
+      }),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "growths"] }),
+  });
+}
+
+export function useDeleteGrowth() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; babyId: string }) =>
+      api<void>(`/growths/${vars.id}`, { method: "DELETE" }),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "growths"] }),
   });
 }

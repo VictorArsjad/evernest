@@ -20,6 +20,7 @@ import (
 	"github.com/varsjad/evernest/apps/api/internal/bottlefeed"
 	"github.com/varsjad/evernest/apps/api/internal/config"
 	"github.com/varsjad/evernest/apps/api/internal/diaper"
+	"github.com/varsjad/evernest/apps/api/internal/growth"
 	"github.com/varsjad/evernest/apps/api/internal/household"
 	"github.com/varsjad/evernest/apps/api/internal/httpx"
 	"github.com/varsjad/evernest/apps/api/internal/nursing"
@@ -78,6 +79,7 @@ func mountV1(r chi.Router, cfg *config.Config, st *store.Store, logger *slog.Log
 	diaperH := diaper.NewHandler(st, logger)
 	pumpingH := pumping.NewHandler(st, logger)
 	nursingH := nursing.NewHandler(st, logger)
+	growthH := growth.NewHandler(st, logger)
 
 	r.Route("/auth", authH.Routes)
 
@@ -94,10 +96,12 @@ func mountV1(r chi.Router, cfg *config.Config, st *store.Store, logger *slog.Log
 			diaperH.BabyRoutes(r)
 			pumpingH.BabyRoutes(r)
 			nursingH.BabyRoutes(r)
+			growthH.BabyRoutes(r)
 		})
 		r.Route("/bottle-feeds/{id}", bottleH.ItemRoutes)
 		r.Route("/diapers/{id}", diaperH.ItemRoutes)
 		r.Route("/pumpings/{id}", pumpingH.ItemRoutes)
 		r.Route("/nursing-sessions/{id}", nursingH.ItemRoutes)
+		r.Route("/growths/{id}", growthH.ItemRoutes)
 	})
 }
