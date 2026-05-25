@@ -31,7 +31,13 @@ interface RequestOpts {
   signal?: AbortSignal;
 }
 
-const BASE = "/v1";
+// In dev (Vite) and in same-origin prod (legacy Caddy reverse-proxy) the FE
+// and API share an origin, so a relative `/v1` path Just Works. On GH Pages
+// the FE is on `*.github.io` and the API is on `*.ts.net`, so we need an
+// absolute base. Set VITE_API_BASE_URL=https://evernest.<tail>.ts.net at build
+// time to switch modes; leave unset for same-origin.
+const API_ROOT = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+const BASE = `${API_ROOT}/v1`;
 
 let refreshInflight: Promise<TokenResponse | null> | null = null;
 

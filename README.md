@@ -60,13 +60,35 @@ apps/
   api/      Go backend (chi router, pgx, migrations under apps/api/migrations)
   web/      Vite + React + TS PWA
 infra/
-  docker-compose.yml + Dockerfiles + Caddyfile
+  docker-compose.yml          base (db + api)
+  docker-compose.prod.yml     prod overlay (Tailscale sidecar, GHCR image)
+  docker/api.Dockerfile       multi-stage Go build
+  docker/tailscale-serve.json declarative `tailscale serve` config
 docs/
-  api.openapi.yaml, schema.md
-Makefile    common dev/CI entrypoints
+  api.openapi.yaml, schema.md, deploy.md
+.github/workflows/
+  ci.yml          lint + test on every PR / push to master
+  deploy-web.yml  GH Pages publish on green CI
+  deploy-api.yml  GHCR push + ssh-over-Tailscale deploy on green CI
+Makefile        common dev/CI/deploy entrypoints
 ```
 
 Run `make help` for the full target list.
+
+## Deploy
+
+CP7 ships an end-to-end pipeline: green CI on `master` automatically publishes
+the FE to GitHub Pages and the API to GHCR, then ssh-over-Tailscale into a
+home server to pull + restart. A Tailscale sidecar container owns ingress and
+TLS (no Caddy, no public ports). See [`docs/deploy.md`](docs/deploy.md) for
+the full topology, repo-settings checklist, home-server bootstrap, and the
+public-access flip.
+
+```bash
+make deploy-fe-build      # local FE build with the GH Pages base path
+make image-be             # local API image build (linux/amd64)
+make compose-prod-config  # validate the prod compose overlay
+```
 
 ## Common commands
 
