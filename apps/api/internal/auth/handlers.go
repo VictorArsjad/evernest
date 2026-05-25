@@ -195,7 +195,7 @@ func (h *Handler) issueAndRespond(w http.ResponseWriter, r *http.Request, user U
 		MaxAge:   int(refreshTTL.Seconds()),
 		HttpOnly: true,
 		Secure:   secureCookie(h.cfg),
-		SameSite: http.SameSiteLaxMode,
+		SameSite: h.cfg.CookieSameSite,
 	})
 
 	httpx.WriteJSON(w, status, tokenResp{
@@ -214,7 +214,7 @@ func expiredRefreshCookie(cfg *config.Config) *http.Cookie {
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   secureCookie(cfg),
-		SameSite: http.SameSiteLaxMode,
+		SameSite: cfg.CookieSameSite,
 	}
 }
 

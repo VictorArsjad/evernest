@@ -1,0 +1,84 @@
+# Production overlay for the home-server deploy.
+#
+# Usage:
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up -d
+#
+# Differences from the base file:
+# - api runs the published GHCR image (not a local build) and shares a network
+#   namespace with the tailscale sidecar so the only thing the tailnet sees is
+#   tailscale's interface on :443. No host port publish.
+# - db loses its host port — postgres is reachable only from api over the
+#   shared netns + docker DNS, never from LAN.
+# - A new tailscale service handles ingress + TLS via Tailscale Funnel/serve.
+#   First boot needs TS_AUTHKEY in .env; subsequent boots reuse the persisted
+#   ts-state volume.
+#
+# Public-access flip later: edit infra/docker/tailscale-serve.json AllowFunnel
+# value to true and `docker compose -f ... up -d tailscale`. Same hostname,
+# same cert.
+services:
+  db:
+    # Drop the host port — postgres is internal-only in prod. The override
+    # uses `!override` to fully replace the base list (compose merges lists
+    # by default, which would keep the dev port).
+    ports: !override []
+
+  api:
+    # Replace the local build with the published image so deploys are a pure
+    # pull-restart, no go toolchain on the home server.
+    image: ghcr.io/${GHCR_OWNER}/evernest-api:latest
+    build: !reset null
+    pull_policy: always
+    # Share the tailscale sidecar's netns. Result: the api binds 0.0.0.0:8080
+    # on the sidecar's loopback / tailnet interface; tailscale serve then
+    # proxies https://<host>.<tail>.ts.net:443 -> 127.0.0.1:8080 inside the
+    # same netns.
+    network_mode: "service:tailscale"
+    # Once we share a netns we can't also publish ports — only the netns owner
+    # (tailscale) can. Strip them.
+    ports: !override []
+    depends_on:
+      tailscale:
+        condition: service_started
+      db:
+        condition: service_healthy
+    environment:
+      # Cookies cross origins on prod (FE on github.io, API on ts.net), so
+      # SameSite must be "none" + Secure=true. The api already sets Secure
+      # when PUBLIC_WEB_ORIGIN starts with https://.
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-none}
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: evernest-tailscale
+    hostname: ${TS_HOSTNAME:-evernest}
+    restart: unless-stopped
+    cap_add:
+      - net_admin
+      - sys_module
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ts-state:/var/lib/tailscale
+      - ./docker/tailscale-serve.json:/config/serve.json:ro
+    environment:
+      # Reusable, ephemeral=false, tag:server. See docs/deploy.md.
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_HOSTNAME: ${TS_HOSTNAME:-evernest}
+      TS_STATE_DIR: /var/lib/tailscale
+      # Declarative serve config; tailscaled re-reads it on SIGHUP.
+      TS_SERVE_CONFIG: /config/serve.json
+      # tailscaled needs userspace networking turned off when we want it to
+      # own a Linux netns shared by other containers.
+      TS_USERSPACE: "false"
+      TS_EXTRA_ARGS: --accept-dns=false
+    healthcheck:
+      test: ["CMD", "tailscale", "status", "--peers=false"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    profiles: ["prod"]
+
+volumes:
+  ts-state:

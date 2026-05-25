@@ -1,0 +1,91 @@
+name: deploy-web
+
+# Publishes the Vite PWA bundle to GitHub Pages whenever CI is green on master.
+#
+# Two triggers:
+# - workflow_run on the `ci` workflow on master, so we only deploy a build that
+#   already passed lint/tests.
+# - workflow_dispatch for manual republish (e.g. after rotating
+#   VITE_API_BASE_URL).
+#
+# Repo configuration this workflow assumes:
+# - Settings -> Pages -> Source: GitHub Actions.
+# - Settings -> Variables -> VITE_API_BASE_URL = https://<host>.<tail>.ts.net
+#   (no trailing slash).
+on:
+  workflow_run:
+    workflows: ["ci"]
+    branches: [master]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Skip when the upstream CI run failed; workflow_dispatch always passes the
+    # guard because event != workflow_run.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    name: build web bundle
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - run: npm ci
+
+      - name: build
+        env:
+          # GH Pages serves at https://<owner>.github.io/<repo>/ — Vite needs
+          # this so asset URLs resolve correctly.
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          # Absolute API origin (Tailscale hostname). Falls back to empty so
+          # the build doesn't fail if the variable is unset; the FE will then
+          # 404 on /v1/* until the variable is configured.
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+        run: npm run build
+
+      - name: SPA fallback (404.html copy)
+        # GH Pages serves 404.html for unknown paths. TanStack Router does
+        # client-side routing, so any deep link (e.g. /<repo>/log/nursing) needs
+        # to land on the SPA shell. Copying index.html -> 404.html is the
+        # canonical GH Pages SPA fallback.
+        run: cp dist/index.html dist/404.html
+
+      - name: prevent Jekyll
+        # GH Pages by default runs Jekyll, which strips files starting with `_`.
+        # Vite emits no such files today but vite-plugin-pwa might in the
+        # future. Belt-and-suspenders.
+        run: touch dist/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+
+  deploy:
+    name: deploy to gh-pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -3,29 +3,43 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type Config struct {
-	Bind                 string
-	Port                 string
-	DatabaseURL          string
-	JWTSecret            []byte
-	AccessTokenTTL       time.Duration
-	RefreshTokenTTLDays  int
-	CORSAllowOrigin      string
-	PublicWebOrigin      string
+	Bind                string
+	Port                string
+	DatabaseURL         string
+	JWTSecret           []byte
+	AccessTokenTTL      time.Duration
+	RefreshTokenTTLDays int
+	CORSAllowOrigin     string
+	PublicWebOrigin     string
+	// CookieSameSite controls the SameSite attribute on the refresh-token
+	// cookie. Defaults to "lax" (good for same-origin dev / Caddy prod). Must
+	// be "none" when the FE and API live on different origins (e.g. FE on
+	// GitHub Pages, API on a Tailscale hostname); the browser then also
+	// requires Secure=true, which secureCookie() already covers when
+	// PUBLIC_WEB_ORIGIN starts with https://.
+	CookieSameSite http.SameSite
 }
 
 func Load() (*Config, error) {
+	sameSite, err := parseSameSite(getEnv("COOKIE_SAMESITE", "lax"))
+	if err != nil {
+		return nil, err
+	}
 	cfg := &Config{
 		Bind:            getEnv("API_BIND", "0.0.0.0"),
 		Port:            getEnv("API_PORT", "8080"),
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		CORSAllowOrigin: getEnv("CORS_ALLOW_ORIGIN", "http://localhost:5173"),
 		PublicWebOrigin: getEnv("PUBLIC_WEB_ORIGIN", "http://localhost:5173"),
+		CookieSameSite:  sameSite,
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -63,4 +77,21 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseSameSite maps the env-friendly strings "lax" / "none" / "strict" to
+// the Go http.SameSite constants. Default is Lax for any unset value; an
+// unrecognized value returns an error rather than silently falling back so
+// that misconfiguration is loud.
+func parseSameSite(v string) (http.SameSite, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "lax":
+		return http.SameSiteLaxMode, nil
+	case "none":
+		return http.SameSiteNoneMode, nil
+	case "strict":
+		return http.SameSiteStrictMode, nil
+	default:
+		return 0, fmt.Errorf("COOKIE_SAMESITE: unknown value %q (want lax|none|strict)", v)
+	}
 }
