@@ -1,0 +1,124 @@
+name: deploy-api
+
+# Builds the API container image, publishes it to GHCR, then ssh-over-Tailscale
+# into the home server to pull + restart the stack.
+#
+# Two triggers:
+# - workflow_run on the `ci` workflow on master so we only ship a build that
+#   already passed lint/tests.
+# - workflow_dispatch for emergency redeploys.
+#
+# Required repo secrets:
+# - TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET — Tailscale OAuth client (scope
+#   "auth_keys", tag "tag:ci"). Used by the runner to ephemerally join the
+#   tailnet for the deploy step.
+# - DEPLOY_HOST                          — MagicDNS name of the home server
+#   (e.g. "evernest").
+# - DEPLOY_SSH_KEY                       — ed25519 private key whose pub is
+#   in victor@<DEPLOY_HOST>:~/.ssh/authorized_keys.
+#
+# The home server must already have:
+# - the repo cloned to /home/victor/evernest
+# - a populated .env (see docs/deploy.md)
+# - `docker login ghcr.io` with a read:packages PAT
+on:
+  workflow_run:
+    workflows: ["ci"]
+    branches: [master]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  # Tailscale's OIDC-based join (tailscale/github-action) needs id-token.
+  id-token: write
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/evernest-api
+
+jobs:
+  build-push:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    name: build + push image
+    runs-on: ubuntu-latest
+    outputs:
+      sha_tag: ${{ steps.meta.outputs.sha_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: derive tags
+        id: meta
+        run: |
+          # GHCR requires lowercase image paths; convert here so the workflow
+          # works on accounts with mixed-case usernames.
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER_LC}/evernest-api"
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          SHORT="${SHA:0:7}"
+          {
+            echo "image=${IMAGE}"
+            echo "sha_tag=${SHORT}"
+            echo "tags=${IMAGE}:latest,${IMAGE}:${SHORT}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/api.Dockerfile
+          # Home server is x86_64 Ubuntu; single-arch keeps the build fast.
+          # Switch to "linux/amd64,linux/arm64" if you ever target a Pi.
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: ssh deploy on home server
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: tailscale up (ephemeral)
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          # Some Tailscale ACLs require this hostname pattern for tag:ci nodes;
+          # adjust if yours differs. Visible in the admin console for ~24h.
+          hostname: gh-runner-${{ github.run_id }}
+
+      - name: ssh + pull + restart
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: victor
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Hop count >= 1 means the runner is on the tailnet so MagicDNS
+          # resolves DEPLOY_HOST. ssh-action handles the connection from there.
+          script: |
+            set -euo pipefail
+            cd /home/victor/evernest
+            git fetch --depth=1 origin master
+            git reset --hard origin/master
+            COMPOSE="docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml --env-file .env --profile prod"
+            $COMPOSE pull api
+            $COMPOSE up -d
+            docker image prune -f

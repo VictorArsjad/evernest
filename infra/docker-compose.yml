@@ -1,5 +1,16 @@
 name: evernest
 
+# Base compose file. Covers the dev profile (postgres + optionally a locally-
+# built api container). The prod stack — Tailscale sidecar in front of the
+# GHCR-published api image — lives in infra/docker-compose.prod.yml and is
+# applied as an overlay:
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml --profile prod up -d
+#
+# The frontend is no longer in compose: in prod it is served by GitHub Pages
+# (see .github/workflows/deploy-web.yml), in dev by `npm run dev` proxied
+# through vite.
+
 services:
   db:
     image: postgres:16-alpine
@@ -34,36 +45,10 @@ services:
       REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-30}
       CORS_ALLOW_ORIGIN: ${CORS_ALLOW_ORIGIN:-http://localhost:5173}
       PUBLIC_WEB_ORIGIN: ${PUBLIC_WEB_ORIGIN:-http://localhost:5173}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
     ports:
       - "${API_PORT:-8080}:8080"
     profiles: ["dev", "prod"]
 
-  web:
-    build:
-      context: ..
-      dockerfile: infra/docker/web.Dockerfile
-      target: prod
-    restart: unless-stopped
-    depends_on:
-      - api
-    profiles: ["prod"]
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      - api
-      - web
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    profiles: ["prod"]
-
 volumes:
   db-data:
-  caddy-data:
-  caddy-config:

@@ -6,7 +6,18 @@ import path from "node:path";
 
 const API_URL = process.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 
+// Vite serves the bundle from this path. GH Pages publishes under /<repo>/,
+// so prod CI sets VITE_BASE_PATH=/evernest/. Local dev leaves it unset = "/".
+const BASE_PATH = process.env.VITE_BASE_PATH ?? "/";
+
+// PWA manifest paths must agree with BASE_PATH or the installed app boots into
+// a 404 on GH Pages. We prefix every manifest URL with BASE_PATH so the same
+// vite build works at "/" and at "/evernest/".
+const withBase = (p: string) =>
+  `${BASE_PATH.replace(/\/$/, "")}/${p.replace(/^\//, "")}`;
+
 export default defineConfig({
+  base: BASE_PATH,
   plugins: [
     TanStackRouterVite({ target: "react", autoCodeSplitting: true }),
     react(),
@@ -22,17 +33,18 @@ export default defineConfig({
         background_color: "#0b1220",
         display: "standalone",
         orientation: "portrait",
-        start_url: "/",
+        start_url: BASE_PATH,
+        scope: BASE_PATH,
         icons: [
-          { src: "/pwa-192.png", sizes: "192x192", type: "image/png" },
-          { src: "/pwa-512.png", sizes: "512x512", type: "image/png" },
-          { src: "/pwa-512-maskable.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+          { src: withBase("pwa-192.png"), sizes: "192x192", type: "image/png" },
+          { src: withBase("pwa-512.png"), sizes: "512x512", type: "image/png" },
+          { src: withBase("pwa-512-maskable.png"), sizes: "512x512", type: "image/png", purpose: "maskable" },
         ],
       },
       workbox: {
-        navigateFallback: "/index.html",
+        navigateFallback: withBase("index.html"),
         // Never cache API responses in the SW; TanStack Query owns that cache.
-        navigateFallbackDenylist: [/^\/v1\//],
+        navigateFallbackDenylist: [/\/v1\//],
       },
     }),
   ],
