@@ -14,6 +14,7 @@ import {
   useDiapers,
   useHouseholds,
   useLogout,
+  useNursings,
   usePumpings,
 } from "../lib/queries";
 import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
@@ -56,6 +57,7 @@ function TodayPage() {
   const feeds = useBottleFeeds(baby?.id ?? null, todayStart, todayEnd);
   const diapers = useDiapers(baby?.id ?? null, todayStart, todayEnd);
   const pumpings = usePumpings(baby?.id ?? null, todayStart, todayEnd);
+  const nursings = useNursings(baby?.id ?? null, todayStart, todayEnd);
 
   if (households.isLoading || babies.isLoading) {
     return <PageShell title="…">Loading…</PageShell>;
@@ -67,11 +69,17 @@ function TodayPage() {
   const totalMl = feeds.data?.reduce((s, f) => s + Number(f.amount_ml), 0) ?? 0;
   const diaperCount = diapers.data?.length ?? 0;
   const pumpedMl = pumpings.data?.reduce((s, p) => s + Number(p.amount_ml), 0) ?? 0;
+  const nursingMin =
+    nursings.data?.reduce(
+      (s, n) => s + Math.round((Number(n.left_duration_s) + Number(n.right_duration_s)) / 60),
+      0,
+    ) ?? 0;
 
   const recent = mergeRecent({
     bottleFeeds: feeds.data,
     diapers: diapers.data,
     pumpings: pumpings.data,
+    nursings: nursings.data,
   });
 
   return (
@@ -82,11 +90,16 @@ function TodayPage() {
     >
       <section className="grid grid-cols-3 gap-3">
         <Tile to="/log/bottle" babyId={baby.id} icon="🍼" label="Bottle" accent="peach" />
-        <SoonTile icon="👶" label="Nursing" accent="mint" />
+        <Tile to="/log/nursing" babyId={baby.id} icon="👶" label="Nursing" accent="mint" />
         <Tile to="/log/pumping" babyId={baby.id} icon="💧" label="Pumping" accent="sky" />
         <Tile to="/log/diaper" babyId={baby.id} icon="🧷" label="Diaper" accent="lemon" />
         <SoonTile icon="📏" label="Growth" accent="lilac" />
-        <SummaryTile totalMl={totalMl} pumpedMl={pumpedMl} diaperCount={diaperCount} />
+        <SummaryTile
+          totalMl={totalMl}
+          pumpedMl={pumpedMl}
+          nursingMin={nursingMin}
+          diaperCount={diaperCount}
+        />
       </section>
 
       <section className="flex flex-col gap-2">
@@ -169,16 +182,19 @@ function SoonTile({ icon, label, accent }: { icon: string; label: string; accent
 function SummaryTile({
   totalMl,
   pumpedMl,
+  nursingMin,
   diaperCount,
 }: {
   totalMl: number;
   pumpedMl: number;
+  nursingMin: number;
   diaperCount: number;
 }) {
   return (
     <div className="flex aspect-square flex-col items-start justify-center gap-[2px] rounded-2xl border border-white/10 bg-bg-surface p-3">
       <span className="text-[10px] uppercase tracking-wide text-white/40">Today</span>
       <SummaryRow icon="🍼" value={totalMl} unit="ml" />
+      <SummaryRow icon="👶" value={nursingMin} unit="min" />
       <SummaryRow icon="💧" value={pumpedMl} unit="ml" />
       <SummaryRow icon="🧷" value={diaperCount} unit="" />
     </div>
@@ -199,7 +215,14 @@ function SummaryRow({ icon, value, unit }: { icon: string; value: number; unit: 
 
 function RecentRow({ ev }: { ev: RecentEvent }) {
   const at = parseISO(ev.at);
-  const icon = ev.kind === "bottle" ? "🍼" : ev.kind === "diaper" ? "🧷" : "💧";
+  const icon =
+    ev.kind === "bottle"
+      ? "🍼"
+      : ev.kind === "diaper"
+        ? "🧷"
+        : ev.kind === "pumping"
+          ? "💧"
+          : "👶";
   return (
     <li className="card flex items-center gap-3 p-3">
       <div className="flex shrink-0 items-center gap-2">
@@ -237,6 +260,19 @@ function RecentRow({ ev }: { ev: RecentEvent }) {
                   · {Math.round(ev.data.duration_seconds / 60)} min
                 </span>
               )}
+            </div>
+            {ev.data.notes && (
+              <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+            )}
+          </>
+        )}
+        {ev.kind === "nursing" && (
+          <>
+            <div className="text-base font-medium">
+              Nursed {Math.round((ev.data.left_duration_s + ev.data.right_duration_s) / 60)} min
+              <span className="ml-2 text-xs font-normal capitalize text-white/50">
+                · {ev.data.nursing_side}
+              </span>
             </div>
             {ev.data.notes && (
               <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
