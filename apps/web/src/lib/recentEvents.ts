@@ -1,19 +1,21 @@
 // Pure helpers for the Today screen "Recent" list. Kept here (rather than
 // inline in the route) so the comparator can be tested in isolation —
 // see recentEvents.test.ts.
-import type { BottleFeed, Diaper, Nursing, Pumping } from "./types";
+import type { BottleFeed, Diaper, Growth, Nursing, Pumping } from "./types";
 
 export type RecentEvent =
   | { kind: "bottle"; at: string; data: BottleFeed }
   | { kind: "diaper"; at: string; data: Diaper }
   | { kind: "pumping"; at: string; data: Pumping }
-  | { kind: "nursing"; at: string; data: Nursing };
+  | { kind: "nursing"; at: string; data: Nursing }
+  | { kind: "growth"; at: string; data: Growth };
 
 export interface RecentEventSources {
   bottleFeeds?: readonly BottleFeed[];
   diapers?: readonly Diaper[];
   pumpings?: readonly Pumping[];
   nursings?: readonly Nursing[];
+  growths?: readonly Growth[];
 }
 
 // compareRecentDesc sorts events newest first by `occurred_at` instant,
@@ -35,7 +37,9 @@ export function compareRecentDesc(a: RecentEvent, b: RecentEvent): number {
 // time-sorted list ready for rendering. Nursing rows use `started_at`
 // (the moment the session began) as the ordering instant, since they
 // don't have an `occurred_at` column — the schema models them as an
-// interval, not an instant.
+// interval, not an instant. Growth rows use `measured_at` for the same
+// reason: the schema names it after the event ("when was this baby
+// measured") rather than reusing the generic `occurred_at` slot.
 export function mergeRecent(sources: RecentEventSources): RecentEvent[] {
   const events: RecentEvent[] = [
     ...(sources.bottleFeeds ?? []).map<RecentEvent>((f) => ({
@@ -57,6 +61,11 @@ export function mergeRecent(sources: RecentEventSources): RecentEvent[] {
       kind: "nursing",
       at: n.started_at,
       data: n,
+    })),
+    ...(sources.growths ?? []).map<RecentEvent>((g) => ({
+      kind: "growth",
+      at: g.measured_at,
+      data: g,
     })),
   ];
   events.sort(compareRecentDesc);

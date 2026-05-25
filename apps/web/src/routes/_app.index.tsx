@@ -12,6 +12,7 @@ import {
   useBabies,
   useBottleFeeds,
   useDiapers,
+  useGrowths,
   useHouseholds,
   useLogout,
   useNursings,
@@ -58,6 +59,11 @@ function TodayPage() {
   const diapers = useDiapers(baby?.id ?? null, todayStart, todayEnd);
   const pumpings = usePumpings(baby?.id ?? null, todayStart, todayEnd);
   const nursings = useNursings(baby?.id ?? null, todayStart, todayEnd);
+  const growthsToday = useGrowths(baby?.id ?? null, todayStart, todayEnd);
+  // Latest measurement ever — fed into the summary tile. The default
+  // server-side window for growths covers the past year, which is plenty
+  // for "most-recent weight" since the rows return DESC by measured_at.
+  const growthsLatest = useGrowths(baby?.id ?? null);
 
   if (households.isLoading || babies.isLoading) {
     return <PageShell title="…">Loading…</PageShell>;
@@ -74,12 +80,21 @@ function TodayPage() {
       (s, n) => s + Math.round((Number(n.left_duration_s) + Number(n.right_duration_s)) / 60),
       0,
     ) ?? 0;
+  // Latest weight is the only growth metric on the summary tile — height
+  // and head circumference get a full chart in CP4 but are visually
+  // overkill for a 2x3 hub cell. Plain expression (not useMemo) because
+  // the early return above means we can't add another hook here without
+  // tripping rules-of-hooks; the find() over a small list is cheap.
+  const latestWeightRow = growthsLatest.data?.find((g) => g.weight_g != null);
+  const latestWeightG =
+    latestWeightRow?.weight_g != null ? Number(latestWeightRow.weight_g) : null;
 
   const recent = mergeRecent({
     bottleFeeds: feeds.data,
     diapers: diapers.data,
     pumpings: pumpings.data,
     nursings: nursings.data,
+    growths: growthsToday.data,
   });
 
   return (
@@ -93,12 +108,13 @@ function TodayPage() {
         <Tile to="/log/nursing" babyId={baby.id} icon="👶" label="Nursing" accent="mint" />
         <Tile to="/log/pumping" babyId={baby.id} icon="💧" label="Pumping" accent="sky" />
         <Tile to="/log/diaper" babyId={baby.id} icon="🧷" label="Diaper" accent="lemon" />
-        <SoonTile icon="📏" label="Growth" accent="lilac" />
+        <Tile to="/log/growth" babyId={baby.id} icon="📏" label="Growth" accent="lilac" />
         <SummaryTile
           totalMl={totalMl}
           pumpedMl={pumpedMl}
           nursingMin={nursingMin}
           diaperCount={diaperCount}
+          latestWeightG={latestWeightG}
         />
       </section>
 
@@ -162,34 +178,23 @@ function Tile({
   );
 }
 
-function SoonTile({ icon, label, accent }: { icon: string; label: string; accent: Accent }) {
-  return (
-    <div
-      className={
-        "relative flex aspect-square flex-col items-center justify-center gap-1 rounded-2xl border p-3 text-center opacity-50 " +
-        accentClass[accent]
-      }
-    >
-      <span className="text-3xl leading-none grayscale">{icon}</span>
-      <span className="text-sm font-medium">{label}</span>
-      <span className="absolute right-2 top-2 rounded-full bg-white/10 px-2 py-[2px] text-[10px] uppercase tracking-wide text-white/60">
-        Soon
-      </span>
-    </div>
-  );
-}
-
 function SummaryTile({
   totalMl,
   pumpedMl,
   nursingMin,
   diaperCount,
+  latestWeightG,
 }: {
   totalMl: number;
   pumpedMl: number;
   nursingMin: number;
   diaperCount: number;
+  latestWeightG: number | null;
 }) {
+  // The first four rows are "today" totals; weight is the latest reading
+  // ever (growth measurements are infrequent — a daily total would mostly
+  // be 0). It piggy-backs on the same tile so we don't blow out the 2x3
+  // grid for a one-row stat.
   return (
     <div className="flex aspect-square flex-col items-start justify-center gap-[2px] rounded-2xl border border-white/10 bg-bg-surface p-3">
       <span className="text-[10px] uppercase tracking-wide text-white/40">Today</span>
@@ -197,11 +202,40 @@ function SummaryTile({
       <SummaryRow icon="👶" value={nursingMin} unit="min" />
       <SummaryRow icon="💧" value={pumpedMl} unit="ml" />
       <SummaryRow icon="🧷" value={diaperCount} unit="" />
+      <SummaryRow
+        icon="📏"
+        value={latestWeightG != null ? formatWeight(latestWeightG) : "—"}
+        unit={latestWeightG != null ? (latestWeightG >= 1000 ? "kg" : "g") : ""}
+      />
     </div>
   );
 }
 
-function SummaryRow({ icon, value, unit }: { icon: string; value: number; unit: string }) {
+function formatWeight(g: number): string {
+  // 1 decimal for kg ranges (>= 1000g) — the precision below that is
+  // noise on the summary tile. Below 1kg (extreme preemies, rare in
+  // practice for this tracker) we show whole grams.
+  return g >= 1000 ? (g / 1000).toFixed(1) : Math.round(g).toString();
+}
+
+function growthSummary(g: {
+  weight_g?: number | null;
+  height_cm?: number | null;
+  head_circumference_cm?: number | null;
+}): string {
+  // Compose the Recent-list label from whichever fields are present —
+  // dropping NULL columns rather than rendering "0 kg / 0 cm" placeholders.
+  const parts: string[] = [];
+  if (g.weight_g != null) {
+    const w = Number(g.weight_g);
+    parts.push(w >= 1000 ? `${(w / 1000).toFixed(2)} kg` : `${Math.round(w)} g`);
+  }
+  if (g.height_cm != null) parts.push(`${Number(g.height_cm)} cm`);
+  if (g.head_circumference_cm != null) parts.push(`${Number(g.head_circumference_cm)} cm head`);
+  return parts.length > 0 ? parts.join(" · ") : "Measurement";
+}
+
+function SummaryRow({ icon, value, unit }: { icon: string; value: number | string; unit: string }) {
   return (
     <div className="flex items-baseline gap-1">
       <span className="text-xs leading-none">{icon}</span>
@@ -222,7 +256,9 @@ function RecentRow({ ev }: { ev: RecentEvent }) {
         ? "🧷"
         : ev.kind === "pumping"
           ? "💧"
-          : "👶";
+          : ev.kind === "growth"
+            ? "📏"
+            : "👶";
   return (
     <li className="card flex items-center gap-3 p-3">
       <div className="flex shrink-0 items-center gap-2">
@@ -273,6 +309,16 @@ function RecentRow({ ev }: { ev: RecentEvent }) {
               <span className="ml-2 text-xs font-normal capitalize text-white/50">
                 · {ev.data.nursing_side}
               </span>
+            </div>
+            {ev.data.notes && (
+              <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+            )}
+          </>
+        )}
+        {ev.kind === "growth" && (
+          <>
+            <div className="text-base font-medium">
+              {growthSummary(ev.data)}
             </div>
             {ev.data.notes && (
               <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
