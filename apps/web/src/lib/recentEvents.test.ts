@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compareRecentDesc, mergeRecent, type RecentEvent } from "./recentEvents";
-import type { BottleFeed, Diaper, Pumping } from "./types";
+import type { BottleFeed, Diaper, Nursing, Pumping } from "./types";
 
 // Convenience factories — each returns a minimally-populated record; tests
 // only depend on `id`, `occurred_at`, `created_at`.
@@ -37,6 +37,22 @@ function pumping(id: string, occurredAt: string, createdAt = occurredAt): Pumpin
     occurred_at: occurredAt,
     amount_ml: 80,
     duration_seconds: null,
+    notes: null,
+    source: "manual",
+    created_at: createdAt,
+  };
+}
+
+function nursing(id: string, startedAt: string, createdAt = startedAt): Nursing {
+  return {
+    id,
+    baby_id: "b1",
+    started_at: startedAt,
+    ended_at: null,
+    starting_breast: null,
+    nursing_side: "both",
+    left_duration_s: 300,
+    right_duration_s: 300,
     notes: null,
     source: "manual",
     created_at: createdAt,
@@ -104,13 +120,15 @@ describe("compareRecentDesc", () => {
 });
 
 describe("mergeRecent", () => {
-  it("merges across all three kinds in single newest-first order", () => {
+  it("merges across all four kinds in single newest-first order", () => {
     const merged = mergeRecent({
       bottleFeeds: [bottle("b1", "2026-05-22T08:00:00Z"), bottle("b2", "2026-05-22T10:00:00Z")],
       diapers: [diaper("d1", "2026-05-22T09:00:00Z")],
       pumpings: [pumping("p1", "2026-05-22T11:00:00Z")],
+      nursings: [nursing("n1", "2026-05-22T12:00:00Z")],
     });
     expect(merged.map((e) => `${e.kind}:${e.data.id}`)).toEqual([
+      "nursing:n1",
       "pumping:p1",
       "bottle:b2",
       "diaper:d1",
@@ -118,8 +136,23 @@ describe("mergeRecent", () => {
     ]);
   });
 
+  // Nursing rows don't carry `occurred_at` — the schema models them as
+  // an interval. Ordering must therefore key off `started_at`, otherwise
+  // a recent nursing would either go missing or sort to the bottom.
+  it("orders nursing rows by started_at, not occurred_at", () => {
+    const merged = mergeRecent({
+      bottleFeeds: [bottle("b-mid", "2026-05-22T09:00:00Z")],
+      nursings: [
+        nursing("n-early", "2026-05-22T08:00:00Z"),
+        nursing("n-late", "2026-05-22T10:00:00Z"),
+      ],
+    });
+    expect(merged.map((e) => e.data.id)).toEqual(["n-late", "b-mid", "n-early"]);
+  });
+
   it("treats missing sources as empty without throwing", () => {
     expect(mergeRecent({})).toEqual([]);
     expect(mergeRecent({ bottleFeeds: [bottle("only", "2026-05-22T08:00:00Z")] })).toHaveLength(1);
+    expect(mergeRecent({ nursings: [nursing("nx", "2026-05-22T08:00:00Z")] })).toHaveLength(1);
   });
 });

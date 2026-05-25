@@ -16,6 +16,7 @@ import { Route as AuthRegisterRouteImport } from './routes/_auth.register'
 import { Route as AuthLoginRouteImport } from './routes/_auth.login'
 import { Route as AppOnboardingRouteImport } from './routes/_app.onboarding'
 import { Route as AppLogPumpingRouteImport } from './routes/_app.log.pumping'
+import { Route as AppLogNursingRouteImport } from './routes/_app.log.nursing'
 import { Route as AppLogDiaperRouteImport } from './routes/_app.log.diaper'
 import { Route as AppLogBottleRouteImport } from './routes/_app.log.bottle'
 
@@ -52,6 +53,11 @@ const AppLogPumpingRoute = AppLogPumpingRouteImport.update({
   path: '/log/pumping',
   getParentRoute: () => AppRoute,
 } as any)
+const AppLogNursingRoute = AppLogNursingRouteImport.update({
+  id: '/log/nursing',
+  path: '/log/nursing',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppLogDiaperRoute = AppLogDiaperRouteImport.update({
   id: '/log/diaper',
   path: '/log/diaper',
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/register': typeof AuthRegisterRoute
   '/log/bottle': typeof AppLogBottleRoute
   '/log/diaper': typeof AppLogDiaperRoute
+  '/log/nursing': typeof AppLogNursingRoute
   '/log/pumping': typeof AppLogPumpingRoute
 }
 export interface FileRoutesByTo {
@@ -79,6 +86,7 @@ export interface FileRoutesByTo {
   '/register': typeof AuthRegisterRoute
   '/log/bottle': typeof AppLogBottleRoute
   '/log/diaper': typeof AppLogDiaperRoute
+  '/log/nursing': typeof AppLogNursingRoute
   '/log/pumping': typeof AppLogPumpingRoute
 }
 export interface FileRoutesById {
@@ -91,6 +99,7 @@ export interface FileRoutesById {
   '/_app/': typeof AppIndexRoute
   '/_app/log/bottle': typeof AppLogBottleRoute
   '/_app/log/diaper': typeof AppLogDiaperRoute
+  '/_app/log/nursing': typeof AppLogNursingRoute
   '/_app/log/pumping': typeof AppLogPumpingRoute
 }
 export interface FileRouteTypes {
@@ -102,6 +111,7 @@ export interface FileRouteTypes {
     | '/register'
     | '/log/bottle'
     | '/log/diaper'
+    | '/log/nursing'
     | '/log/pumping'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -111,6 +121,7 @@ export interface FileRouteTypes {
     | '/register'
     | '/log/bottle'
     | '/log/diaper'
+    | '/log/nursing'
     | '/log/pumping'
   id:
     | '__root__'
@@ -122,6 +133,7 @@ export interface FileRouteTypes {
     | '/_app/'
     | '/_app/log/bottle'
     | '/_app/log/diaper'
+    | '/_app/log/nursing'
     | '/_app/log/pumping'
   fileRoutesById: FileRoutesById
 }
@@ -181,6 +193,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLogPumpingRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/log/nursing': {
+      id: '/_app/log/nursing'
+      path: '/log/nursing'
+      fullPath: '/log/nursing'
+      preLoaderRoute: typeof AppLogNursingRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/log/diaper': {
       id: '/_app/log/diaper'
       path: '/log/diaper'
@@ -203,6 +222,7 @@ interface AppRouteChildren {
   AppIndexRoute: typeof AppIndexRoute
   AppLogBottleRoute: typeof AppLogBottleRoute
   AppLogDiaperRoute: typeof AppLogDiaperRoute
+  AppLogNursingRoute: typeof AppLogNursingRoute
   AppLogPumpingRoute: typeof AppLogPumpingRoute
 }
 
@@ -211,6 +231,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppIndexRoute: AppIndexRoute,
   AppLogBottleRoute: AppLogBottleRoute,
   AppLogDiaperRoute: AppLogDiaperRoute,
+  AppLogNursingRoute: AppLogNursingRoute,
   AppLogPumpingRoute: AppLogPumpingRoute,
 }
 

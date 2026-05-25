@@ -8,7 +8,10 @@ import type {
   Diaper,
   DiaperType,
   Household,
+  Nursing,
+  NursingSide,
   Pumping,
+  StartingBreast,
   TokenResponse,
   User,
 } from "./types";
@@ -23,6 +26,8 @@ export const qk = {
     ["babies", babyId, "diapers", from ?? "", to ?? ""] as const,
   pumpings: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "pumpings", from ?? "", to ?? ""] as const,
+  nursings: (babyId: string, from?: string, to?: string) =>
+    ["babies", babyId, "nursing-sessions", from ?? "", to ?? ""] as const,
 };
 
 // --- auth ---
@@ -238,5 +243,61 @@ export function useDeletePumping() {
       api<void>(`/pumpings/${vars.id}`, { method: "DELETE" }),
     onSuccess: (_data, vars) =>
       qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "pumpings"] }),
+  });
+}
+
+// --- nursing sessions ---
+
+export function useNursings(babyId: string | null, from?: string, to?: string) {
+  return useQuery({
+    queryKey: babyId ? qk.nursings(babyId, from, to) : ["babies", "none", "nursing-sessions"],
+    enabled: !!babyId,
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      const qs = params.toString();
+      return api<Nursing[]>(`/babies/${babyId}/nursing-sessions${qs ? `?${qs}` : ""}`);
+    },
+  });
+}
+
+export function useCreateNursing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      babyId: string;
+      started_at: string;
+      ended_at?: string;
+      starting_breast?: StartingBreast;
+      nursing_side: NursingSide;
+      left_duration_s: number;
+      right_duration_s: number;
+      notes?: string;
+    }) =>
+      api<Nursing>(`/babies/${vars.babyId}/nursing-sessions`, {
+        method: "POST",
+        body: {
+          started_at: vars.started_at,
+          ended_at: vars.ended_at,
+          starting_breast: vars.starting_breast,
+          nursing_side: vars.nursing_side,
+          left_duration_s: vars.left_duration_s,
+          right_duration_s: vars.right_duration_s,
+          notes: vars.notes || undefined,
+        },
+      }),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "nursing-sessions"] }),
+  });
+}
+
+export function useDeleteNursing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; babyId: string }) =>
+      api<void>(`/nursing-sessions/${vars.id}`, { method: "DELETE" }),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "nursing-sessions"] }),
   });
 }

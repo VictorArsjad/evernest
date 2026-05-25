@@ -1,17 +1,19 @@
 // Pure helpers for the Today screen "Recent" list. Kept here (rather than
 // inline in the route) so the comparator can be tested in isolation —
 // see recentEvents.test.ts.
-import type { BottleFeed, Diaper, Pumping } from "./types";
+import type { BottleFeed, Diaper, Nursing, Pumping } from "./types";
 
 export type RecentEvent =
   | { kind: "bottle"; at: string; data: BottleFeed }
   | { kind: "diaper"; at: string; data: Diaper }
-  | { kind: "pumping"; at: string; data: Pumping };
+  | { kind: "pumping"; at: string; data: Pumping }
+  | { kind: "nursing"; at: string; data: Nursing };
 
 export interface RecentEventSources {
   bottleFeeds?: readonly BottleFeed[];
   diapers?: readonly Diaper[];
   pumpings?: readonly Pumping[];
+  nursings?: readonly Nursing[];
 }
 
 // compareRecentDesc sorts events newest first by `occurred_at` instant,
@@ -30,7 +32,10 @@ export function compareRecentDesc(a: RecentEvent, b: RecentEvent): number {
 }
 
 // mergeRecent flattens the per-kind query results into a single
-// time-sorted list ready for rendering.
+// time-sorted list ready for rendering. Nursing rows use `started_at`
+// (the moment the session began) as the ordering instant, since they
+// don't have an `occurred_at` column — the schema models them as an
+// interval, not an instant.
 export function mergeRecent(sources: RecentEventSources): RecentEvent[] {
   const events: RecentEvent[] = [
     ...(sources.bottleFeeds ?? []).map<RecentEvent>((f) => ({
@@ -47,6 +52,11 @@ export function mergeRecent(sources: RecentEventSources): RecentEvent[] {
       kind: "pumping",
       at: p.occurred_at,
       data: p,
+    })),
+    ...(sources.nursings ?? []).map<RecentEvent>((n) => ({
+      kind: "nursing",
+      at: n.started_at,
+      data: n,
     })),
   ];
   events.sort(compareRecentDesc);

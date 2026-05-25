@@ -13,7 +13,10 @@ A baby tracking app — feedings, pumping, diapers, growth, and charts — desig
 - Register an account.
 - Complete onboarding (household name + baby name + DOB + sex).
 - Log a bottle feed (amount in ml, expressed-breastmilk or formula, time).
-- See today's feeds with a running daily total, ordered newest first.
+- Log a diaper change (wet / soiled / mixed, time, optional notes).
+- Log a pumping session (amount in ml, optional duration, time).
+- Log a nursing session (side: left / right / both, per-side duration in minutes, starting breast when both, time).
+- See a "Today" hub: tiles for each event kind, a compact running summary (bottle ml / nursing min / pumping ml / diaper count), and a unified Recent list across all kinds, newest first.
 - Stay signed in across hard-reloads (auto-refresh via httpOnly cookie).
 - Sign out.
 

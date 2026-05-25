@@ -64,6 +64,23 @@ export interface Pumping {
   created_at: string;
 }
 
+export type NursingSide = "left" | "right" | "both";
+export type StartingBreast = "left" | "right";
+
+export interface Nursing {
+  id: string;
+  baby_id: string;
+  started_at: string;
+  ended_at?: string | null;
+  starting_breast?: StartingBreast | null;
+  nursing_side: NursingSide;
+  left_duration_s: number;
+  right_duration_s: number;
+  notes?: string | null;
+  source: string;
+  created_at: string;
+}
+
 export interface ApiError {
   error: {
     code: string;
