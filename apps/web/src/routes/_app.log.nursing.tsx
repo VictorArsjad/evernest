@@ -1,9 +1,9 @@
 // Quick-log form for nursing sessions. Most form-heavy of the event kinds:
 // side picker (left/right/both) gates whether one or two duration inputs
 // show. "When" is the session START. End time is auto-computed from
-// started_at + total duration so the user only enters one timestamp; the
-// API still accepts a NULL ended_at for "open" rows but the UI doesn't
-// surface a running-timer affordance yet.
+// started_at + total duration when saving as a closed session; "Start
+// now" submits an open session (no ended_at, no per-side durations) which
+// the Today screen later closes via the in-progress chip.
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
@@ -87,6 +87,24 @@ function LogNursingPage() {
         left_duration_s: leftActive ? Math.round(leftMinNum * 60) : 0,
         right_duration_s: rightActive ? Math.round(rightMinNum * 60) : 0,
         notes: notes.trim() || undefined,
+      },
+      { onSuccess: () => nav({ to: "/" }) },
+    );
+  };
+
+  // Start now: submit an open session (no ended_at, no per-side durations).
+  // Always uses the live `now()` so the user doesn't have to round-trip
+  // through the datetime input — the BE rejects multiple open sessions
+  // per baby, so the failure mode is a clean 409 surfaced inline rather
+  // than an inconsistent state.
+  const onStartNow = () => {
+    if (!babyId) return;
+    create.mutate(
+      {
+        babyId,
+        started_at: new Date().toISOString(),
+        nursing_side: side,
+        starting_breast: side === "both" ? startingBreast : undefined,
       },
       { onSuccess: () => nav({ to: "/" }) },
     );
@@ -187,13 +205,27 @@ function LogNursingPage() {
           <p className="text-sm text-red-400">{create.error?.message ?? "could not save"}</p>
         )}
 
-        <button
-          type="submit"
-          className="btn-primary text-lg"
-          disabled={create.isPending || !isValid}
-        >
-          {create.isPending ? "Saving…" : "Save"}
-        </button>
+        <div className="grid grid-cols-2 gap-2">
+          {/* "Start now" comes first because it's the lower-friction path
+              ("baby latched, fill out details later"), but Save stays the
+              primary visual action so users who already have the durations
+              don't accidentally drop them. */}
+          <button
+            type="button"
+            onClick={onStartNow}
+            disabled={create.isPending}
+            className="rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 text-base font-medium text-accent transition active:scale-95 disabled:opacity-50"
+          >
+            Start now
+          </button>
+          <button
+            type="submit"
+            className="btn-primary text-lg"
+            disabled={create.isPending || !isValid}
+          >
+            {create.isPending ? "Saving…" : "Save"}
+          </button>
+        </div>
       </form>
     </main>
   );
