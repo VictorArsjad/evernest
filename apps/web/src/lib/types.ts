@@ -153,6 +153,10 @@ export interface UserPreferences {
   time_format: "24h" | "12h";
   timezone: string;
   locale: string;
+  // show_recommended_targets gates the Today banner's per-metric progress
+  // bars (which compare today's totals against age-based daily targets).
+  // Default true; user can hide bars from the settings screen.
+  show_recommended_targets: boolean;
   updated_at: string;
 }
 

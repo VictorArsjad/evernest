@@ -97,6 +97,19 @@ function SettingsPage() {
         )}
       </section>
 
+      <section className="card flex flex-col gap-4 p-5">
+        <header>
+          <h2 className="text-base font-semibold">Today banner</h2>
+        </header>
+        {me.isError ? (
+          <p className="text-sm text-red-400">
+            {me.error?.message ?? "Could not load your preferences."}
+          </p>
+        ) : (
+          <TodayBannerFields prefs={me.data} disabled={!me.data} />
+        )}
+      </section>
+
       <HouseholdSection household={household} />
     </PageShell>
   );
@@ -448,6 +461,7 @@ function UserTimeFields({
         time_format: value as "24h" | "12h",
         timezone: prefs.timezone,
         locale: prefs.locale,
+        show_recommended_targets: prefs.show_recommended_targets,
       },
       { onSuccess: () => setSavedTick((t) => t + 1) },
     );
@@ -465,6 +479,74 @@ function UserTimeFields({
           { value: "12h", label: "12-hour (2:30 PM)" },
         ]}
       />
+      <SaveAffordance
+        show={showSaved}
+        pending={update.isPending}
+        error={update.error?.message ?? null}
+      />
+    </div>
+  );
+}
+
+// --- today-banner toggle ---
+
+// TodayBannerFields surfaces the per-user "show recommended targets"
+// toggle that gates the progress bars on the Today screen's daily-totals
+// banner. Single boolean field, so we use a checkbox-style switch rather
+// than a select for a more tactile mobile feel. Uses the same
+// `useUpdateMyPreferences` full-replace endpoint as the clock field —
+// each toggle is its own optimistic mutation.
+function TodayBannerFields({
+  prefs,
+  disabled,
+}: {
+  prefs: UserPreferences | undefined;
+  disabled: boolean;
+}) {
+  const update = useUpdateMyPreferences();
+  const [savedTick, setSavedTick] = useState(0);
+  const [showSaved, setShowSaved] = useState(false);
+  useEffect(() => {
+    if (savedTick === 0) return;
+    setShowSaved(true);
+    const id = window.setTimeout(() => setShowSaved(false), 1800);
+    return () => window.clearTimeout(id);
+  }, [savedTick]);
+
+  const onToggle = (next: boolean) => {
+    if (!prefs) return;
+    update.mutate(
+      {
+        time_format: prefs.time_format,
+        timezone: prefs.timezone,
+        locale: prefs.locale,
+        show_recommended_targets: next,
+      },
+      { onSuccess: () => setSavedTick((t) => t + 1) },
+    );
+  };
+
+  const checked = prefs?.show_recommended_targets ?? true;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <label className="flex cursor-pointer items-start gap-3">
+        <input
+          type="checkbox"
+          disabled={disabled}
+          checked={checked}
+          onChange={(e) => onToggle(e.target.checked)}
+          className="mt-1 h-5 w-5 shrink-0 cursor-pointer rounded border-white/20 bg-bg-subtle text-accent accent-accent focus:ring-2 focus:ring-accent disabled:opacity-50"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium">Show daily target bars</span>
+          <span className="text-[11px] text-white/40">
+            Compare today's totals against typical ranges for your baby's
+            age. These are general guidelines, not medical advice — turn
+            this off if you'd rather not see comparisons.
+          </span>
+        </span>
+      </label>
       <SaveAffordance
         show={showSaved}
         pending={update.isPending}

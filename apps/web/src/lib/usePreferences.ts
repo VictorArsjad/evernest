@@ -16,6 +16,9 @@ export interface CombinedPreferences {
   unit_volume: "ml" | "oz";
   unit_length: "cm" | "in";
   unit_weight: "kg" | "lb";
+  // Display flag for the Today banner's per-metric progress bars; lives
+  // on user_preferences server-side. Default true.
+  show_recommended_targets: boolean;
 }
 
 export const DEFAULT_PREFERENCES: CombinedPreferences = {
@@ -23,6 +26,7 @@ export const DEFAULT_PREFERENCES: CombinedPreferences = {
   unit_volume: "ml",
   unit_length: "cm",
   unit_weight: "kg",
+  show_recommended_targets: true,
 };
 
 // usePreferences accepts a nullable babyId so callers don't need to gate
@@ -40,6 +44,8 @@ export function usePreferences(babyId: string | null): {
     unit_volume: baby.data?.unit_volume ?? DEFAULT_PREFERENCES.unit_volume,
     unit_length: baby.data?.unit_length ?? DEFAULT_PREFERENCES.unit_length,
     unit_weight: baby.data?.unit_weight ?? DEFAULT_PREFERENCES.unit_weight,
+    show_recommended_targets:
+      me.data?.show_recommended_targets ?? DEFAULT_PREFERENCES.show_recommended_targets,
   };
 
   // isLoading is true only on first paint; subsequent baby changes use

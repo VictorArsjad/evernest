@@ -161,11 +161,12 @@ func readBody(r *http.Response) string {
 // --- /v1/me/preferences ---
 
 type prefsResp struct {
-	UserID     uuid.UUID `json:"user_id"`
-	TimeFormat string    `json:"time_format"`
-	Timezone   string    `json:"timezone"`
-	Locale     string    `json:"locale"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	UserID                 uuid.UUID `json:"user_id"`
+	TimeFormat             string    `json:"time_format"`
+	Timezone               string    `json:"timezone"`
+	Locale                 string    `json:"locale"`
+	ShowRecommendedTargets bool      `json:"show_recommended_targets"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 func TestUserPreferences_GetReturnsDefaults(t *testing.T) {
@@ -178,6 +179,11 @@ func TestUserPreferences_GetReturnsDefaults(t *testing.T) {
 	decodeJSON(t, res, &got)
 	if got.TimeFormat != "24h" || got.Timezone != "UTC" || got.Locale != "en" {
 		t.Fatalf("default prefs mismatch: %+v", got)
+	}
+	// Newly-created users should see the Today-banner target bars by
+	// default; users opt out via the settings screen.
+	if !got.ShowRecommendedTargets {
+		t.Fatalf("show_recommended_targets default should be true: %+v", got)
 	}
 }
 
@@ -197,6 +203,12 @@ func TestUserPreferences_PutPersists(t *testing.T) {
 	if got.TimeFormat != "12h" || got.Timezone != "Asia/Jakarta" || got.Locale != "id" {
 		t.Fatalf("put response mismatch: %+v", got)
 	}
+	// Older FE builds may not send show_recommended_targets — the server
+	// should preserve whatever's already on the row (default TRUE for a
+	// freshly-seeded user).
+	if !got.ShowRecommendedTargets {
+		t.Fatalf("show_recommended_targets should be preserved as true when omitted: %+v", got)
+	}
 
 	res = te.do(t, "GET", "/v1/me/preferences", nil, te.token)
 	if res.StatusCode != http.StatusOK {
@@ -206,6 +218,50 @@ func TestUserPreferences_PutPersists(t *testing.T) {
 	decodeJSON(t, res, &refetched)
 	if refetched.TimeFormat != "12h" || refetched.Timezone != "Asia/Jakarta" || refetched.Locale != "id" {
 		t.Fatalf("refetched mismatch: %+v", refetched)
+	}
+}
+
+// TestUserPreferences_PutShowTargets exercises the new toggle: a PUT
+// that flips show_recommended_targets to false should persist that
+// value, and a subsequent PUT that *omits* the field should NOT silently
+// flip it back to the default.
+func TestUserPreferences_PutShowTargets(t *testing.T) {
+	te := newTestEnv(t)
+
+	// Flip the toggle off.
+	res := te.do(t, "PUT", "/v1/me/preferences", map[string]any{
+		"time_format":              "24h",
+		"timezone":                 "UTC",
+		"locale":                   "en",
+		"show_recommended_targets": false,
+	}, te.token)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("put prefs (off): %d %s", res.StatusCode, readBody(res))
+	}
+	var got prefsResp
+	decodeJSON(t, res, &got)
+	if got.ShowRecommendedTargets {
+		t.Fatalf("show_recommended_targets should be false: %+v", got)
+	}
+
+	// Now PUT without the field — old FE build path — and verify the
+	// server preserves the false we just set rather than resetting to
+	// the default.
+	res = te.do(t, "PUT", "/v1/me/preferences", map[string]any{
+		"time_format": "12h",
+		"timezone":    "UTC",
+		"locale":      "en",
+	}, te.token)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("put prefs (omit): %d %s", res.StatusCode, readBody(res))
+	}
+	var preserved prefsResp
+	decodeJSON(t, res, &preserved)
+	if preserved.ShowRecommendedTargets {
+		t.Fatalf("show_recommended_targets should be preserved as false when omitted: %+v", preserved)
+	}
+	if preserved.TimeFormat != "12h" {
+		t.Fatalf("other fields should still update: %+v", preserved)
 	}
 }
 
