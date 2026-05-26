@@ -22,6 +22,7 @@ A baby tracking app — feedings, pumping, diapers, growth, and charts — desig
 - Configure display units on the Settings screen — volume (ml/oz), length (cm/in), weight (kg/lb), and clock (24h/12h). Conversion happens entirely on the FE; historical rows always stay in canonical ml/cm/g.
 - Stay signed in across hard-reloads (auto-refresh via httpOnly cookie).
 - Sign out.
+- Install as a real app on iOS (Safari → Share → Add to Home Screen) or Android (Chrome's install prompt is surfaced via an in-app banner on the Today hub). Runs standalone with a proper app icon, dark status bar, and offline-capable shell via a Workbox-generated service worker.
 
 ## Quick start
 
@@ -89,6 +90,33 @@ Run `make help` for the full target list.
 | Lint everything            | `make lint`                        |
 | Test everything            | `make test`                        |
 | Import BabyPlus export     | `make import-babyplus FILE=... HOUSEHOLD=...` |
+| Regenerate PWA icons       | `cd apps/web && npm run icons`     |
+
+## Generating PWA icons
+
+The home-screen / favicon PNGs under `apps/web/public/` are rasterized
+from a single SVG mark at `apps/web/public/icons/icon-source.svg` using
+[`sharp`](https://sharp.pixelplumbing.com/) (a Node-native image
+library — no ImageMagick / external CLI required).
+
+The generated PNGs are committed so dev runs and CI builds don't have
+to invoke `sharp` from scratch. When you edit the mark:
+
+```bash
+cd apps/web
+npm run icons
+```
+
+That writes:
+
+- `public/icons/icon-{192,512}.png` (regular Android icons)
+- `public/icons/icon-{192,512}-maskable.png` (Android adaptive icons)
+- `public/apple-touch-icon.png` (iOS home-screen icon, `180×180`)
+- `public/favicon-{16,32}.png` (browser tab favicons)
+
+Commit the regenerated PNGs alongside the SVG change. See
+[`apps/web/public/icons/README.md`](apps/web/public/icons/README.md)
+for the full file map and design notes.
 
 ## Importing a BabyPlus export
 

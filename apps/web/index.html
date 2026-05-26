@@ -2,11 +2,36 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="Track your baby's feedings, diapers, growth and more." />
+
+    <!-- Tab + tile favicons. SVG for browsers that support it (sharper at
+         every DPR), PNG fallbacks for Safari and legacy UAs. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+
+    <!-- iOS home-screen icon. Safari ignores the web manifest's icons[]
+         array, so this <link> is the only way to set the install icon on
+         iPhone/iPad. 180x180 is the canonical apple-touch-icon size. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Theme color drives:
+           - Android Chrome address-bar tint (browser tab)
+           - The status-bar background when installed as a PWA on Android
+           - Splash-screen accent color
+         Matches the manifest `theme_color` in vite.config.ts. -->
     <meta name="theme-color" content="#0b1220" />
+
+    <!-- iOS-only standalone-mode meta. `apple-mobile-web-app-capable=yes`
+         is what tells iOS to render in fullscreen (no Safari chrome) once
+         the user adds to Home Screen. `black-translucent` lets the page
+         background bleed under the status bar so our dark UI is uniform.
+         `apple-mobile-web-app-title` overrides the iOS home-screen label. -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Evernest" />
+
     <title>Evernest</title>
   </head>
   <body class="bg-bg-base text-white">

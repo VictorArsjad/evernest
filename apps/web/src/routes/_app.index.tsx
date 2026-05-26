@@ -7,6 +7,7 @@ import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { format, isToday, parseISO } from "date-fns";
 
+import { InstallPromptBanner } from "../components/InstallPromptBanner";
 import { useAuthStore } from "../lib/authStore";
 import { formatElapsedHHMM } from "../lib/nursingTimer";
 import {
@@ -177,6 +178,14 @@ function TodayPage() {
           ))}
         </ul>
       </section>
+
+      {/* Install-prompt banner is the single mount point in the app —
+          deliberately placed at the bottom of Today so it doesn't push
+          the tile grid below the fold on first paint, and so future
+          edits to the header (e.g. CP5's baby switcher) merge cleanly
+          without conflicting with this card. Auto-hides when installed
+          or recently dismissed; see useInstallPrompt for the gating. */}
+      <InstallPromptBanner />
     </PageShell>
   );
 }
