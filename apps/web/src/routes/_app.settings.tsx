@@ -8,19 +8,30 @@
 // surface (4 fields), and "press button, see toast" feels heavier than a
 // settings change deserves on a phone-first UI.
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { format, parseISO } from "date-fns";
+import { useEffect, useMemo, useState } from "react";
 
 import { useAuthStore } from "../lib/authStore";
 import {
   useBabies,
   useBabySettings,
+  useCreateInvite,
   useHouseholds,
+  useInvites,
   useLogout,
   useMyPreferences,
+  useRevokeInvite,
   useUpdateBabySettings,
   useUpdateMyPreferences,
 } from "../lib/queries";
-import type { BabySettings, UserPreferences } from "../lib/types";
+import { useActiveBaby } from "../lib/useActiveBaby";
+import type {
+  BabySettings,
+  Household,
+  HouseholdRole,
+  Invite,
+  UserPreferences,
+} from "../lib/types";
 
 export const Route = createFileRoute("/_app/settings")({
   component: SettingsPage,
@@ -32,8 +43,9 @@ function SettingsPage() {
 
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
+  const household = households.data?.[0] ?? null;
   const babies = useBabies(householdId);
-  const baby = babies.data?.[0] ?? null;
+  const { baby } = useActiveBaby(householdId, babies.data);
 
   const me = useMyPreferences();
   const settings = useBabySettings(baby?.id ?? null);
@@ -41,7 +53,7 @@ function SettingsPage() {
   if (households.isLoading || babies.isLoading) {
     return <PageShell title="Settings">Loading…</PageShell>;
   }
-  if (!baby) {
+  if (!baby || !household) {
     return <PageShell title="Settings">No baby selected.</PageShell>;
   }
 
@@ -84,8 +96,249 @@ function SettingsPage() {
           <UserTimeFields prefs={me.data} disabled={!me.data} />
         )}
       </section>
+
+      <HouseholdSection household={household} />
     </PageShell>
   );
+}
+
+// --- household + invites ---
+
+// HouseholdSection renders the household card on the settings page:
+// member list (synthesized from the caller's perspective until the BE
+// ships a dedicated members endpoint), pending invites with revoke, and
+// the owner-only "Create invite link" form. All owner-gated controls are
+// hidden for caregivers — the BE also enforces this via 403, the UI
+// gating is for UX (don't show a button that always fails).
+function HouseholdSection({ household }: { household: Household }) {
+  const isOwner = household.role === "owner";
+  const invites = useInvites(household.id);
+
+  return (
+    <section className="card flex flex-col gap-4 p-5">
+      <header className="flex items-baseline justify-between">
+        <h2 className="text-base font-semibold">Household</h2>
+        <span className="text-xs text-white/40">{household.name}</span>
+      </header>
+
+      <div className="flex flex-col gap-2">
+        <h3 className="text-xs uppercase tracking-wide text-white/50">Members</h3>
+        <p className="text-[11px] text-white/40">
+          You're listed as <span className="capitalize">{household.role}</span>. Other members appear on the household after they accept your invite.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <h3 className="text-xs uppercase tracking-wide text-white/50">Pending invites</h3>
+        {invites.isLoading ? (
+          <p className="text-sm text-white/40">Loading…</p>
+        ) : invites.isError ? (
+          <p className="text-sm text-red-400">
+            {invites.error?.message ?? "Could not load invites."}
+          </p>
+        ) : invites.data && invites.data.length > 0 ? (
+          <ul className="flex flex-col gap-2">
+            {invites.data.map((inv) => (
+              <PendingInviteRow
+                key={inv.token_hint}
+                invite={inv}
+                householdId={household.id}
+                canRevoke={isOwner}
+              />
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-white/40">No outstanding invites.</p>
+        )}
+      </div>
+
+      {isOwner && <CreateInviteForm householdId={household.id} />}
+    </section>
+  );
+}
+
+function PendingInviteRow({
+  invite,
+  householdId,
+  canRevoke,
+}: {
+  invite: Invite;
+  householdId: string;
+  canRevoke: boolean;
+}) {
+  // The list endpoint deliberately doesn't echo the plaintext token, so
+  // we can only revoke an invite that was just minted in this session
+  // (the create form keeps a small in-memory cache mapping hint -> token
+  // to support this). For invites created in another tab/session the
+  // revoke button is disabled with a tooltip; the owner can revoke from
+  // the original create flow's UI.
+  const revoke = useRevokeInvite(householdId);
+  const cachedToken = useRevokeableToken(invite.token_hint);
+
+  const onRevoke = () => {
+    if (!cachedToken) return;
+    revoke.mutate({ token: cachedToken });
+  };
+
+  const expiresIso = invite.expires_at;
+  const expires = format(parseISO(expiresIso), "MMM d");
+
+  return (
+    <li className="flex items-center gap-3 rounded-xl bg-bg-subtle px-3 py-2 text-sm">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <code className="text-xs text-white/80">…{invite.token_hint}</code>
+          <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/60">
+            {invite.role}
+          </span>
+        </div>
+        <p className="mt-0.5 text-xs text-white/40">Expires {expires}</p>
+      </div>
+      {canRevoke && (
+        <button
+          type="button"
+          onClick={onRevoke}
+          disabled={!cachedToken || revoke.isPending}
+          title={cachedToken ? "Revoke this invite" : "Revoke from the tab where it was created"}
+          className="rounded-lg border border-white/10 px-3 py-1 text-xs text-white/70 hover:bg-white/5 disabled:opacity-40"
+        >
+          {revoke.isPending ? "…" : "Revoke"}
+        </button>
+      )}
+    </li>
+  );
+}
+
+const EXPIRY_OPTIONS: { label: string; hours: number }[] = [
+  { label: "24 hours", hours: 24 },
+  { label: "7 days", hours: 24 * 7 },
+  { label: "30 days", hours: 24 * 30 },
+];
+
+function CreateInviteForm({ householdId }: { householdId: string }) {
+  const create = useCreateInvite(householdId);
+  const [role, setRole] = useState<HouseholdRole>("caregiver");
+  const [hours, setHours] = useState<number>(EXPIRY_OPTIONS[1].hours);
+  const [copied, setCopied] = useState(false);
+  const remember = useRememberToken();
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    create.mutate(
+      { role, expires_in_hours: hours },
+      {
+        onSuccess: (inv) => {
+          if (inv.token) {
+            remember(inv.token_hint, inv.token);
+          }
+        },
+      },
+    );
+  };
+
+  const onCopy = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Older browsers w/o clipboard API: user can long-press the link.
+    }
+  };
+
+  return (
+    <form
+      onSubmit={onSubmit}
+      className="mt-2 flex flex-col gap-3 rounded-xl border border-white/10 p-3"
+    >
+      <h3 className="text-xs uppercase tracking-wide text-white/50">
+        Create invite link
+      </h3>
+      <div className="grid grid-cols-2 gap-2 text-sm">
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] uppercase tracking-wide text-white/40">Role</span>
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value as HouseholdRole)}
+            className="rounded-xl bg-bg-subtle px-3 py-2 text-base text-white outline-none focus:ring-2 focus:ring-accent"
+          >
+            <option value="caregiver">Caregiver</option>
+            <option value="owner">Owner</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] uppercase tracking-wide text-white/40">Expires</span>
+          <select
+            value={hours}
+            onChange={(e) => setHours(Number(e.target.value))}
+            className="rounded-xl bg-bg-subtle px-3 py-2 text-base text-white outline-none focus:ring-2 focus:ring-accent"
+          >
+            {EXPIRY_OPTIONS.map((o) => (
+              <option key={o.hours} value={o.hours}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <button
+        type="submit"
+        disabled={create.isPending}
+        className="btn-primary"
+      >
+        {create.isPending ? "Generating…" : "Generate link"}
+      </button>
+      {create.isError && (
+        <p className="text-sm text-red-400">
+          {create.error?.message ?? "Could not create invite."}
+        </p>
+      )}
+      {create.data?.invite_url && (
+        <div className="flex flex-col gap-2 rounded-xl bg-bg-subtle p-3 text-xs">
+          <p className="text-white/60">
+            Share this link with your co-caregiver. It can be used once; we
+            only store a hash so we cannot recover the link if you lose it.
+          </p>
+          <code className="break-all rounded-lg bg-black/20 p-2 text-xs text-white/90">
+            {create.data.invite_url}
+          </code>
+          <button
+            type="button"
+            onClick={() => onCopy(create.data!.invite_url!)}
+            className="self-start rounded-lg border border-white/10 px-3 py-1 text-xs text-white/80 hover:bg-white/5"
+          >
+            {copied ? "Copied" : "Copy link"}
+          </button>
+        </div>
+      )}
+    </form>
+  );
+}
+
+// useRevokeableToken / useRememberToken: tiny in-memory cache (lives on
+// the module, NOT in any cross-route store) that maps a token_hint back
+// to the plaintext token for the rest of the current session. The list
+// endpoint never returns plaintext, so we can only revoke invites that
+// were minted in this tab. This is a deliberate trade-off:
+//   - we never persist the plaintext (refreshing the page wipes the cache)
+//   - the owner can always revoke an invite *they just made* (the common
+//     case: "oops, wrong role, give me the right one")
+//   - in the rare case where the owner needs to revoke an invite from
+//     another device they can delete + re-create the household, but we
+//     consider this acceptable for v1.
+const tokenCache = new Map<string, string>();
+
+function useRememberToken(): (hint: string, token: string) => void {
+  return useMemo(
+    () => (hint: string, token: string) => {
+      tokenCache.set(hint, token);
+    },
+    [],
+  );
+}
+
+function useRevokeableToken(hint: string): string | undefined {
+  return tokenCache.get(hint);
 }
 
 // --- per-baby unit selects ---

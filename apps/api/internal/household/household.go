@@ -57,19 +57,52 @@ func MustBeMember(ctx context.Context, st *store.Store, userID, householdID uuid
 }
 
 type Handler struct {
-	store  *store.Store
-	logger *slog.Logger
-	v      *validator.Validate
+	store           *store.Store
+	logger          *slog.Logger
+	v               *validator.Validate
+	publicWebOrigin string
 }
 
-func NewHandler(st *store.Store, logger *slog.Logger) *Handler {
-	return &Handler{store: st, logger: logger, v: validator.New(validator.WithRequiredStructEnabled())}
+// NewHandler wires the household + invite handlers. `publicWebOrigin` is
+// used to construct outbound invite URLs ({origin}/invite/{token}); pass
+// the same value `auth` reads for the refresh-cookie scope.
+func NewHandler(st *store.Store, logger *slog.Logger, publicWebOrigin string) *Handler {
+	return &Handler{
+		store:           st,
+		logger:          logger,
+		v:               validator.New(validator.WithRequiredStructEnabled()),
+		publicWebOrigin: publicWebOrigin,
+	}
 }
 
 // Routes mounts under an authenticated router (auth.RequireUser already applied).
+// The caller is expected to mount this under `/households` and to route the
+// `{householdID}/invites` and `{householdID}/babies` subgroups separately.
 func (h *Handler) Routes(r chi.Router) {
 	r.Post("/", h.create)
 	r.Get("/", h.list)
+}
+
+// InviteRoutes mounts under /v1/households/{householdID} on the
+// authenticated router. POST creates an invite, GET lists pending invites
+// for the household.
+func (h *Handler) InviteRoutes(r chi.Router) {
+	h.inviteRoutes(r)
+}
+
+// PublicInviteRoutes mounts the unauthenticated invite info endpoint:
+// GET /v1/invites/{token}. Takes the v1 router directly (not a subrouter)
+// because the authenticated mutation routes also live at /invites/* and
+// chi's r.Route would conflict.
+func (h *Handler) PublicInviteRoutes(r chi.Router) {
+	r.Get("/invites/{token}", h.getPublicInviteInfo)
+}
+
+// AuthedInviteRoutes mounts POST /v1/invites/{token}/accept and
+// DELETE /v1/invites/{token} on the supplied (auth-required) router.
+func (h *Handler) AuthedInviteRoutes(r chi.Router) {
+	r.Post("/invites/{token}/accept", h.acceptInvite)
+	r.Delete("/invites/{token}", h.revokeInvite)
 }
 
 type createReq struct {

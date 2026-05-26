@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { useBabies, useCreateGrowth, useHouseholds } from "../lib/queries";
+import { useActiveBaby } from "../lib/useActiveBaby";
 import {
   displayLengthToCm,
   displayWeightToG,
@@ -55,8 +56,8 @@ function LogGrowthPage() {
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
   const babies = useBabies(householdId);
-  const fallbackBabyId = babies.data?.[0]?.id ?? null;
-  const babyId = babyIdFromSearch ?? fallbackBabyId;
+  const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
+  const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
 
   const [weightStr, setWeightStr] = useState("");
   const [heightStr, setHeightStr] = useState("");

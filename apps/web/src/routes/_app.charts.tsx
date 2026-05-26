@@ -24,6 +24,7 @@ import {
   useLogout,
 } from "../lib/queries";
 import type { ChartDaily } from "../lib/types";
+import { useActiveBaby } from "../lib/useActiveBaby";
 import {
   formatVolume,
   formatWeight,
@@ -64,7 +65,9 @@ function ChartsPage() {
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
   const babies = useBabies(householdId);
-  const baby = babies.data?.[0] ?? null;
+  // Follow the same active-baby selection the Today hub persists so a
+  // baby flip on Today carries over to Charts (and vice versa).
+  const { baby } = useActiveBaby(householdId, babies.data);
 
   // Pinning `now` per-render is fine — TanStack only refetches when
   // the queryKey changes, and the YYYY-MM-DD strings only change at

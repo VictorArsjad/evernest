@@ -22,7 +22,8 @@ import {
   usePumpings,
 } from "../lib/queries";
 import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
-import type { Nursing } from "../lib/types";
+import type { Baby, Nursing } from "../lib/types";
+import { useActiveBaby } from "../lib/useActiveBaby";
 import {
   formatLength,
   formatTime,
@@ -41,9 +42,15 @@ function TodayPage() {
   const logout = useLogout();
 
   const households = useHouseholds();
+  // First household is the "active" household for now — multi-household UI
+  // is out of scope for CP5; only multi-baby. When that lands, lift the
+  // household selection alongside this hook the same way.
   const householdId = households.data?.[0]?.id ?? null;
   const babies = useBabies(householdId);
-  const baby = babies.data?.[0] ?? null;
+  const { baby, setActiveBabyId, all: allBabies } = useActiveBaby(
+    householdId,
+    babies.data,
+  );
 
   useEffect(() => {
     if (households.isSuccess && households.data.length === 0) {
@@ -118,7 +125,17 @@ function TodayPage() {
 
   return (
     <PageShell
-      title={baby.name}
+      titleNode={
+        allBabies.length > 1 ? (
+          <BabySwitcher
+            babies={allBabies}
+            activeId={baby.id}
+            onChange={setActiveBabyId}
+          />
+        ) : (
+          <h1 className="text-2xl font-semibold">{baby.name}</h1>
+        )
+      }
       subtitle={user ? `Signed in as ${user.display_name}` : undefined}
       onSignOut={() => logout.mutate()}
       headerExtra={
@@ -584,12 +601,14 @@ function RecentRow({ ev, prefs }: { ev: RecentEvent; prefs: CombinedPreferences 
 
 function PageShell({
   title,
+  titleNode,
   subtitle,
   onSignOut,
   headerExtra,
   children,
 }: {
-  title: string;
+  title?: string;
+  titleNode?: React.ReactNode;
   subtitle?: string;
   onSignOut?: () => void;
   headerExtra?: React.ReactNode;
@@ -599,7 +618,7 @@ function PageShell({
     <main className="flex flex-1 flex-col gap-5 p-5 pb-12">
       <header className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">{title}</h1>
+          {titleNode ?? <h1 className="text-2xl font-semibold">{title}</h1>}
           {subtitle && <p className="text-xs text-white/50">{subtitle}</p>}
         </div>
         <div className="flex items-center gap-4">
@@ -613,5 +632,37 @@ function PageShell({
       </header>
       {children}
     </main>
+  );
+}
+
+// BabySwitcher renders as a native <select> styled to read like a
+// headline. Native select gets us correct mobile UX (sheet picker on
+// iOS / drop-down on desktop) for free — a custom popover would be
+// strictly worse on phones and we're shipping phone-first.
+function BabySwitcher({
+  babies,
+  activeId,
+  onChange,
+}: {
+  babies: Baby[];
+  activeId: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <label className="flex items-baseline gap-2">
+      <select
+        value={activeId}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="Active baby"
+        className="bg-transparent text-2xl font-semibold text-white outline-none focus:ring-2 focus:ring-accent"
+      >
+        {babies.map((b) => (
+          <option key={b.id} value={b.id}>
+            {b.name}
+          </option>
+        ))}
+      </select>
+      <span aria-hidden className="text-xs text-white/40">▾</span>
+    </label>
   );
 }

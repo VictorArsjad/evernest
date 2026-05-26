@@ -11,6 +11,9 @@ import type {
   DiaperType,
   Growth,
   Household,
+  HouseholdRole,
+  Invite,
+  InviteInfo,
   Nursing,
   NursingSide,
   Pumping,
@@ -39,6 +42,8 @@ export const qk = {
     ["babies", babyId, "charts", "daily", from, to, tz] as const,
   myPreferences: ["me", "preferences"] as const,
   babySettings: (babyId: string) => ["babies", babyId, "settings"] as const,
+  invites: (householdId: string) => ["households", householdId, "invites"] as const,
+  inviteInfo: (token: string) => ["invites", token] as const,
 };
 
 // --- auth ---
@@ -106,6 +111,83 @@ export function useCreateBaby() {
         body: { name: vars.name, date_of_birth: vars.date_of_birth, sex: vars.sex },
       }),
     onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: qk.babies(vars.householdId) }),
+  });
+}
+
+// --- invites ---
+//
+// Invite endpoints split along three TanStack-friendly seams:
+//   - useInvites / useCreateInvite / useRevokeInvite live in the settings
+//     screen (owner can see / create / revoke).
+//   - useInviteInfo + useAcceptInvite power the public redeem route at
+//     /invite/$token. useInviteInfo deliberately disables `retry` for
+//     401/403/404 globally (set in main.tsx) so an expired or revoked
+//     token renders an "invalid link" message immediately.
+
+export function useInvites(householdId: string | null) {
+  return useQuery({
+    queryKey: householdId ? qk.invites(householdId) : ["households", "none", "invites"],
+    enabled: !!householdId,
+    queryFn: () => api<Invite[]>(`/households/${householdId}/invites`),
+  });
+}
+
+export function useCreateInvite(householdId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { role: HouseholdRole; expires_in_hours?: number }) => {
+      if (!householdId) throw new Error("missing householdId");
+      return api<Invite>(`/households/${householdId}/invites`, {
+        method: "POST",
+        body: {
+          role: vars.role,
+          expires_in_hours: vars.expires_in_hours,
+        },
+      });
+    },
+    onSuccess: () => {
+      if (householdId) qc.invalidateQueries({ queryKey: qk.invites(householdId) });
+    },
+  });
+}
+
+export function useRevokeInvite(householdId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    // Revoke takes the plaintext token. The token is only present in memory
+    // on the create response (and again briefly via the create form result
+    // before the user navigates away) — for the list view we use the
+    // token_hint as a display value and revoke via a hint->token mapping
+    // the caller keeps from the create response. In practice the UI only
+    // surfaces "revoke" right after create, so we always have the plaintext.
+    mutationFn: (vars: { token: string }) =>
+      api<void>(`/invites/${vars.token}`, { method: "DELETE" }),
+    onSuccess: () => {
+      if (householdId) qc.invalidateQueries({ queryKey: qk.invites(householdId) });
+    },
+  });
+}
+
+export function useInviteInfo(token: string | null) {
+  return useQuery({
+    queryKey: token ? qk.inviteInfo(token) : ["invites", "none"],
+    enabled: !!token,
+    queryFn: () => api<InviteInfo>(`/invites/${token}`),
+    retry: false,
+  });
+}
+
+export function useAcceptInvite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { token: string }) =>
+      api<Household>(`/invites/${vars.token}/accept`, { method: "POST" }),
+    onSuccess: () => {
+      // A successful accept changes the caller's household list (a new
+      // membership was added), so blow away the cached households + babies.
+      qc.invalidateQueries({ queryKey: qk.households });
+      qc.invalidateQueries({ queryKey: ["households"] });
+    },
   });
 }
 

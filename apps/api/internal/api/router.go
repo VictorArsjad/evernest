@@ -75,7 +75,7 @@ func mountV1(r chi.Router, cfg *config.Config, st *store.Store, logger *slog.Log
 	})
 
 	authH := auth.NewHandler(cfg, st, logger)
-	householdH := household.NewHandler(st, logger)
+	householdH := household.NewHandler(st, logger, cfg.PublicWebOrigin)
 	babyH := baby.NewHandler(st, logger)
 	bottleH := bottlefeed.NewHandler(st, logger)
 	diaperH := diaper.NewHandler(st, logger)
@@ -87,6 +87,15 @@ func mountV1(r chi.Router, cfg *config.Config, st *store.Store, logger *slog.Log
 
 	r.Route("/auth", authH.Routes)
 
+	// Public invite info lookup. Sits OUTSIDE the auth group on purpose:
+	// the FE redeem flow needs to render the "Join {household} as {role}?"
+	// confirmation before the user logs in, and the handler is careful to
+	// only return the minimum metadata (no member list, no household id).
+	// Registered as a direct method-route (not r.Route("/invites", ...)) so
+	// the authed POST/DELETE handlers below can sit at the same path prefix
+	// without a chi subrouter-mount conflict.
+	householdH.PublicInviteRoutes(r)
+
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireUser(cfg.JWTSecret))
 		r.Route("/me", func(r chi.Router) {
@@ -95,8 +104,15 @@ func mountV1(r chi.Router, cfg *config.Config, st *store.Store, logger *slog.Log
 		})
 		r.Route("/households", func(r chi.Router) {
 			householdH.Routes(r)
-			r.Route("/{householdID}", babyH.HouseholdRoutes)
+			r.Route("/{householdID}", func(r chi.Router) {
+				babyH.HouseholdRoutes(r)
+				householdH.InviteRoutes(r)
+			})
 		})
+		// Authenticated invite mutations live alongside the public lookup.
+		// chi handles GET / POST / DELETE separately even when they share
+		// the same path prefix.
+		householdH.AuthedInviteRoutes(r)
 		r.Route("/babies/{babyID}", func(r chi.Router) {
 			babyH.BabyRoutes(r)
 			bottleH.BabyRoutes(r)

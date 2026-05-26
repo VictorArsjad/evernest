@@ -14,11 +14,53 @@ export interface TokenResponse {
   user: User;
 }
 
+export type HouseholdRole = "owner" | "caregiver";
+
 export interface Household {
   id: string;
   name: string;
-  role: "owner" | "caregiver";
+  role: HouseholdRole;
   created_at: string;
+}
+
+// HouseholdMember is the row shape used by the (forthcoming) members
+// listing on the settings page. The BE doesn't expose a list endpoint
+// today — the FE renders members synthesized from /households for now;
+// this type is kept here for the next iteration that adds the dedicated
+// endpoint.
+export interface HouseholdMember {
+  user_id: string;
+  display_name: string;
+  role: HouseholdRole;
+  joined_at: string;
+}
+
+// Invite is the owner-visible shape returned by POST /v1/households/{id}/invites
+// (with `token` + `invite_url` populated) and GET /v1/households/{id}/invites
+// (without — only the short hint is safe to surface in the UI after creation).
+export interface Invite {
+  // Plaintext token, only present on POST response. Never persisted.
+  token?: string;
+  // Last 8 chars of the URL-safe token (or the first 6 bytes of the SHA-256
+  // hash, rendered base64url, when listing). Safe to log.
+  token_hint: string;
+  // Full invite URL `<PUBLIC_WEB_ORIGIN>/invite/<token>` for one-tap copy.
+  // Only present on POST response.
+  invite_url?: string;
+  role: HouseholdRole;
+  expires_at: string;
+  created_at: string;
+  created_by: string;
+  accepted_at?: string | null;
+}
+
+// InviteInfo is the unauthenticated public-lookup shape returned by
+// GET /v1/invites/{token}. Deliberately omits the household id and the
+// inviter identity — the link itself is the only proof the caller offers.
+export interface InviteInfo {
+  household_name: string;
+  role: HouseholdRole;
+  expires_at: string;
 }
 
 export interface Baby {

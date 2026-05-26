@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/_auth'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
+import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as AuthRegisterRouteImport } from './routes/_auth.register'
 import { Route as AuthLoginRouteImport } from './routes/_auth.login'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
@@ -35,6 +36,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AppRoute,
+} as any)
+const InviteTokenRoute = InviteTokenRouteImport.update({
+  id: '/invite/$token',
+  path: '/invite/$token',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AuthRegisterRoute = AuthRegisterRouteImport.update({
   id: '/register',
@@ -94,6 +100,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AppSettingsRoute
   '/login': typeof AuthLoginRoute
   '/register': typeof AuthRegisterRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/log/bottle': typeof AppLogBottleRoute
   '/log/diaper': typeof AppLogDiaperRoute
   '/log/growth': typeof AppLogGrowthRoute
@@ -107,6 +114,7 @@ export interface FileRoutesByTo {
   '/settings': typeof AppSettingsRoute
   '/login': typeof AuthLoginRoute
   '/register': typeof AuthRegisterRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/log/bottle': typeof AppLogBottleRoute
   '/log/diaper': typeof AppLogDiaperRoute
   '/log/growth': typeof AppLogGrowthRoute
@@ -122,6 +130,7 @@ export interface FileRoutesById {
   '/_app/settings': typeof AppSettingsRoute
   '/_auth/login': typeof AuthLoginRoute
   '/_auth/register': typeof AuthRegisterRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/_app/': typeof AppIndexRoute
   '/_app/log/bottle': typeof AppLogBottleRoute
   '/_app/log/diaper': typeof AppLogDiaperRoute
@@ -138,6 +147,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/login'
     | '/register'
+    | '/invite/$token'
     | '/log/bottle'
     | '/log/diaper'
     | '/log/growth'
@@ -151,6 +161,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/login'
     | '/register'
+    | '/invite/$token'
     | '/log/bottle'
     | '/log/diaper'
     | '/log/growth'
@@ -165,6 +176,7 @@ export interface FileRouteTypes {
     | '/_app/settings'
     | '/_auth/login'
     | '/_auth/register'
+    | '/invite/$token'
     | '/_app/'
     | '/_app/log/bottle'
     | '/_app/log/diaper'
@@ -176,6 +188,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   AuthRoute: typeof AuthRouteWithChildren
+  InviteTokenRoute: typeof InviteTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -200,6 +213,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/invite/$token': {
+      id: '/invite/$token'
+      path: '/invite/$token'
+      fullPath: '/invite/$token'
+      preLoaderRoute: typeof InviteTokenRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_auth/register': {
       id: '/_auth/register'
@@ -315,6 +335,7 @@ const AuthRouteWithChildren = AuthRoute._addFileChildren(AuthRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   AuthRoute: AuthRouteWithChildren,
+  InviteTokenRoute: InviteTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
