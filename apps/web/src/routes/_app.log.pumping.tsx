@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { useBabies, useCreatePumping, useHouseholds } from "../lib/queries";
+import { useActiveBaby } from "../lib/useActiveBaby";
 import { displayVolumeToMl, volumeUnitLabel } from "../lib/units";
 import { usePreferences } from "../lib/usePreferences";
 
@@ -34,8 +35,8 @@ function LogPumpingPage() {
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
   const babies = useBabies(householdId);
-  const fallbackBabyId = babies.data?.[0]?.id ?? null;
-  const babyId = babyIdFromSearch ?? fallbackBabyId;
+  const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
+  const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
 
   const [amount, setAmount] = useState("");
   const [durationMin, setDurationMin] = useState("");

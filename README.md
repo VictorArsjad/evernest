@@ -20,6 +20,8 @@ A baby tracking app — feedings, pumping, diapers, growth, and charts — desig
 - See a "Today" hub: tiles for each event kind, a compact running summary (bottle ml / nursing min / pumping ml / diaper count / latest weight), and a unified Recent list across all kinds, newest first.
 - See a "Charts" view: 7 / 14 / 30 day sparklines for every metric (bottle, nursing, pumping, diaper stack, weight) on a single screen.
 - Configure display units on the Settings screen — volume (ml/oz), length (cm/in), weight (kg/lb), and clock (24h/12h). Conversion happens entirely on the FE; historical rows always stay in canonical ml/cm/g.
+- Invite co-caregivers via single-use link (Settings → Household → Generate link). The link is `https://<your-origin>/invite/<token>`; recipients who tap the link sign in (or register), and are automatically added to the household with the role you picked (`owner` or `caregiver`). No email is sent in v1 — copy + share the link yourself.
+- Track multiple babies in a single household. The Today hub renders a baby switcher in the header when more than one exists, and remembers your selection per-household in localStorage so each device keeps its own active baby.
 - Stay signed in across hard-reloads (auto-refresh via httpOnly cookie).
 - Sign out.
 - Install as a real app on iOS (Safari → Share → Add to Home Screen) or Android (Chrome's install prompt is surfaced via an in-app banner on the Today hub). Runs standalone with a proper app icon, dark status bar, and offline-capable shell via a Workbox-generated service worker.

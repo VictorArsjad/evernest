@@ -40,6 +40,12 @@ tags:
     description: Registration, login, refresh, logout, and the authenticated `/me` endpoint.
   - name: Households
     description: Households group babies and members. The creator becomes the `owner`.
+  - name: Invites
+    description: |
+      Link-based household invites. The owner mints a token; recipients
+      tap the link, sign in or register, and are added to the household
+      with the role the owner picked. No email is sent; the FE surfaces
+      the URL for the owner to share manually.
   - name: Babies
     description: A baby belongs to exactly one household. Membership in the household authorizes all baby-scoped routes.
   - name: Bottle Feeds
@@ -319,6 +325,144 @@ paths:
                   created_at: "2026-04-01T12:34:56Z"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/households/{householdID}/invites:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdIDPath"
+    post:
+      tags: [Invites]
+      operationId: createHouseholdInvite
+      summary: Issue a single-use invite link
+      description: |
+        Mints a single-use, URL-safe random token granting the bearer the
+        right to join the household with `role`. The plaintext token is
+        returned ONCE in the response (the BE only stores its SHA-256
+        hash). Caller must be the household `owner`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInviteRequest"
+      responses:
+        "201":
+          description: Invite created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invite"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Invites]
+      operationId: listHouseholdInvites
+      summary: List pending (unaccepted + unexpired) invites
+      description: |
+        Returns every invite for the household that has neither been
+        accepted nor expired. The plaintext `token` is NEVER echoed
+        back — only a non-secret `token_hint` (a short, hash-derived
+        display ID) plus role / expiry. Any member can list invites.
+      responses:
+        "200":
+          description: Pending invites (newest first).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Invite"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/invites/{token}:
+    parameters:
+      - $ref: "#/components/parameters/InviteTokenPath"
+    get:
+      tags: [Invites]
+      operationId: getInviteInfo
+      summary: Public lookup of an invite's display metadata
+      description: |
+        Unauthenticated lookup. Returns only the minimum metadata the FE
+        needs to render a "Join {household} as {role}?" confirmation:
+        household name, role, and expiry. Member list and inviter
+        identity are deliberately omitted. Used / expired / unknown
+        tokens uniformly return 404 to avoid token-enumeration leaks.
+      security: []
+      responses:
+        "200":
+          description: Invite is pending; metadata returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InviteInfo"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Invites]
+      operationId: revokeInvite
+      summary: Revoke an invite (owner or creator only)
+      description: |
+        Deletes the invite, making subsequent accept attempts return 404.
+        Authorization: caller must be the inviting household's `owner`
+        OR the user who created the invite. Non-authorized callers see
+        the same 404 as a missing token to avoid disclosure.
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/invites/{token}/accept:
+    parameters:
+      - $ref: "#/components/parameters/InviteTokenPath"
+    post:
+      tags: [Invites]
+      operationId: acceptInvite
+      summary: Redeem an invite (authenticated)
+      description: |
+        Adds the calling user as a member of the inviting household with
+        the invite's role, and marks the invite as consumed.
+
+        Idempotent re-accept: if the caller is already a member of the
+        household, returns 200 with the household and does NOT consume
+        the invite a second time. The double-click and reload-the-redeem
+        page UX patterns both end up here. Anyone *else* with the link
+        can still accept normally.
+
+        Used / expired / unknown tokens uniformly return 404.
+      responses:
+        "200":
+          description: Joined (or already a member — idempotent).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Household"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -869,6 +1013,20 @@ components:
         format: uuid
       example: 01919b86-3a4d-7c8a-9f1d-2c4e6a7b8d9f
       description: Household UUID.
+    InviteTokenPath:
+      name: token
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 64
+        pattern: ^[A-Za-z0-9_-]+$
+      example: 3xK2-9aBcD8fE7gH6iJ5kL
+      description: |
+        URL-safe base64 invite token (`crypto/rand` 16 bytes → 22 chars,
+        no padding). Treat it as a one-time secret; only the SHA-256 hash
+        is persisted server-side.
     BabyIDPath:
       name: babyID
       in: path
@@ -1045,10 +1203,10 @@ components:
         role:
           type: string
           description: |
-            The caller's role in this household. Currently always `owner`
-            for the creator; future invite/accept flows will introduce
-            other roles.
-          enum: [owner, member]
+            The caller's role in this household. `owner` can create + revoke
+            invites and is granted on household creation; `caregiver` can
+            see all data and log events but cannot invite new members.
+          enum: [owner, caregiver]
           example: owner
         created_at:
           type: string
@@ -1064,6 +1222,82 @@ components:
           minLength: 1
           maxLength: 80
           example: The Arsjad Household
+
+    Invite:
+      type: object
+      required: [token_hint, role, expires_at, created_at, created_by]
+      properties:
+        token:
+          type: string
+          description: |
+            Plaintext URL-safe token. Present on create (POST) only; the
+            list endpoint never echoes this. Treat as a one-time secret.
+          example: 3xK2-9aBcD8fE7gH6iJ5kL
+        token_hint:
+          type: string
+          description: |
+            Short, non-secret display ID for the invite. Derived from
+            the SHA-256 of the token; identical shape on create + list
+            so a freshly-minted invite matches its list row.
+          example: kJ9aBcD8
+        invite_url:
+          type: string
+          format: uri
+          description: |
+            Full URL the FE should surface for sharing. Built as
+            `<PUBLIC_WEB_ORIGIN>/invite/<token>`. Present on create only.
+          example: http://localhost:5173/invite/3xK2-9aBcD8fE7gH6iJ5kL
+        role:
+          type: string
+          enum: [owner, caregiver]
+          example: caregiver
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+          format: uuid
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    InviteInfo:
+      type: object
+      required: [household_name, role, expires_at]
+      properties:
+        household_name:
+          type: string
+          example: The Arsjad Household
+        role:
+          type: string
+          enum: [owner, caregiver]
+          example: caregiver
+        expires_at:
+          type: string
+          format: date-time
+
+    CreateInviteRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [owner, caregiver]
+          description: Role granted to the joiner once they accept.
+          example: caregiver
+        expires_in_hours:
+          type: integer
+          minimum: 1
+          maximum: 720
+          default: 168
+          description: |
+            How long the invite remains valid. Defaults to 168 (7 days).
+            Maximum 720 (30 days) — a deliberate cap so an unused invite
+            doesn't linger indefinitely.
 
     Baby:
       type: object

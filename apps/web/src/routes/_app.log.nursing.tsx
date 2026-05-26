@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { useBabies, useCreateNursing, useHouseholds } from "../lib/queries";
+import { useActiveBaby } from "../lib/useActiveBaby";
 import type { NursingSide, StartingBreast } from "../lib/types";
 
 const search = z.object({
@@ -42,8 +43,8 @@ function LogNursingPage() {
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
   const babies = useBabies(householdId);
-  const fallbackBabyId = babies.data?.[0]?.id ?? null;
-  const babyId = babyIdFromSearch ?? fallbackBabyId;
+  const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
+  const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
 
   const [side, setSide] = useState<NursingSide>("both");
   // starting_breast only meaningful when both sides nursed.

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { useBabies, useCreateBottleFeed, useHouseholds } from "../lib/queries";
+import { useActiveBaby } from "../lib/useActiveBaby";
 import { displayVolumeToMl, volumeUnitLabel } from "../lib/units";
 import { usePreferences } from "../lib/usePreferences";
 
@@ -35,8 +36,11 @@ function LogBottlePage() {
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
   const babies = useBabies(householdId);
-  const fallbackBabyId = babies.data?.[0]?.id ?? null;
-  const babyId = babyIdFromSearch ?? fallbackBabyId;
+  // Fall back to the user's active baby selection (persisted per household
+  // in localStorage by useActiveBaby) when the form is opened directly
+  // without a `?babyId=` search param, e.g. via a PWA shortcut.
+  const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
+  const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
 
   const [amount, setAmount] = useState("");
   const [source, setSource] = useState<"breast" | "formula">("formula");

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { z } from "zod";
 
 import { useBabies, useCreateDiaper, useHouseholds } from "../lib/queries";
+import { useActiveBaby } from "../lib/useActiveBaby";
 import type { DiaperType } from "../lib/types";
 
 const search = z.object({
@@ -33,8 +34,8 @@ function LogDiaperPage() {
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
   const babies = useBabies(householdId);
-  const fallbackBabyId = babies.data?.[0]?.id ?? null;
-  const babyId = babyIdFromSearch ?? fallbackBabyId;
+  const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
+  const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
 
   const [type, setType] = useState<DiaperType>("wet");
   const [occurredLocal, setOccurredLocal] = useState(nowLocalDatetimeInput);
