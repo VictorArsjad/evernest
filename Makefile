@@ -93,10 +93,13 @@ migrate-up: ## Apply all pending migrations
 migrate-down: ## Roll back one migration
 	migrate -path apps/api/migrations -database "$(DATABASE_URL_LOCAL)" down 1
 
-import-babyplus: ## Import BabyPlus JSON export. Usage: make import-babyplus FILE=... HOUSEHOLD=... [BABY=...]
-	@if [ -z "$(FILE)" ] || [ -z "$(HOUSEHOLD)" ]; then echo "usage: make import-babyplus FILE=path/to/export.json HOUSEHOLD=<uuid> [BABY=<uuid>]"; exit 1; fi
+import-babyplus: ## Import BabyPlus JSON export. Usage: make import-babyplus FILE=... HOUSEHOLD=... [BABY=...] [DRY_RUN=1] [VERBOSE=1]
+	@if [ -z "$(FILE)" ] || [ -z "$(HOUSEHOLD)" ]; then echo "usage: make import-babyplus FILE=path/to/export.json HOUSEHOLD=<uuid> [BABY=<uuid>] [DRY_RUN=1] [VERBOSE=1]"; exit 1; fi
 	cd apps/api && DATABASE_URL="$(DATABASE_URL_LOCAL)" go run ./cmd/import-babyplus \
-		--file="$(FILE)" --household="$(HOUSEHOLD)" $(if $(BABY),--baby="$(BABY)")
+		--file="$(FILE)" --household="$(HOUSEHOLD)" \
+		$(if $(BABY),--baby="$(BABY)") \
+		$(if $(DRY_RUN),--dry-run) \
+		$(if $(VERBOSE),--verbose)
 
 # ---------- frontend (apps/web) ----------
 .PHONY: web-install web-dev web-build web-test web-lint
