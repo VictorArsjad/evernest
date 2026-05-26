@@ -99,3 +99,34 @@ export interface ApiError {
     message: string;
   };
 }
+
+// --- charts ---
+
+// ChartGrowthSnapshot carries the latest non-null reading per metric on a
+// given day. Each field is independently nullable (a single growth row can
+// record only one metric), and `null` distinguishes "no measurement" from
+// "measured as 0" — the FE renders the difference as a broken line vs a
+// zero baseline.
+export interface ChartGrowthSnapshot {
+  weight_g: number | null;
+  height_cm: number | null;
+  head_cm: number | null;
+}
+
+// ChartDaily mirrors the Go `chart.Daily` struct — keep the field names in
+// sync. One row per calendar day in the requested timezone.
+export interface ChartDaily {
+  date: string;
+  bottle_ml: number;
+  nursing_minutes: number;
+  pumping_ml: number;
+  diaper_total: number;
+  diaper_wet: number;
+  diaper_soiled: number;
+  diaper_mixed: number;
+  growth: ChartGrowthSnapshot;
+}
+
+export interface ChartsDailyResponse {
+  days: ChartDaily[];
+}

@@ -110,6 +110,11 @@ function TodayPage() {
       title={baby.name}
       subtitle={user ? `Signed in as ${user.display_name}` : undefined}
       onSignOut={() => logout.mutate()}
+      headerExtra={
+        <Link to="/charts" className="text-xs text-white/60 hover:text-white">
+          View charts →
+        </Link>
+      }
     >
       <section className="grid grid-cols-3 gap-3">
         <Tile to="/log/bottle" babyId={baby.id} icon="🍼" label="Bottle" accent="peach" />
@@ -520,25 +525,30 @@ function PageShell({
   title,
   subtitle,
   onSignOut,
+  headerExtra,
   children,
 }: {
   title: string;
   subtitle?: string;
   onSignOut?: () => void;
+  headerExtra?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <main className="flex flex-1 flex-col gap-5 p-5 pb-12">
-      <header className="flex items-start justify-between">
+      <header className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">{title}</h1>
           {subtitle && <p className="text-xs text-white/50">{subtitle}</p>}
         </div>
-        {onSignOut && (
-          <button onClick={onSignOut} className="text-xs text-white/50 hover:text-white">
-            Sign out
-          </button>
-        )}
+        <div className="flex items-center gap-4">
+          {headerExtra}
+          {onSignOut && (
+            <button onClick={onSignOut} className="text-xs text-white/50 hover:text-white">
+              Sign out
+            </button>
+          )}
+        </div>
       </header>
       {children}
     </main>

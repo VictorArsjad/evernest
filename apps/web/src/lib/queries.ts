@@ -5,6 +5,7 @@ import { useAuthStore } from "./authStore";
 import type {
   Baby,
   BottleFeed,
+  ChartsDailyResponse,
   Diaper,
   DiaperType,
   Growth,
@@ -32,6 +33,8 @@ export const qk = {
   openNursing: (babyId: string) => ["babies", babyId, "nursing-sessions", "open"] as const,
   growths: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "growths", from ?? "", to ?? ""] as const,
+  chartsDaily: (babyId: string, from: string, to: string, tz: string) =>
+    ["babies", babyId, "charts", "daily", from, to, tz] as const,
 };
 
 // --- auth ---
@@ -400,5 +403,36 @@ export function useDeleteGrowth() {
       api<void>(`/growths/${vars.id}`, { method: "DELETE" }),
     onSuccess: (_data, vars) =>
       qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "growths"] }),
+  });
+}
+
+// --- charts ---
+
+// useDailyCharts pulls the unified daily-aggregations endpoint that powers
+// the /charts screen. `from`/`to` are YYYY-MM-DD strings interpreted in
+// `tz` (an IANA timezone name). The query is disabled until babyId + both
+// dates are present so the FE can mount the route before defaults resolve.
+export function useDailyCharts(
+  babyId: string | null,
+  from: string | null,
+  to: string | null,
+  tz: string,
+) {
+  const enabled = !!babyId && !!from && !!to;
+  return useQuery({
+    queryKey: enabled
+      ? qk.chartsDaily(babyId as string, from as string, to as string, tz)
+      : ["babies", "none", "charts", "daily"],
+    enabled,
+    queryFn: () => {
+      const params = new URLSearchParams({
+        from: from as string,
+        to: to as string,
+        tz,
+      });
+      return api<ChartsDailyResponse>(
+        `/babies/${babyId}/charts/daily?${params.toString()}`,
+      );
+    },
   });
 }
