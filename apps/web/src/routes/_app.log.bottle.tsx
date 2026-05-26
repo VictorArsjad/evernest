@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { useBabies, useCreateBottleFeed, useHouseholds } from "../lib/queries";
+import { displayVolumeToMl, volumeUnitLabel } from "../lib/units";
+import { usePreferences } from "../lib/usePreferences";
 
 const search = z.object({
   babyId: z.string().uuid().optional(),
@@ -49,19 +51,27 @@ function LogBottlePage() {
   }, []);
 
   const create = useCreateBottleFeed();
+  const { prefs } = usePreferences(babyId);
+  const volLabel = volumeUnitLabel(prefs.unit_volume);
+  // Display-unit bounds: 2000 ml ≈ 67.6 oz. Same physical ceiling
+  // either way; the canonical-ml clamp on submit re-applies the API
+  // constraint so a partial-conversion edge can't sneak past.
+  const maxDisplay = prefs.unit_volume === "oz" ? 70 : 2000;
 
   const amountNum = useMemo(() => Number.parseFloat(amount), [amount]);
-  const isAmountValid = Number.isFinite(amountNum) && amountNum > 0 && amountNum <= 2000;
+  const isAmountValid =
+    Number.isFinite(amountNum) && amountNum > 0 && amountNum <= maxDisplay;
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!babyId || !isAmountValid) return;
+    const canonicalMl = displayVolumeToMl(amountNum, prefs.unit_volume);
     create.mutate(
       {
         babyId,
         occurred_at: localToISO(occurredLocal),
         milk_source: source,
-        amount_ml: amountNum,
+        amount_ml: canonicalMl,
         notes: notes.trim() || undefined,
       },
       { onSuccess: () => nav({ to: "/" }) },
@@ -90,15 +100,15 @@ function LogBottlePage() {
               inputMode="decimal"
               autoFocus
               required
-              min={1}
-              max={2000}
-              step={1}
-              placeholder="60"
+              min={prefs.unit_volume === "oz" ? 0.1 : 1}
+              max={maxDisplay}
+              step={prefs.unit_volume === "oz" ? 0.1 : 1}
+              placeholder={prefs.unit_volume === "oz" ? "2" : "60"}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="w-full rounded-xl bg-bg-subtle px-4 py-4 text-4xl font-semibold tabular-nums outline-none focus:ring-2 focus:ring-accent"
             />
-            <span className="text-xl text-white/60">ml</span>
+            <span className="text-xl text-white/60">{volLabel}</span>
           </div>
         </div>
 

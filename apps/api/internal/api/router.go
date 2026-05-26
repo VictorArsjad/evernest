@@ -25,6 +25,7 @@ import (
 	"github.com/varsjad/evernest/apps/api/internal/household"
 	"github.com/varsjad/evernest/apps/api/internal/httpx"
 	"github.com/varsjad/evernest/apps/api/internal/nursing"
+	"github.com/varsjad/evernest/apps/api/internal/preferences"
 	"github.com/varsjad/evernest/apps/api/internal/pumping"
 	"github.com/varsjad/evernest/apps/api/internal/store"
 )
@@ -42,7 +43,7 @@ func NewRouter(cfg *config.Config, st *store.Store, logger *slog.Logger) http.Ha
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{cfg.CORSAllowOrigin},
-		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Authorization", "Content-Type"},
 		AllowCredentials: true,
 		MaxAge:           300,
@@ -82,12 +83,16 @@ func mountV1(r chi.Router, cfg *config.Config, st *store.Store, logger *slog.Log
 	nursingH := nursing.NewHandler(st, logger)
 	growthH := growth.NewHandler(st, logger)
 	chartH := chart.NewHandler(st, logger)
+	prefsH := preferences.NewHandler(st, logger)
 
 	r.Route("/auth", authH.Routes)
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireUser(cfg.JWTSecret))
-		r.Get("/me", authH.Me)
+		r.Route("/me", func(r chi.Router) {
+			r.Get("/", authH.Me)
+			prefsH.MeRoutes(r)
+		})
 		r.Route("/households", func(r chi.Router) {
 			householdH.Routes(r)
 			r.Route("/{householdID}", babyH.HouseholdRoutes)

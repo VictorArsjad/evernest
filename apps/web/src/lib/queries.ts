@@ -4,6 +4,7 @@ import { api } from "./api";
 import { useAuthStore } from "./authStore";
 import type {
   Baby,
+  BabySettings,
   BottleFeed,
   ChartsDailyResponse,
   Diaper,
@@ -16,6 +17,7 @@ import type {
   StartingBreast,
   TokenResponse,
   User,
+  UserPreferences,
 } from "./types";
 
 export const qk = {
@@ -35,6 +37,8 @@ export const qk = {
     ["babies", babyId, "growths", from ?? "", to ?? ""] as const,
   chartsDaily: (babyId: string, from: string, to: string, tz: string) =>
     ["babies", babyId, "charts", "daily", from, to, tz] as const,
+  myPreferences: ["me", "preferences"] as const,
+  babySettings: (babyId: string) => ["babies", babyId, "settings"] as const,
 };
 
 // --- auth ---
@@ -403,6 +407,63 @@ export function useDeleteGrowth() {
       api<void>(`/growths/${vars.id}`, { method: "DELETE" }),
     onSuccess: (_data, vars) =>
       qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "growths"] }),
+  });
+}
+
+// --- preferences (user + per-baby settings) ---
+
+// useMyPreferences fetches the per-user prefs row (time_format, tz,
+// locale). Defaults are seeded on user-create so this query should never
+// 404 in practice; the BE also lazily seeds-on-read as a safety net.
+export function useMyPreferences() {
+  return useQuery({
+    queryKey: qk.myPreferences,
+    queryFn: () => api<UserPreferences>("/me/preferences"),
+  });
+}
+
+export function useUpdateMyPreferences() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      time_format: "24h" | "12h";
+      timezone: string;
+      locale: string;
+    }) => api<UserPreferences>("/me/preferences", { method: "PUT", body: vars }),
+    onSuccess: (data) => qc.setQueryData(qk.myPreferences, data),
+  });
+}
+
+// useBabySettings fetches the per-baby unit prefs (volume/length/weight).
+// `babyId` is nullable because the Today/charts shell mounts before the
+// active baby resolves; the query stays disabled until then so we don't
+// spam a 400.
+export function useBabySettings(babyId: string | null) {
+  return useQuery({
+    queryKey: babyId ? qk.babySettings(babyId) : ["babies", "none", "settings"],
+    enabled: !!babyId,
+    queryFn: () => api<BabySettings>(`/babies/${babyId}/settings`),
+  });
+}
+
+export function useUpdateBabySettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      babyId: string;
+      unit_volume: "ml" | "oz";
+      unit_length: "cm" | "in";
+      unit_weight: "kg" | "lb";
+    }) =>
+      api<BabySettings>(`/babies/${vars.babyId}/settings`, {
+        method: "PUT",
+        body: {
+          unit_volume: vars.unit_volume,
+          unit_length: vars.unit_length,
+          unit_weight: vars.unit_weight,
+        },
+      }),
+    onSuccess: (data, vars) => qc.setQueryData(qk.babySettings(vars.babyId), data),
   });
 }
 

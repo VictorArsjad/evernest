@@ -76,6 +76,8 @@ func (h *Handler) HouseholdRoutes(r chi.Router) {
 // BabyRoutes mounts under /v1/babies/{babyID}.
 func (h *Handler) BabyRoutes(r chi.Router) {
 	r.Get("/", h.get)
+	r.Get("/settings", h.getSettings)
+	r.Put("/settings", h.putSettings)
 }
 
 type createReq struct {

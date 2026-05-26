@@ -14,6 +14,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AuthRegisterRouteImport } from './routes/_auth.register'
 import { Route as AuthLoginRouteImport } from './routes/_auth.login'
+import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppOnboardingRouteImport } from './routes/_app.onboarding'
 import { Route as AppChartsRouteImport } from './routes/_app.charts'
 import { Route as AppLogPumpingRouteImport } from './routes/_app.log.pumping'
@@ -44,6 +45,11 @@ const AuthLoginRoute = AuthLoginRouteImport.update({
   id: '/login',
   path: '/login',
   getParentRoute: () => AuthRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AppRoute,
 } as any)
 const AppOnboardingRoute = AppOnboardingRouteImport.update({
   id: '/onboarding',
@@ -85,6 +91,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/charts': typeof AppChartsRoute
   '/onboarding': typeof AppOnboardingRoute
+  '/settings': typeof AppSettingsRoute
   '/login': typeof AuthLoginRoute
   '/register': typeof AuthRegisterRoute
   '/log/bottle': typeof AppLogBottleRoute
@@ -97,6 +104,7 @@ export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/charts': typeof AppChartsRoute
   '/onboarding': typeof AppOnboardingRoute
+  '/settings': typeof AppSettingsRoute
   '/login': typeof AuthLoginRoute
   '/register': typeof AuthRegisterRoute
   '/log/bottle': typeof AppLogBottleRoute
@@ -111,6 +119,7 @@ export interface FileRoutesById {
   '/_auth': typeof AuthRouteWithChildren
   '/_app/charts': typeof AppChartsRoute
   '/_app/onboarding': typeof AppOnboardingRoute
+  '/_app/settings': typeof AppSettingsRoute
   '/_auth/login': typeof AuthLoginRoute
   '/_auth/register': typeof AuthRegisterRoute
   '/_app/': typeof AppIndexRoute
@@ -126,6 +135,7 @@ export interface FileRouteTypes {
     | '/'
     | '/charts'
     | '/onboarding'
+    | '/settings'
     | '/login'
     | '/register'
     | '/log/bottle'
@@ -138,6 +148,7 @@ export interface FileRouteTypes {
     | '/'
     | '/charts'
     | '/onboarding'
+    | '/settings'
     | '/login'
     | '/register'
     | '/log/bottle'
@@ -151,6 +162,7 @@ export interface FileRouteTypes {
     | '/_auth'
     | '/_app/charts'
     | '/_app/onboarding'
+    | '/_app/settings'
     | '/_auth/login'
     | '/_auth/register'
     | '/_app/'
@@ -202,6 +214,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/login'
       preLoaderRoute: typeof AuthLoginRouteImport
       parentRoute: typeof AuthRoute
+    }
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
     }
     '/_app/onboarding': {
       id: '/_app/onboarding'
@@ -258,6 +277,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppChartsRoute: typeof AppChartsRoute
   AppOnboardingRoute: typeof AppOnboardingRoute
+  AppSettingsRoute: typeof AppSettingsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppLogBottleRoute: typeof AppLogBottleRoute
   AppLogDiaperRoute: typeof AppLogDiaperRoute
@@ -269,6 +289,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppChartsRoute: AppChartsRoute,
   AppOnboardingRoute: AppOnboardingRoute,
+  AppSettingsRoute: AppSettingsRoute,
   AppIndexRoute: AppIndexRoute,
   AppLogBottleRoute: AppLogBottleRoute,
   AppLogDiaperRoute: AppLogDiaperRoute,

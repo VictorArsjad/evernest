@@ -24,7 +24,7 @@ export class ApiError extends Error {
 }
 
 interface RequestOpts {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   // Skip the access-token attachment + 401-refresh dance. Used for /auth/*.
   skipAuth?: boolean;
