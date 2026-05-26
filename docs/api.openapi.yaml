@@ -2,29 +2,104 @@ openapi: 3.1.0
 info:
   title: Evernest API
   version: 0.1.0
+  license:
+    name: MIT
+    identifier: MIT
   description: |
     Baby tracking backend. All requests/responses are JSON. All authenticated
     endpoints require `Authorization: Bearer <access_token>`; the refresh
-    token lives in an `httpOnly` cookie. All event POSTs accept a client-
-    supplied `id` (UUIDv7) and are idempotent via `ON CONFLICT (id) DO NOTHING`.
+    token lives in an `httpOnly` cookie scoped to `/v1/auth`.
+
+    ## Idempotency
+
+    Every event POST (bottle-feeds, diapers, pumpings, nursing-sessions,
+    growths) accepts a client-supplied `id` (UUIDv7) in the request body.
+    Inserts use `ON CONFLICT (id) DO NOTHING`, so retrying a write with the
+    same `id` returns the existing row with status `201` instead of
+    erroring. If `id` is omitted the server generates one. There is no
+    separate `Idempotency-Key` header — the body field IS the idempotency
+    key.
+
+    ## Errors
+
+    All non-2xx responses share the same envelope:
+
+    ```json
+    { "error": { "code": "validation_failed", "message": "..." } }
+    ```
+
+    `code` is a stable machine-readable string (e.g. `validation_failed`,
+    `unauthorized`, `not_found`). `message` is human-readable.
 servers:
   - url: http://localhost:8080
     description: local dev
+tags:
+  - name: Health
+    description: Liveness/readiness probes (unauthenticated).
+  - name: Auth
+    description: Registration, login, refresh, logout, and the authenticated `/me` endpoint.
+  - name: Households
+    description: Households group babies and members. The creator becomes the `owner`.
+  - name: Babies
+    description: A baby belongs to exactly one household. Membership in the household authorizes all baby-scoped routes.
+  - name: Bottle Feeds
+    description: Logged bottle feeds (expressed breastmilk or formula). Volume in mL.
+  - name: Diapers
+    description: Diaper changes (wet / soiled / mixed).
+  - name: Pumpings
+    description: Pumping sessions (mother expressing milk). Volume in mL, optional duration.
+  - name: Nursing Sessions
+    description: At-the-breast feeds. Per-side duration in seconds, no volume.
+  - name: Growths
+    description: Growth measurements. Any combination of weight (g), height (cm), head circumference (cm); at least one required.
+security:
+  - bearerAuth: []
 paths:
   /healthz:
     get:
+      tags: [Health]
+      operationId: healthLive
       summary: Liveness probe
+      security: []
       responses:
-        "200": { description: ok }
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+              example:
+                status: ok
   /readyz:
     get:
+      tags: [Health]
+      operationId: healthReady
       summary: Readiness probe (pings the DB)
+      security: []
       responses:
-        "200": { description: ready }
-        "503": { description: not ready }
+        "200":
+          description: DB is reachable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+              example:
+                status: ready
+        "503":
+          description: DB is not reachable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+              example:
+                status: not_ready
+                err: "dial tcp 127.0.0.1:5432: connect: connection refused"
   /v1/ping:
     get:
+      tags: [Health]
+      operationId: ping
       summary: Sanity check inside the v1 namespace
+      security: []
       responses:
         "200":
           description: pong
@@ -32,8 +107,1472 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [pong]
                 properties:
-                  pong: { type: string }
-# Full schemas for auth, households, babies, events, charts are
-# documented inline in handler comments and will be added here as
-# endpoints land.
+                  pong:
+                    type: string
+                    example: evernest
+
+  /v1/auth/register:
+    post:
+      tags: [Auth]
+      operationId: registerUser
+      summary: Register a new user
+      description: |
+        Creates a user, seeds their `user_preferences` row, issues an access
+        token in the JSON body, and sets a refresh cookie scoped to
+        `/v1/auth`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: User created. Access token in body, refresh cookie set.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/RefreshCookie"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: A user with that email already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: user_exists
+                  message: email already registered
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Log in with email + password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated. Access token in body, refresh cookie set.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/RefreshCookie"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Invalid email or password (also returned when the user does not exist, to avoid enumeration).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: invalid_credentials
+                  message: invalid email or password
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      summary: Rotate the refresh token and issue a new access token
+      description: |
+        Reads the `evernest_refresh` cookie, rotates it (the previous token is
+        marked replaced), and issues a fresh access token. If the refresh
+        cookie is missing or invalid the server clears the cookie and
+        responds with `401`.
+      security:
+        - refreshCookie: []
+      responses:
+        "200":
+          description: Refreshed. New access token in body, rotated refresh cookie set.
+          headers:
+            Set-Cookie:
+              $ref: "#/components/headers/RefreshCookie"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: No refresh cookie or the cookie's token is invalid/expired/revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                noCookie:
+                  summary: Missing refresh cookie
+                  value:
+                    error:
+                      code: no_refresh_cookie
+                      message: no refresh cookie
+                invalid:
+                  summary: Cookie present but token is invalid/expired/revoked
+                  value:
+                    error:
+                      code: invalid_refresh
+                      message: refresh token invalid
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Log out (revoke refresh token, clear cookie)
+      description: |
+        Revokes the refresh token referenced by the cookie (best-effort; no
+        error if the cookie is missing or the token is already revoked) and
+        clears the cookie. Always responds `204`.
+      security:
+        - refreshCookie: []
+      responses:
+        "204":
+          description: Logged out.
+
+  /v1/me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: Get the authenticated user's profile
+      responses:
+        "200":
+          description: The current user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/households:
+    post:
+      tags: [Households]
+      operationId: createHousehold
+      summary: Create a household
+      description: |
+        Creates a household and adds the caller as its `owner` member.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateHouseholdRequest"
+      responses:
+        "201":
+          description: Household created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Household"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Households]
+      operationId: listHouseholds
+      summary: List households the caller is a member of
+      responses:
+        "200":
+          description: Households (oldest first).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Household"
+              example:
+                - id: 01919b86-3a4d-7c8a-9f1d-2c4e6a7b8d9f
+                  name: The Arsjad Household
+                  role: owner
+                  created_at: "2026-04-01T12:34:56Z"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/households/{householdID}/babies:
+    parameters:
+      - $ref: "#/components/parameters/HouseholdIDPath"
+    post:
+      tags: [Babies]
+      operationId: createBaby
+      summary: Create a baby in a household
+      description: |
+        Creates a baby and seeds a default `baby_settings` row. Caller must
+        be a member of the household.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBabyRequest"
+      responses:
+        "201":
+          description: Baby created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Baby"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Babies]
+      operationId: listBabies
+      summary: List babies in a household
+      responses:
+        "200":
+          description: Babies (oldest first).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Baby"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/babies/{babyID}:
+    parameters:
+      - $ref: "#/components/parameters/BabyIDPath"
+    get:
+      tags: [Babies]
+      operationId: getBaby
+      summary: Get a baby by id
+      responses:
+        "200":
+          description: The baby.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Baby"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/babies/{babyID}/bottle-feeds:
+    parameters:
+      - $ref: "#/components/parameters/BabyIDPath"
+    post:
+      tags: [Bottle Feeds]
+      operationId: createBottleFeed
+      summary: Log a bottle feed
+      description: |
+        Idempotent on the request body's `id` field. Replays of the same
+        `id` return the existing row with `201`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBottleFeedRequest"
+      responses:
+        "201":
+          description: Bottle feed created (or returned unchanged on idempotent replay).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BottleFeed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Bottle Feeds]
+      operationId: listBottleFeeds
+      summary: List bottle feeds for a baby
+      parameters:
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: Bottle feeds in the [from, to) window, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BottleFeed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/bottle-feeds/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    delete:
+      tags: [Bottle Feeds]
+      operationId: deleteBottleFeed
+      summary: Delete a bottle feed
+      description: |
+        Idempotent: deletes return `204` whether or not the row existed.
+      responses:
+        "204":
+          description: Deleted (or no row matched).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/babies/{babyID}/diapers:
+    parameters:
+      - $ref: "#/components/parameters/BabyIDPath"
+    post:
+      tags: [Diapers]
+      operationId: createDiaper
+      summary: Log a diaper change
+      description: Idempotent on the request body's `id` field.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDiaperRequest"
+      responses:
+        "201":
+          description: Diaper created (or returned unchanged on idempotent replay).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Diaper"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Diapers]
+      operationId: listDiapers
+      summary: List diaper changes for a baby
+      parameters:
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: Diapers in the [from, to) window, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Diaper"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/diapers/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    delete:
+      tags: [Diapers]
+      operationId: deleteDiaper
+      summary: Delete a diaper change
+      description: Idempotent.
+      responses:
+        "204":
+          description: Deleted (or no row matched).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/babies/{babyID}/pumpings:
+    parameters:
+      - $ref: "#/components/parameters/BabyIDPath"
+    post:
+      tags: [Pumpings]
+      operationId: createPumping
+      summary: Log a pumping session
+      description: Idempotent on the request body's `id` field.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePumpingRequest"
+      responses:
+        "201":
+          description: Pumping created (or returned unchanged on idempotent replay).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pumping"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Pumpings]
+      operationId: listPumpings
+      summary: List pumping sessions for a baby
+      parameters:
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: Pumpings in the [from, to) window, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Pumping"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/pumpings/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    delete:
+      tags: [Pumpings]
+      operationId: deletePumping
+      summary: Delete a pumping session
+      description: Idempotent.
+      responses:
+        "204":
+          description: Deleted (or no row matched).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/babies/{babyID}/nursing-sessions:
+    parameters:
+      - $ref: "#/components/parameters/BabyIDPath"
+    post:
+      tags: [Nursing Sessions]
+      operationId: createNursingSession
+      summary: Log a nursing session
+      description: |
+        Idempotent on the request body's `id` field. `ended_at`, when
+        provided, must be `>= started_at`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNursingRequest"
+      responses:
+        "201":
+          description: Nursing session created (or returned unchanged on idempotent replay).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Nursing"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Nursing Sessions]
+      operationId: listNursingSessions
+      summary: List nursing sessions for a baby
+      parameters:
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: Nursing sessions in the [from, to) window (by `started_at`), newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Nursing"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/nursing-sessions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    delete:
+      tags: [Nursing Sessions]
+      operationId: deleteNursingSession
+      summary: Delete a nursing session
+      description: Idempotent.
+      responses:
+        "204":
+          description: Deleted (or no row matched).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/babies/{babyID}/growths:
+    parameters:
+      - $ref: "#/components/parameters/BabyIDPath"
+    post:
+      tags: [Growths]
+      operationId: createGrowth
+      summary: Log a growth measurement
+      description: |
+        Idempotent on the request body's `id` field. At least one of
+        `weight_g`, `height_cm`, or `head_circumference_cm` MUST be present
+        and `> 0`. The DB enforces "at least one non-NULL" via a CHECK; the
+        handler enforces the `> 0` floor in Go.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGrowthRequest"
+      responses:
+        "201":
+          description: Growth created (or returned unchanged on idempotent replay).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Growth"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Growths]
+      operationId: listGrowths
+      summary: List growth measurements for a baby
+      description: |
+        The default `from`/`to` window is wider than for other event kinds
+        (last 365 days through 24h from now) since growth measurements are
+        infrequent.
+      parameters:
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: Growths in the [from, to) window (by `measured_at`), newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Growth"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/growths/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    delete:
+      tags: [Growths]
+      operationId: deleteGrowth
+      summary: Delete a growth measurement
+      description: Idempotent.
+      responses:
+        "204":
+          description: Deleted (or no row matched).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # -----------------------------------------------------------------------
+  # Coming soon
+  # -----------------------------------------------------------------------
+  # CP3 Charts will add `GET /v1/babies/{babyID}/charts/daily` in its own
+  # PR. The schema for that endpoint is intentionally NOT defined here —
+  # see the parallel CP3 Charts agent's PR for the full spec.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        HMAC-signed JWT access token issued by `/v1/auth/{register,login,refresh}`.
+        Send as `Authorization: Bearer <token>`.
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: evernest_refresh
+      description: |
+        `httpOnly`, opaque (random) refresh token. Set by
+        `/v1/auth/{register,login,refresh}` and consumed by
+        `/v1/auth/{refresh,logout}`. Cookie path is `/v1/auth`.
+
+  headers:
+    RefreshCookie:
+      description: |
+        Sets the `evernest_refresh` cookie. `HttpOnly`, `Path=/v1/auth`.
+        `Secure` and `SameSite` follow the server's `PUBLIC_WEB_ORIGIN`
+        and `COOKIE_SAMESITE` config.
+      schema:
+        type: string
+      example: evernest_refresh=opaque-random-token; Path=/v1/auth; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax
+
+  parameters:
+    HouseholdIDPath:
+      name: householdID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 01919b86-3a4d-7c8a-9f1d-2c4e6a7b8d9f
+      description: Household UUID.
+    BabyIDPath:
+      name: babyID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 01919b87-9a8c-7f2d-b1c3-4d5e6f7a8b9c
+      description: Baby UUID.
+    IDPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 01919b88-1c2d-7e3f-a4b5-c6d7e8f9a0b1
+      description: Resource UUID (event id).
+    FromQuery:
+      name: from
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date-time
+      example: "2026-05-26T00:00:00Z"
+      description: |
+        Inclusive lower bound (RFC3339). Defaults to 24h ago for events,
+        365 days ago for growths.
+    ToQuery:
+      name: to
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date-time
+      example: "2026-05-27T00:00:00Z"
+      description: |
+        Exclusive upper bound (RFC3339). Defaults to now+24h. `from` must
+        be strictly before `to`.
+    LimitQuery:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 200
+      example: 200
+      description: Max rows returned. Out-of-range values are silently clamped to the default.
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable error code.
+              example: validation_failed
+            message:
+              type: string
+              description: Human-readable message (may be the raw validator output).
+              example: "Key: 'createReq.AmountML' Error:Field validation for 'AmountML' failed on the 'gt' tag"
+      example:
+        error:
+          code: validation_failed
+          message: "Key: 'createReq.AmountML' Error:Field validation for 'AmountML' failed on the 'gt' tag"
+
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+        err:
+          type: string
+          description: Present only on `not_ready` from `/readyz`.
+          example: "dial tcp 127.0.0.1:5432: connect: connection refused"
+
+    User:
+      type: object
+      required: [id, email, display_name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 01919b85-1c2d-7e3f-a4b5-c6d7e8f9a0b1
+        email:
+          type: string
+          format: email
+          example: victor@example.com
+        display_name:
+          type: string
+          example: Victor
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-04-01T12:34:56Z"
+      example:
+        id: 01919b85-1c2d-7e3f-a4b5-c6d7e8f9a0b1
+        email: victor@example.com
+        display_name: Victor
+        created_at: "2026-04-01T12:34:56Z"
+
+    RegisterRequest:
+      type: object
+      required: [email, password, display_name]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: Lowercased and trimmed server-side.
+          example: victor@example.com
+        password:
+          type: string
+          minLength: 8
+          maxLength: 200
+          format: password
+          example: "correct horse battery staple"
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 80
+          example: Victor
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: victor@example.com
+        password:
+          type: string
+          format: password
+          example: "correct horse battery staple"
+
+    TokenResponse:
+      type: object
+      required: [access_token, expires_at, user]
+      properties:
+        access_token:
+          type: string
+          description: "JWT access token. Send as `Authorization: Bearer <token>`."
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwMTkxOWI4NS0xYzJkLTdlM2YtYTRiNS1jNmQ3ZThmOWEwYjEiLCJleHAiOjE3MTcwMDAwMDB9.signature
+        expires_at:
+          type: string
+          format: date-time
+          description: Access token expiry (RFC3339).
+          example: "2026-05-26T11:34:56Z"
+        user:
+          $ref: "#/components/schemas/User"
+
+    Household:
+      type: object
+      required: [id, name, role, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 01919b86-3a4d-7c8a-9f1d-2c4e6a7b8d9f
+        name:
+          type: string
+          example: The Arsjad Household
+        role:
+          type: string
+          description: |
+            The caller's role in this household. Currently always `owner`
+            for the creator; future invite/accept flows will introduce
+            other roles.
+          enum: [owner, member]
+          example: owner
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-04-01T12:34:56Z"
+
+    CreateHouseholdRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+          example: The Arsjad Household
+
+    Baby:
+      type: object
+      required: [id, household_id, name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 01919b87-9a8c-7f2d-b1c3-4d5e6f7a8b9c
+        household_id:
+          type: string
+          format: uuid
+          example: 01919b86-3a4d-7c8a-9f1d-2c4e6a7b8d9f
+        name:
+          type: string
+          example: Mira
+        date_of_birth:
+          type: string
+          format: date
+          description: Date in `YYYY-MM-DD`. Omitted if unknown.
+          example: "2026-03-15"
+        sex:
+          type: string
+          enum: [female, male, unspecified]
+          description: Omitted if unspecified by client (the column is nullable).
+          example: female
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-04-02T08:00:00Z"
+
+    CreateBabyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+          example: Mira
+        date_of_birth:
+          type: string
+          format: date
+          description: |
+            `YYYY-MM-DD`. Empty string is treated the same as omitted.
+          example: "2026-03-15"
+        sex:
+          type: string
+          enum: [female, male, unspecified]
+          example: female
+
+    BottleFeed:
+      type: object
+      required: [id, baby_id, occurred_at, milk_source, amount_ml, source, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 01919b88-1c2d-7e3f-a4b5-c6d7e8f9a0b1
+        baby_id:
+          type: string
+          format: uuid
+          example: 01919b87-9a8c-7f2d-b1c3-4d5e6f7a8b9c
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T08:30:00Z"
+        milk_source:
+          type: string
+          enum: [breast, formula]
+          example: breast
+        amount_ml:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 2000
+          example: 120
+        notes:
+          type: string
+          example: "took it eagerly"
+        source:
+          type: string
+          description: How the row was created. Always `manual` from this endpoint; importers may set other values.
+          example: manual
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T08:30:01Z"
+
+    CreateBottleFeedRequest:
+      type: object
+      required: [occurred_at, milk_source, amount_ml]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: |
+            Optional client-supplied UUIDv7. Used for idempotency: replays
+            with the same `id` return the existing row.
+          example: 01919b88-1c2d-7e3f-a4b5-c6d7e8f9a0b1
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T08:30:00Z"
+        milk_source:
+          type: string
+          enum: [breast, formula]
+          example: breast
+        amount_ml:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 2000
+          description: Volume in millilitres. Must be `> 0` and `<= 2000`.
+          example: 120
+        notes:
+          type: string
+          example: "took it eagerly"
+
+    Diaper:
+      type: object
+      required: [id, baby_id, occurred_at, type, source, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 01919b89-2d3e-7f4a-b5c6-d7e8f9a0b1c2
+        baby_id:
+          type: string
+          format: uuid
+          example: 01919b87-9a8c-7f2d-b1c3-4d5e6f7a8b9c
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T09:15:00Z"
+        type:
+          type: string
+          enum: [wet, soiled, mixed]
+          example: mixed
+        notes:
+          type: string
+          example: "blowout"
+        source:
+          type: string
+          example: manual
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T09:15:01Z"
+
+    CreateDiaperRequest:
+      type: object
+      required: [occurred_at, type]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Optional client-supplied UUIDv7 for idempotency.
+          example: 01919b89-2d3e-7f4a-b5c6-d7e8f9a0b1c2
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T09:15:00Z"
+        type:
+          type: string
+          enum: [wet, soiled, mixed]
+          example: mixed
+        notes:
+          type: string
+          example: "blowout"
+
+    Pumping:
+      type: object
+      required: [id, baby_id, occurred_at, amount_ml, source, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 01919b8a-3e4f-7a5b-c6d7-e8f9a0b1c2d3
+        baby_id:
+          type: string
+          format: uuid
+          example: 01919b87-9a8c-7f2d-b1c3-4d5e6f7a8b9c
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T10:00:00Z"
+        amount_ml:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 2000
+          example: 90
+        duration_seconds:
+          type: integer
+          minimum: 0
+          maximum: 21600
+          description: Pumping duration in seconds (0..6h). Optional.
+          example: 1200
+        notes:
+          type: string
+          example: "morning session"
+        source:
+          type: string
+          example: manual
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T10:00:01Z"
+
+    CreatePumpingRequest:
+      type: object
+      required: [occurred_at, amount_ml]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Optional client-supplied UUIDv7 for idempotency.
+          example: 01919b8a-3e4f-7a5b-c6d7-e8f9a0b1c2d3
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T10:00:00Z"
+        amount_ml:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 2000
+          description: Volume in mL. Note `>= 0` (zero is allowed for "tracked but no output").
+          example: 90
+        duration_seconds:
+          type: integer
+          minimum: 0
+          maximum: 21600
+          example: 1200
+        notes:
+          type: string
+          example: "morning session"
+
+    Nursing:
+      type: object
+      required:
+        - id
+        - baby_id
+        - started_at
+        - nursing_side
+        - left_duration_s
+        - right_duration_s
+        - source
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 01919b8b-4f5a-7b6c-d7e8-f9a0b1c2d3e4
+        baby_id:
+          type: string
+          format: uuid
+          example: 01919b87-9a8c-7f2d-b1c3-4d5e6f7a8b9c
+        started_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T11:00:00Z"
+        ended_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T11:25:00Z"
+        starting_breast:
+          type: string
+          enum: [left, right]
+          description: Which breast started the session. Optional even when `nursing_side` is `both`.
+          example: left
+        nursing_side:
+          type: string
+          enum: [left, right, both]
+          example: both
+        left_duration_s:
+          type: integer
+          minimum: 0
+          maximum: 21600
+          example: 600
+        right_duration_s:
+          type: integer
+          minimum: 0
+          maximum: 21600
+          example: 900
+        notes:
+          type: string
+          example: "fell asleep on right"
+        source:
+          type: string
+          example: manual
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T11:25:01Z"
+
+    CreateNursingRequest:
+      type: object
+      required: [started_at, nursing_side]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Optional client-supplied UUIDv7 for idempotency.
+          example: 01919b8b-4f5a-7b6c-d7e8-f9a0b1c2d3e4
+        started_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T11:00:00Z"
+        ended_at:
+          type: string
+          format: date-time
+          description: Optional. When provided, must be `>= started_at`.
+          example: "2026-05-26T11:25:00Z"
+        starting_breast:
+          type: string
+          enum: [left, right]
+          description: Optional even when `nursing_side` is `both`.
+          example: left
+        nursing_side:
+          type: string
+          enum: [left, right, both]
+          example: both
+        left_duration_s:
+          type: integer
+          minimum: 0
+          maximum: 21600
+          example: 600
+        right_duration_s:
+          type: integer
+          minimum: 0
+          maximum: 21600
+          example: 900
+        notes:
+          type: string
+          example: "fell asleep on right"
+
+    Growth:
+      type: object
+      required: [id, baby_id, measured_at, source, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 01919b8c-5a6b-7c7d-e8f9-a0b1c2d3e4f5
+        baby_id:
+          type: string
+          format: uuid
+          example: 01919b87-9a8c-7f2d-b1c3-4d5e6f7a8b9c
+        measured_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T07:00:00Z"
+        weight_g:
+          type: number
+          format: double
+          description: Grams. `> 0` and `< 30000`.
+          example: 5400
+        height_cm:
+          type: number
+          format: double
+          description: Centimetres. `> 0` and `< 200`.
+          example: 58.5
+        head_circumference_cm:
+          type: number
+          format: double
+          description: Centimetres. `> 0` and `< 80`.
+          example: 39.2
+        notes:
+          type: string
+          example: "post-bath"
+        source:
+          type: string
+          example: manual
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T07:00:01Z"
+
+    CreateGrowthRequest:
+      type: object
+      required: [measured_at]
+      description: |
+        At least one of `weight_g`, `height_cm`, `head_circumference_cm`
+        must be present and `> 0`.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Optional client-supplied UUIDv7 for idempotency.
+          example: 01919b8c-5a6b-7c7d-e8f9-a0b1c2d3e4f5
+        measured_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T07:00:00Z"
+        weight_g:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          exclusiveMaximum: 30000
+          example: 5400
+        height_cm:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          exclusiveMaximum: 200
+          example: 58.5
+        head_circumference_cm:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          exclusiveMaximum: 80
+          example: 39.2
+        notes:
+          type: string
+          example: "post-bath"
+
+  responses:
+    BadRequest:
+      description: Malformed request body, query parameter, or path id.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            badJSON:
+              summary: Body could not be decoded
+              value:
+                error:
+                  code: bad_request
+                  message: "json: unknown field \"foo\""
+            badID:
+              summary: Path id is not a valid UUID
+              value:
+                error:
+                  code: bad_id
+                  message: invalid baby id
+            badRange:
+              summary: from/to query parameter is malformed or inverted
+              value:
+                error:
+                  code: bad_range
+                  message: from must be RFC3339
+    Unauthorized:
+      description: Missing/invalid bearer token (or, on `/v1/auth/refresh`, a missing/invalid refresh cookie).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: unauthorized
+              message: missing bearer token
+    Forbidden:
+      description: The caller is authenticated but not a member of the household that owns the resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: forbidden
+              message: not a member of this household
+    NotFound:
+      description: The household or baby referenced in the path does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: not_found
+              message: baby not found
+    ValidationError:
+      description: |
+        Request was syntactically valid JSON but failed semantic validation
+        (struct tag rules, enum constraints, range bounds, etc.). The
+        `message` field is the raw validator output.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            missingField:
+              summary: Required field missing
+              value:
+                error:
+                  code: validation_failed
+                  message: "Key: 'createReq.OccurredAt' Error:Field validation for 'OccurredAt' failed on the 'required' tag"
+            outOfRange:
+              summary: Numeric value out of range
+              value:
+                error:
+                  code: validation_failed
+                  message: "Key: 'createReq.AmountML' Error:Field validation for 'AmountML' failed on the 'gt' tag"
+            growthAllNull:
+              summary: Growth POST with no measurements
+              value:
+                error:
+                  code: validation_failed
+                  message: "at least one of weight_g, height_cm, head_circumference_cm is required"
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: internal
+              message: could not create baby
