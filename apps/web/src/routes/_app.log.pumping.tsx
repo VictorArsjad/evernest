@@ -6,6 +6,8 @@ import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { useBabies, useCreatePumping, useHouseholds } from "../lib/queries";
+import { displayVolumeToMl, volumeUnitLabel } from "../lib/units";
+import { usePreferences } from "../lib/usePreferences";
 
 const search = z.object({
   babyId: z.string().uuid().optional(),
@@ -47,9 +49,13 @@ function LogPumpingPage() {
   }, []);
 
   const create = useCreatePumping();
+  const { prefs } = usePreferences(babyId);
+  const volLabel = volumeUnitLabel(prefs.unit_volume);
+  const maxDisplay = prefs.unit_volume === "oz" ? 70 : 2000;
 
   const amountNum = useMemo(() => Number.parseFloat(amount), [amount]);
-  const isAmountValid = Number.isFinite(amountNum) && amountNum >= 0 && amountNum <= 2000;
+  const isAmountValid =
+    Number.isFinite(amountNum) && amountNum >= 0 && amountNum <= maxDisplay;
   const durationMinNum = useMemo(() => Number.parseFloat(durationMin), [durationMin]);
   const isDurationValid =
     durationMin === "" || (Number.isFinite(durationMinNum) && durationMinNum >= 0 && durationMinNum <= 360);
@@ -61,7 +67,7 @@ function LogPumpingPage() {
       {
         babyId,
         occurred_at: localToISO(occurredLocal),
-        amount_ml: amountNum,
+        amount_ml: displayVolumeToMl(amountNum, prefs.unit_volume),
         duration_seconds:
           durationMin === "" ? undefined : Math.round(durationMinNum * 60),
         notes: notes.trim() || undefined,
@@ -93,14 +99,14 @@ function LogPumpingPage() {
               autoFocus
               required
               min={0}
-              max={2000}
-              step={1}
-              placeholder="80"
+              max={maxDisplay}
+              step={prefs.unit_volume === "oz" ? 0.1 : 1}
+              placeholder={prefs.unit_volume === "oz" ? "3" : "80"}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="w-full rounded-xl bg-bg-subtle px-4 py-4 text-4xl font-semibold tabular-nums outline-none focus:ring-2 focus:ring-accent"
             />
-            <span className="text-xl text-white/60">ml</span>
+            <span className="text-xl text-white/60">{volLabel}</span>
           </div>
         </div>
 

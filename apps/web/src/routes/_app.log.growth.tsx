@@ -1,14 +1,23 @@
 // Quick-log form for growth measurements. Three optional numeric inputs
-// (weight in grams, height in cm, head circumference in cm) plus a "When"
-// timestamp. The form is only valid when at least one of the three numbers
-// is filled in — matches the API rule and keeps the user from accidentally
-// submitting an empty measurement. No unit-conversion UI yet (CP4 ships
-// kg/lb/oz toggles); the inputs accept the canonical unit straight.
+// (weight, height, head circumference) plus a "When" timestamp. The form
+// is only valid when at least one of the three numbers is filled in —
+// matches the API rule and keeps the user from accidentally submitting
+// an empty measurement. Inputs accept the user's chosen display units
+// (kg/lb for weight, cm/in for length); we convert to canonical g/cm at
+// submit time so the BE always sees the canonical row regardless of
+// what the user prefers to look at.
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import { useBabies, useCreateGrowth, useHouseholds } from "../lib/queries";
+import {
+  displayLengthToCm,
+  displayWeightToG,
+  lengthUnitLabel,
+  weightUnitLabel,
+} from "../lib/units";
+import { usePreferences } from "../lib/usePreferences";
 
 const search = z.object({
   babyId: z.string().uuid().optional(),
@@ -62,21 +71,28 @@ function LogGrowthPage() {
   }, []);
 
   const create = useCreateGrowth();
+  const { prefs } = usePreferences(babyId);
+  const wLabel = weightUnitLabel(prefs.unit_weight);
+  const lLabel = lengthUnitLabel(prefs.unit_length);
 
-  // Bounds match the API:
-  //   weight 0 < g < 30,000  (≈ 30kg ceiling)
-  //   height 0 < cm < 200
-  //   head   0 < cm < 80
-  const weightG = useMemo(() => parseOptional(weightStr, 30000), [weightStr]);
-  const heightCM = useMemo(() => parseOptional(heightStr, 200), [heightStr]);
-  const headCM = useMemo(() => parseOptional(headStr, 80), [headStr]);
+  // Display-unit bounds: ceilings derived from the API's canonical
+  // bounds (30,000 g / 200 cm / 80 cm) so we can't accept a value that
+  // would 422 on submit. Numbers rounded up so e.g. the lb ceiling
+  // covers 30 kg exactly without a sub-unit gap.
+  const weightMaxDisplay = prefs.unit_weight === "lb" ? 70 : 30; // 70 lb ≈ 31.7 kg, 30 kg = 30,000 g
+  const heightMaxDisplay = prefs.unit_length === "in" ? 80 : 200;
+  const headMaxDisplay = prefs.unit_length === "in" ? 32 : 80;
+
+  const weightDisp = useMemo(() => parseOptional(weightStr, weightMaxDisplay), [weightStr, weightMaxDisplay]);
+  const heightDisp = useMemo(() => parseOptional(heightStr, heightMaxDisplay), [heightStr, heightMaxDisplay]);
+  const headDisp = useMemo(() => parseOptional(headStr, headMaxDisplay), [headStr, headMaxDisplay]);
 
   const allFieldsValid =
-    !Number.isNaN(weightG as number) &&
-    !Number.isNaN(heightCM as number) &&
-    !Number.isNaN(headCM as number);
+    !Number.isNaN(weightDisp as number) &&
+    !Number.isNaN(heightDisp as number) &&
+    !Number.isNaN(headDisp as number);
   const atLeastOnePresent =
-    weightG !== undefined || heightCM !== undefined || headCM !== undefined;
+    weightDisp !== undefined || heightDisp !== undefined || headDisp !== undefined;
   const isValid = allFieldsValid && atLeastOnePresent;
 
   const onSubmit = (e: React.FormEvent) => {
@@ -86,9 +102,18 @@ function LogGrowthPage() {
       {
         babyId,
         measured_at: localToISO(measuredLocal),
-        weight_g: weightG,
-        height_cm: heightCM,
-        head_circumference_cm: headCM,
+        weight_g:
+          weightDisp !== undefined
+            ? displayWeightToG(weightDisp, prefs.unit_weight)
+            : undefined,
+        height_cm:
+          heightDisp !== undefined
+            ? displayLengthToCm(heightDisp, prefs.unit_length)
+            : undefined,
+        head_circumference_cm:
+          headDisp !== undefined
+            ? displayLengthToCm(headDisp, prefs.unit_length)
+            : undefined,
         notes: notes.trim() || undefined,
       },
       { onSuccess: () => nav({ to: "/" }) },
@@ -115,27 +140,27 @@ function LogGrowthPage() {
 
         <MeasurementInput
           label="Weight"
-          unit="g"
+          unit={wLabel}
           value={weightStr}
           onChange={setWeightStr}
-          placeholder="6500"
-          step={1}
+          placeholder={prefs.unit_weight === "lb" ? "14" : "6.5"}
+          step={prefs.unit_weight === "lb" ? 0.1 : 0.01}
           autoFocus
         />
         <MeasurementInput
           label="Height"
-          unit="cm"
+          unit={lLabel}
           value={heightStr}
           onChange={setHeightStr}
-          placeholder="62"
+          placeholder={prefs.unit_length === "in" ? "24" : "62"}
           step={0.1}
         />
         <MeasurementInput
           label="Head circumference"
-          unit="cm"
+          unit={lLabel}
           value={headStr}
           onChange={setHeadStr}
-          placeholder="42"
+          placeholder={prefs.unit_length === "in" ? "16" : "42"}
           step={0.1}
         />
 

@@ -18,6 +18,8 @@ A baby tracking app — feedings, pumping, diapers, growth, and charts — desig
 - Log a nursing session (side: left / right / both, per-side duration in minutes, starting breast when both, time).
 - Log a growth measurement (any combination of weight in grams, height in cm, head circumference in cm; at least one required).
 - See a "Today" hub: tiles for each event kind, a compact running summary (bottle ml / nursing min / pumping ml / diaper count / latest weight), and a unified Recent list across all kinds, newest first.
+- See a "Charts" view: 7 / 14 / 30 day sparklines for every metric (bottle, nursing, pumping, diaper stack, weight) on a single screen.
+- Configure display units on the Settings screen — volume (ml/oz), length (cm/in), weight (kg/lb), and clock (24h/12h). Conversion happens entirely on the FE; historical rows always stay in canonical ml/cm/g.
 - Stay signed in across hard-reloads (auto-refresh via httpOnly cookie).
 - Sign out.
 

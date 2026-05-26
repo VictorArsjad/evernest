@@ -23,6 +23,13 @@ import {
 } from "../lib/queries";
 import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
 import type { Nursing } from "../lib/types";
+import {
+  formatLength,
+  formatTime,
+  formatVolume,
+  formatWeight,
+} from "../lib/units";
+import { type CombinedPreferences, usePreferences } from "../lib/usePreferences";
 
 export const Route = createFileRoute("/_app/")({
   component: TodayPage,
@@ -63,6 +70,10 @@ function TodayPage() {
   const diapers = useDiapers(baby?.id ?? null, todayStart, todayEnd);
   const pumpings = usePumpings(baby?.id ?? null, todayStart, todayEnd);
   const nursings = useNursings(baby?.id ?? null, todayStart, todayEnd);
+  // Display preferences for the active baby + user. Falls back to
+  // canonical units while the queries hydrate so the tile grid renders
+  // immediately rather than blocking on a settings round-trip.
+  const { prefs } = usePreferences(baby?.id ?? null);
   // Cheap "is one running?" check — the BE returns 204 when nothing is
   // open, which the hook normalizes to `null`. We render the in-progress
   // chip in place of the standard Nursing tile when this resolves to a row.
@@ -111,15 +122,29 @@ function TodayPage() {
       subtitle={user ? `Signed in as ${user.display_name}` : undefined}
       onSignOut={() => logout.mutate()}
       headerExtra={
-        <Link to="/charts" className="text-xs text-white/60 hover:text-white">
-          View charts →
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link to="/charts" className="text-xs text-white/60 hover:text-white">
+            View charts →
+          </Link>
+          <Link
+            to="/settings"
+            className="text-xs text-white/60 hover:text-white"
+            aria-label="Settings"
+            title="Settings"
+          >
+            ⚙︎
+          </Link>
+        </div>
       }
     >
       <section className="grid grid-cols-3 gap-3">
         <Tile to="/log/bottle" babyId={baby.id} icon="🍼" label="Bottle" accent="peach" />
         {openNursing.data ? (
-          <NursingInProgressTile session={openNursing.data} babyId={baby.id} />
+          <NursingInProgressTile
+            session={openNursing.data}
+            babyId={baby.id}
+            prefs={prefs}
+          />
         ) : (
           <Tile to="/log/nursing" babyId={baby.id} icon="👶" label="Nursing" accent="mint" />
         )}
@@ -132,6 +157,7 @@ function TodayPage() {
           nursingMin={nursingMin}
           diaperCount={diaperCount}
           latestWeightG={latestWeightG}
+          prefs={prefs}
         />
       </section>
 
@@ -147,7 +173,7 @@ function TodayPage() {
         )}
         <ul className="flex flex-col gap-2">
           {recent.map((ev) => (
-            <RecentRow key={`${ev.kind}-${ev.data.id}`} ev={ev} />
+            <RecentRow key={`${ev.kind}-${ev.data.id}`} ev={ev} prefs={prefs} />
           ))}
         </ul>
       </section>
@@ -204,9 +230,11 @@ function Tile({
 function NursingInProgressTile({
   session,
   babyId,
+  prefs,
 }: {
   session: Nursing;
   babyId: string;
+  prefs: CombinedPreferences;
 }) {
   const [now, setNow] = useState(() => new Date());
   const [showEnd, setShowEnd] = useState(false);
@@ -246,6 +274,7 @@ function NursingInProgressTile({
           session={session}
           babyId={babyId}
           now={now}
+          prefs={prefs}
           onClose={() => setShowEnd(false)}
         />
       )}
@@ -257,11 +286,13 @@ function EndNursingModal({
   session,
   babyId,
   now,
+  prefs,
   onClose,
 }: {
   session: Nursing;
   babyId: string;
   now: Date;
+  prefs: CombinedPreferences;
   onClose: () => void;
 }) {
   // Default each side to half the elapsed minutes when nursing both
@@ -321,7 +352,7 @@ function EndNursingModal({
           </button>
         </div>
         <p className="mb-4 text-xs text-white/50">
-          Started {format(parseISO(session.started_at), "HH:mm")} · {formatElapsedHHMM(session.started_at, now)} elapsed
+          Started {formatTime(session.started_at, prefs.time_format)} · {formatElapsedHHMM(session.started_at, now)} elapsed
         </p>
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-white/50">
@@ -372,58 +403,88 @@ function SummaryTile({
   nursingMin,
   diaperCount,
   latestWeightG,
+  prefs,
 }: {
   totalMl: number;
   pumpedMl: number;
   nursingMin: number;
   diaperCount: number;
   latestWeightG: number | null;
+  prefs: CombinedPreferences;
 }) {
   // The first four rows are "today" totals; weight is the latest reading
   // ever (growth measurements are infrequent — a daily total would mostly
   // be 0). It piggy-backs on the same tile so we don't blow out the 2x3
-  // grid for a one-row stat.
+  // grid for a one-row stat. Volume + weight values respect the user's
+  // chosen display unit; canonical math (sum of ml) happens upstream so
+  // the formatter only has to convert + render.
   return (
     <div className="flex aspect-square flex-col items-start justify-center gap-[2px] rounded-2xl border border-white/10 bg-bg-surface p-3">
       <span className="text-[10px] uppercase tracking-wide text-white/40">Today</span>
-      <SummaryRow icon="🍼" value={totalMl} unit="ml" />
+      <SummaryRow icon="🍼" rendered={formatVolume(totalMl, prefs.unit_volume)} />
       <SummaryRow icon="👶" value={nursingMin} unit="min" />
-      <SummaryRow icon="💧" value={pumpedMl} unit="ml" />
+      <SummaryRow icon="💧" rendered={formatVolume(pumpedMl, prefs.unit_volume)} />
       <SummaryRow icon="🧷" value={diaperCount} unit="" />
       <SummaryRow
         icon="📏"
-        value={latestWeightG != null ? formatWeight(latestWeightG) : "—"}
-        unit={latestWeightG != null ? (latestWeightG >= 1000 ? "kg" : "g") : ""}
+        rendered={
+          latestWeightG != null ? formatWeight(latestWeightG, prefs.unit_weight) : "—"
+        }
       />
     </div>
   );
 }
 
-function formatWeight(g: number): string {
-  // 1 decimal for kg ranges (>= 1000g) — the precision below that is
-  // noise on the summary tile. Below 1kg (extreme preemies, rare in
-  // practice for this tracker) we show whole grams.
-  return g >= 1000 ? (g / 1000).toFixed(1) : Math.round(g).toString();
-}
-
-function growthSummary(g: {
-  weight_g?: number | null;
-  height_cm?: number | null;
-  head_circumference_cm?: number | null;
-}): string {
+function growthSummary(
+  g: {
+    weight_g?: number | null;
+    height_cm?: number | null;
+    head_circumference_cm?: number | null;
+  },
+  prefs: CombinedPreferences,
+): string {
   // Compose the Recent-list label from whichever fields are present —
   // dropping NULL columns rather than rendering "0 kg / 0 cm" placeholders.
   const parts: string[] = [];
   if (g.weight_g != null) {
-    const w = Number(g.weight_g);
-    parts.push(w >= 1000 ? `${(w / 1000).toFixed(2)} kg` : `${Math.round(w)} g`);
+    parts.push(formatWeight(Number(g.weight_g), prefs.unit_weight));
   }
-  if (g.height_cm != null) parts.push(`${Number(g.height_cm)} cm`);
-  if (g.head_circumference_cm != null) parts.push(`${Number(g.head_circumference_cm)} cm head`);
+  if (g.height_cm != null) {
+    parts.push(formatLength(Number(g.height_cm), prefs.unit_length));
+  }
+  if (g.head_circumference_cm != null) {
+    parts.push(`${formatLength(Number(g.head_circumference_cm), prefs.unit_length)} head`);
+  }
   return parts.length > 0 ? parts.join(" · ") : "Measurement";
 }
 
-function SummaryRow({ icon, value, unit }: { icon: string; value: number | string; unit: string }) {
+// SummaryRow takes EITHER a pre-rendered string (e.g. "60 ml") via
+// `rendered`, OR a value+unit pair for cases where the unit is fixed
+// regardless of preferences (nursing minutes, diaper count). The two
+// shapes share styling — single component keeps the tile vertical-rhythm
+// pixel-stable when prefs flip.
+function SummaryRow({
+  icon,
+  value,
+  unit,
+  rendered,
+}: {
+  icon: string;
+  value?: number | string;
+  unit?: string;
+  rendered?: string;
+}) {
+  if (rendered != null) {
+    const [head, ...rest] = rendered.split(" ");
+    const tail = rest.join(" ");
+    return (
+      <div className="flex items-baseline gap-1">
+        <span className="text-xs leading-none">{icon}</span>
+        <span className="text-base font-semibold tabular-nums">{head}</span>
+        {tail && <span className="text-[10px] text-white/60">{tail}</span>}
+      </div>
+    );
+  }
   return (
     <div className="flex items-baseline gap-1">
       <span className="text-xs leading-none">{icon}</span>
@@ -435,7 +496,7 @@ function SummaryRow({ icon, value, unit }: { icon: string; value: number | strin
 
 // --- recent list ---
 
-function RecentRow({ ev }: { ev: RecentEvent }) {
+function RecentRow({ ev, prefs }: { ev: RecentEvent; prefs: CombinedPreferences }) {
   const at = parseISO(ev.at);
   const icon =
     ev.kind === "bottle"
@@ -451,13 +512,15 @@ function RecentRow({ ev }: { ev: RecentEvent }) {
     <li className="card flex items-center gap-3 p-3">
       <div className="flex shrink-0 items-center gap-2">
         <span className="text-2xl leading-none">{icon}</span>
-        <span className="text-sm tabular-nums text-white/60 w-12">{format(at, "HH:mm")}</span>
+        <span className="text-sm tabular-nums text-white/60 w-16">
+          {formatTime(ev.at, prefs.time_format)}
+        </span>
       </div>
       <div className="min-w-0 flex-1">
         {ev.kind === "bottle" && (
           <>
             <div className="text-base font-medium">
-              {Number(ev.data.amount_ml)} ml
+              {formatVolume(Number(ev.data.amount_ml), prefs.unit_volume)}
               <span className="ml-2 text-xs font-normal text-white/50">
                 {ev.data.milk_source === "breast" ? "expressed" : "formula"}
               </span>
@@ -478,7 +541,7 @@ function RecentRow({ ev }: { ev: RecentEvent }) {
         {ev.kind === "pumping" && (
           <>
             <div className="text-base font-medium">
-              {Number(ev.data.amount_ml)} ml pumped
+              {formatVolume(Number(ev.data.amount_ml), prefs.unit_volume)} pumped
               {ev.data.duration_seconds != null && (
                 <span className="ml-2 text-xs font-normal text-white/50">
                   · {Math.round(ev.data.duration_seconds / 60)} min
@@ -505,9 +568,7 @@ function RecentRow({ ev }: { ev: RecentEvent }) {
         )}
         {ev.kind === "growth" && (
           <>
-            <div className="text-base font-medium">
-              {growthSummary(ev.data)}
-            </div>
+            <div className="text-base font-medium">{growthSummary(ev.data, prefs)}</div>
             {ev.data.notes && (
               <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
             )}

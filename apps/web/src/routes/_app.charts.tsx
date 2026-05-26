@@ -24,6 +24,13 @@ import {
   useLogout,
 } from "../lib/queries";
 import type { ChartDaily } from "../lib/types";
+import {
+  formatVolume,
+  formatWeight,
+  volumeUnitLabel,
+  weightUnitLabel,
+} from "../lib/units";
+import { type CombinedPreferences, usePreferences } from "../lib/usePreferences";
 
 type WindowDays = 7 | 14 | 30;
 
@@ -64,6 +71,7 @@ function ChartsPage() {
   // local midnight. We don't need to memoize harder than that.
   const window = useMemo(() => dailyWindowEndingToday(new Date(), range), [range]);
   const charts = useDailyCharts(baby?.id ?? null, window.from, window.to, BROWSER_TZ);
+  const { prefs } = usePreferences(baby?.id ?? null);
 
   if (households.isLoading || babies.isLoading) {
     return <PageShell title="Charts">Loading…</PageShell>;
@@ -94,7 +102,7 @@ function ChartsPage() {
           Could not load charts: {charts.error?.message ?? "unknown error"}
         </p>
       ) : (
-        <ChartGrid days={days} />
+        <ChartGrid days={days} prefs={prefs} />
       )}
     </PageShell>
   );
@@ -102,7 +110,7 @@ function ChartsPage() {
 
 // --- grid + cards ---
 
-function ChartGrid({ days }: { days: ChartDaily[] }) {
+function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPreferences }) {
   // All four bar charts and the line chart share the same X axis (one
   // slot per day). Geometry is recomputed only when `days` changes.
   const totals = useMemo(() => summarize(days), [days]);
@@ -129,14 +137,16 @@ function ChartGrid({ days }: { days: ChartDaily[] }) {
     );
   }
 
+  const volLabel = volumeUnitLabel(prefs.unit_volume);
+  const wLabel = weightUnitLabel(prefs.unit_weight);
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <ChartCard
         title="Bottle"
-        unit="ml/day"
+        unit={`${volLabel}/day`}
         accent="text-orange-300"
-        primary={`${Math.round(totals.bottleTotalMl)} ml total`}
-        secondary={`${Math.round(totals.bottleAvgMl)} ml/day avg`}
+        primary={`${formatVolume(totals.bottleTotalMl, prefs.unit_volume)} total`}
+        secondary={`${formatVolume(totals.bottleAvgMl, prefs.unit_volume)}/day avg`}
       >
         <BarChart bars={bottle.bars} max={bottle.max} fill="rgb(253 186 116)" />
         <Axis days={days} />
@@ -155,10 +165,10 @@ function ChartGrid({ days }: { days: ChartDaily[] }) {
 
       <ChartCard
         title="Pumping"
-        unit="ml/day"
+        unit={`${volLabel}/day`}
         accent="text-sky-300"
-        primary={`${Math.round(totals.pumpingTotalMl)} ml total`}
-        secondary={`${Math.round(totals.pumpingAvgMl)} ml/day avg`}
+        primary={`${formatVolume(totals.pumpingTotalMl, prefs.unit_volume)} total`}
+        secondary={`${formatVolume(totals.pumpingAvgMl, prefs.unit_volume)}/day avg`}
       >
         <BarChart bars={pumping.bars} max={pumping.max} fill="rgb(125 211 252)" />
         <Axis days={days} />
@@ -178,13 +188,15 @@ function ChartGrid({ days }: { days: ChartDaily[] }) {
 
       <ChartCard
         title="Weight"
-        unit="g"
+        unit={wLabel}
         accent="text-violet-300"
         primary={
-          totals.latestWeightG != null ? formatWeight(totals.latestWeightG) : "no readings"
+          totals.latestWeightG != null
+            ? formatWeight(totals.latestWeightG, prefs.unit_weight)
+            : "no readings"
         }
         secondary={
-          weight.hasData ? rangeSummary(weight.min, weight.max) : ""
+          weight.hasData ? rangeSummary(weight.min, weight.max, prefs) : ""
         }
         wide
       >
@@ -473,15 +485,8 @@ function PageShell({
   );
 }
 
-function formatWeight(g: number): string {
-  // Mirrors the Today screen: 2-decimal kg above 1 kg, whole grams
-  // below (rare in practice for this tracker but possible for very
-  // young preemies).
-  return g >= 1000 ? `${(g / 1000).toFixed(2)} kg` : `${Math.round(g)} g`;
-}
-
-function rangeSummary(min: number, max: number): string {
+function rangeSummary(min: number, max: number, prefs: CombinedPreferences): string {
   return min === max
-    ? `${formatWeight(min)} in window`
-    : `${formatWeight(min)} – ${formatWeight(max)} in window`;
+    ? `${formatWeight(min, prefs.unit_weight)} in window`
+    : `${formatWeight(min, prefs.unit_weight)} – ${formatWeight(max, prefs.unit_weight)} in window`;
 }

@@ -100,6 +100,30 @@ export interface ApiError {
   };
 }
 
+// --- preferences ---
+
+// User-level preferences. Lives in `user_preferences` on the BE; one row
+// per user keyed by user_id. The FE only renders `time_format` today
+// (charts and recent-row HH:mm strings) but timezone/locale are returned
+// in case future surfaces want them.
+export interface UserPreferences {
+  user_id: string;
+  time_format: "24h" | "12h";
+  timezone: string;
+  locale: string;
+  updated_at: string;
+}
+
+// Per-baby unit preferences. Lives in `baby_settings` on the BE; one row
+// per baby keyed by baby_id. The split (units per-baby, time-format
+// per-user) is intentional — see apps/api/migrations/000004 commentary.
+export interface BabySettings {
+  baby_id: string;
+  unit_volume: "ml" | "oz";
+  unit_length: "cm" | "in";
+  unit_weight: "kg" | "lb";
+}
+
 // --- charts ---
 
 // ChartGrowthSnapshot carries the latest non-null reading per metric on a
