@@ -29,6 +29,7 @@ export const qk = {
     ["babies", babyId, "pumpings", from ?? "", to ?? ""] as const,
   nursings: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "nursing-sessions", from ?? "", to ?? ""] as const,
+  openNursing: (babyId: string) => ["babies", babyId, "nursing-sessions", "open"] as const,
   growths: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "growths", from ?? "", to ?? ""] as const,
 };
@@ -271,11 +272,14 @@ export function useCreateNursing() {
     mutationFn: (vars: {
       babyId: string;
       started_at: string;
+      // ended_at + per-side durations are all optional now: omitting all
+      // three opens an "in progress" session that the FE later closes via
+      // useEndNursing. The server enforces "all three together or none."
       ended_at?: string;
       starting_breast?: StartingBreast;
       nursing_side: NursingSide;
-      left_duration_s: number;
-      right_duration_s: number;
+      left_duration_s?: number;
+      right_duration_s?: number;
       notes?: string;
     }) =>
       api<Nursing>(`/babies/${vars.babyId}/nursing-sessions`, {
@@ -290,6 +294,48 @@ export function useCreateNursing() {
           notes: vars.notes || undefined,
         },
       }),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "nursing-sessions"] }),
+  });
+}
+
+// useOpenNursing polls /open for a single in-progress session. The endpoint
+// returns 204 when nothing is running (which our api wrapper surfaces as
+// `undefined`); we normalize that to `null` so consumers can use a simple
+// `data ?? null` check instead of distinguishing undefined-while-loading
+// from undefined-because-empty.
+export function useOpenNursing(babyId: string | null) {
+  return useQuery({
+    queryKey: babyId ? qk.openNursing(babyId) : ["babies", "none", "nursing-sessions", "open"],
+    enabled: !!babyId,
+    queryFn: async () => {
+      const data = await api<Nursing | undefined>(`/babies/${babyId}/nursing-sessions/open`);
+      return data ?? null;
+    },
+  });
+}
+
+export function useEndNursing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      id: string;
+      babyId: string;
+      ended_at: string;
+      left_duration_s: number;
+      right_duration_s: number;
+    }) =>
+      api<Nursing>(`/nursing-sessions/${vars.id}`, {
+        method: "PATCH",
+        body: {
+          ended_at: vars.ended_at,
+          left_duration_s: vars.left_duration_s,
+          right_duration_s: vars.right_duration_s,
+        },
+      }),
+    // Closing a session affects both the "today list" view and the
+    // "in-progress chip" check, so invalidate every key under the baby's
+    // nursing-sessions namespace.
     onSuccess: (_data, vars) =>
       qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "nursing-sessions"] }),
   });

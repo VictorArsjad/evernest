@@ -4,21 +4,25 @@
 // Tiles for kinds that aren't shipped yet are visibly "Soon" placeholders
 // rather than dead links, and get wired up as each kind lands.
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format, isToday, parseISO } from "date-fns";
 
 import { useAuthStore } from "../lib/authStore";
+import { formatElapsedHHMM } from "../lib/nursingTimer";
 import {
   useBabies,
   useBottleFeeds,
   useDiapers,
+  useEndNursing,
   useGrowths,
   useHouseholds,
   useLogout,
   useNursings,
+  useOpenNursing,
   usePumpings,
 } from "../lib/queries";
 import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
+import type { Nursing } from "../lib/types";
 
 export const Route = createFileRoute("/_app/")({
   component: TodayPage,
@@ -59,6 +63,10 @@ function TodayPage() {
   const diapers = useDiapers(baby?.id ?? null, todayStart, todayEnd);
   const pumpings = usePumpings(baby?.id ?? null, todayStart, todayEnd);
   const nursings = useNursings(baby?.id ?? null, todayStart, todayEnd);
+  // Cheap "is one running?" check — the BE returns 204 when nothing is
+  // open, which the hook normalizes to `null`. We render the in-progress
+  // chip in place of the standard Nursing tile when this resolves to a row.
+  const openNursing = useOpenNursing(baby?.id ?? null);
   const growthsToday = useGrowths(baby?.id ?? null, todayStart, todayEnd);
   // Latest measurement ever — fed into the summary tile. The default
   // server-side window for growths covers the past year, which is plenty
@@ -105,7 +113,11 @@ function TodayPage() {
     >
       <section className="grid grid-cols-3 gap-3">
         <Tile to="/log/bottle" babyId={baby.id} icon="🍼" label="Bottle" accent="peach" />
-        <Tile to="/log/nursing" babyId={baby.id} icon="👶" label="Nursing" accent="mint" />
+        {openNursing.data ? (
+          <NursingInProgressTile session={openNursing.data} babyId={baby.id} />
+        ) : (
+          <Tile to="/log/nursing" babyId={baby.id} icon="👶" label="Nursing" accent="mint" />
+        )}
         <Tile to="/log/pumping" babyId={baby.id} icon="💧" label="Pumping" accent="sky" />
         <Tile to="/log/diaper" babyId={baby.id} icon="🧷" label="Diaper" accent="lemon" />
         <Tile to="/log/growth" babyId={baby.id} icon="📏" label="Growth" accent="lilac" />
@@ -175,6 +187,177 @@ function Tile({
       <span className="text-3xl leading-none">{icon}</span>
       <span className="text-sm font-medium">{label}</span>
     </Link>
+  );
+}
+
+// NursingInProgressTile replaces the standard Nursing tile while a
+// session is open. Shows live HH:MM elapsed (recomputed every 30s — the
+// chip floors to whole minutes so a 1s tick would just be wasted
+// renders) and exposes "End now" which opens an inline modal for
+// per-side minutes. Kept inline in this file to keep the Today edit
+// surgical for the parallel chart-link merge.
+function NursingInProgressTile({
+  session,
+  babyId,
+}: {
+  session: Nursing;
+  babyId: string;
+}) {
+  const [now, setNow] = useState(() => new Date());
+  const [showEnd, setShowEnd] = useState(false);
+
+  useEffect(() => {
+    // 30s tick: matches the formatter's whole-minute resolution. Anything
+    // faster is wasted renders; anything slower and the elapsed value
+    // visibly lags reality on the lock screen / when the user opens the
+    // PWA after a few minutes.
+    const id = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const elapsed = formatElapsedHHMM(session.started_at, now);
+
+  return (
+    <>
+      <div
+        className={
+          "flex aspect-square flex-col items-center justify-center gap-1 rounded-2xl border p-3 text-center " +
+          accentClass.mint
+        }
+      >
+        <span className="text-[10px] uppercase tracking-wide text-white/50">Nursing</span>
+        <span className="text-2xl font-semibold tabular-nums leading-tight">{elapsed}</span>
+        <span className="text-[10px] text-white/50">in progress</span>
+        <button
+          type="button"
+          onClick={() => setShowEnd(true)}
+          className="mt-1 rounded-full bg-emerald-300/20 px-3 py-1 text-xs font-medium text-emerald-200 transition active:scale-95"
+        >
+          End now
+        </button>
+      </div>
+      {showEnd && (
+        <EndNursingModal
+          session={session}
+          babyId={babyId}
+          now={now}
+          onClose={() => setShowEnd(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function EndNursingModal({
+  session,
+  babyId,
+  now,
+  onClose,
+}: {
+  session: Nursing;
+  babyId: string;
+  now: Date;
+  onClose: () => void;
+}) {
+  // Default each side to half the elapsed minutes when nursing both
+  // sides; otherwise put the full elapsed time on the active side. The
+  // user can override; this just removes the "blank input" friction for
+  // the common case.
+  const elapsedMin = Math.max(
+    0,
+    Math.floor((now.getTime() - new Date(session.started_at).getTime()) / 60_000),
+  );
+  const defaults = useMemo(() => {
+    if (session.nursing_side === "left") return { left: String(elapsedMin), right: "0" };
+    if (session.nursing_side === "right") return { left: "0", right: String(elapsedMin) };
+    const half = Math.floor(elapsedMin / 2);
+    return { left: String(half), right: String(elapsedMin - half) };
+  }, [session.nursing_side, elapsedMin]);
+
+  const [leftMin, setLeftMin] = useState(defaults.left);
+  const [rightMin, setRightMin] = useState(defaults.right);
+  const end = useEndNursing();
+
+  const leftN = Number.parseFloat(leftMin);
+  const rightN = Number.parseFloat(rightMin);
+  const isValid =
+    Number.isFinite(leftN) &&
+    leftN >= 0 &&
+    leftN <= 360 &&
+    Number.isFinite(rightN) &&
+    rightN >= 0 &&
+    rightN <= 360;
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isValid) return;
+    end.mutate(
+      {
+        id: session.id,
+        babyId,
+        ended_at: new Date().toISOString(),
+        left_duration_s: Math.round(leftN * 60),
+        right_duration_s: Math.round(rightN * 60),
+      },
+      { onSuccess: onClose },
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center">
+      <form
+        onSubmit={onSubmit}
+        className="w-full max-w-sm rounded-2xl border border-white/10 bg-bg-surface p-5 shadow-xl"
+      >
+        <div className="mb-4 flex items-baseline justify-between">
+          <h2 className="text-lg font-semibold">End nursing</h2>
+          <button type="button" onClick={onClose} className="text-sm text-white/60">
+            Cancel
+          </button>
+        </div>
+        <p className="mb-4 text-xs text-white/50">
+          Started {format(parseISO(session.started_at), "HH:mm")} · {formatElapsedHHMM(session.started_at, now)} elapsed
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-white/50">
+            Left
+            <input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              max={360}
+              step={1}
+              value={leftMin}
+              onChange={(e) => setLeftMin(e.target.value)}
+              className="rounded-xl bg-bg-subtle px-3 py-2 text-2xl font-semibold tabular-nums text-white outline-none focus:ring-2 focus:ring-accent"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-white/50">
+            Right
+            <input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              max={360}
+              step={1}
+              value={rightMin}
+              onChange={(e) => setRightMin(e.target.value)}
+              className="rounded-xl bg-bg-subtle px-3 py-2 text-2xl font-semibold tabular-nums text-white outline-none focus:ring-2 focus:ring-accent"
+            />
+          </label>
+        </div>
+        {end.isError && (
+          <p className="mt-3 text-sm text-red-400">{end.error?.message ?? "could not save"}</p>
+        )}
+        <button
+          type="submit"
+          disabled={!isValid || end.isPending}
+          className="btn-primary mt-4 w-full text-base"
+        >
+          {end.isPending ? "Saving…" : "Confirm end"}
+        </button>
+      </form>
+    </div>
   );
 }
 
