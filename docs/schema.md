@@ -73,7 +73,16 @@ PWA queue mutations offline and retry without dedupe logic.
 
 For the BabyPlus importer, the same idea applies: each imported row's id is a
 deterministic UUIDv5 derived from `(section, babyplus_pk)`, so re-running
-the importer is a no-op.
+the importer is a no-op. The namespace UUID is itself a UUIDv5 derived from
+`uuid.NameSpaceURL` + `"https://evernest.app/babyplus-import/v1"` — keeping
+the value reproducible from source rather than a magic literal. Treat the
+URL string as a versioned constant: changing it would orphan every row
+previously imported under the old namespace.
+
+The importer runs each section in its own transaction (one for bottle feeds,
+one for nursing sessions, etc.) rather than wrapping the whole run in a
+single tx — a 1000+ row single transaction would hold locks for the duration
+of the import and make partial-failure recovery harder.
 
 ## Indexes
 
