@@ -63,8 +63,8 @@ func TestBuildDays_HappyPath(t *testing.T) {
 	to := mustParseDay(t, "2026-05-27")
 
 	bottle := []bottleDayRow{
-		{Day: mustParseDay(t, "2026-05-25"), AmountML: 300},
-		{Day: mustParseDay(t, "2026-05-26"), AmountML: 480},
+		{Day: mustParseDay(t, "2026-05-25"), MilkSource: "formula", AmountML: 300},
+		{Day: mustParseDay(t, "2026-05-26"), MilkSource: "formula", AmountML: 480},
 	}
 	pumping := []pumpingDayRow{
 		{Day: mustParseDay(t, "2026-05-25"), AmountML: 100},
@@ -108,6 +108,9 @@ func TestBuildDays_HappyPath(t *testing.T) {
 	if d.BottleML != 300 {
 		t.Errorf("bottle = %v, want 300", d.BottleML)
 	}
+	if d.BottleMLFormula != 300 || d.BottleMLBreast != 0 {
+		t.Errorf("bottle split d1 = (breast %v, formula %v), want (0, 300)", d.BottleMLBreast, d.BottleMLFormula)
+	}
 	if d.PumpingML != 100 {
 		t.Errorf("pumping = %v, want 100", d.PumpingML)
 	}
@@ -132,6 +135,9 @@ func TestBuildDays_HappyPath(t *testing.T) {
 	d = days[1]
 	if d.BottleML != 480 {
 		t.Errorf("bottle d2 = %v, want 480", d.BottleML)
+	}
+	if d.BottleMLFormula != 480 || d.BottleMLBreast != 0 {
+		t.Errorf("bottle split d2 = (breast %v, formula %v), want (0, 480)", d.BottleMLBreast, d.BottleMLFormula)
 	}
 	if d.PumpingML != 0 {
 		t.Errorf("pumping d2 should be zero, got %v", d.PumpingML)
@@ -289,6 +295,75 @@ func TestParseDailyParams_AcceptsExactly90Days(t *testing.T) {
 	q["to"] = []string{"2026-04-01"}
 	if _, _, _, err := parseDailyParams(q); err == nil {
 		t.Fatalf("91-day window should be rejected")
+	}
+}
+
+// --- mergeBottle source-split tests ---
+
+func TestMergeBottle_BreastAndFormulaSameDay(t *testing.T) {
+	from := mustParseDay(t, "2026-05-25")
+	to := from
+	rows := []bottleDayRow{
+		{Day: from, MilkSource: "breast", AmountML: 120},
+		{Day: from, MilkSource: "formula", AmountML: 60},
+	}
+	days := buildDays(from, to, rows, nil, nil, nil, nil)
+	d := days[0]
+	if d.BottleMLBreast != 120 {
+		t.Errorf("breast = %v, want 120", d.BottleMLBreast)
+	}
+	if d.BottleMLFormula != 60 {
+		t.Errorf("formula = %v, want 60", d.BottleMLFormula)
+	}
+	if d.BottleML != 180 {
+		t.Errorf("combined = %v, want 180 (sum of both sources)", d.BottleML)
+	}
+}
+
+func TestMergeBottle_SingleSourceDays(t *testing.T) {
+	from := mustParseDay(t, "2026-05-25")
+	to := mustParseDay(t, "2026-05-26")
+	rows := []bottleDayRow{
+		{Day: mustParseDay(t, "2026-05-25"), MilkSource: "breast", AmountML: 200},
+		{Day: mustParseDay(t, "2026-05-26"), MilkSource: "formula", AmountML: 150},
+	}
+	days := buildDays(from, to, rows, nil, nil, nil, nil)
+
+	d25 := days[0]
+	if d25.BottleMLBreast != 200 || d25.BottleMLFormula != 0 || d25.BottleML != 200 {
+		t.Errorf("d25 = (breast %v, formula %v, total %v), want (200, 0, 200)",
+			d25.BottleMLBreast, d25.BottleMLFormula, d25.BottleML)
+	}
+
+	d26 := days[1]
+	if d26.BottleMLBreast != 0 || d26.BottleMLFormula != 150 || d26.BottleML != 150 {
+		t.Errorf("d26 = (breast %v, formula %v, total %v), want (0, 150, 150)",
+			d26.BottleMLBreast, d26.BottleMLFormula, d26.BottleML)
+	}
+}
+
+// TestMergeBottle_UnknownSourceIsDefensive guards the documented behavior
+// for milk_source values the schema CHECK currently rejects (so a future
+// schema extension that ships before this code is taught about the new
+// value still keeps the summary tile truthful).
+func TestMergeBottle_UnknownSourceIsDefensive(t *testing.T) {
+	from := mustParseDay(t, "2026-05-25")
+	to := from
+	rows := []bottleDayRow{
+		{Day: from, MilkSource: "breast", AmountML: 100},
+		{Day: from, MilkSource: "fortified", AmountML: 50}, // hypothetical future value
+		{Day: from, MilkSource: "", AmountML: 25},          // empty / null source
+	}
+	days := buildDays(from, to, rows, nil, nil, nil, nil)
+	d := days[0]
+	if d.BottleML != 175 {
+		t.Errorf("combined = %v, want 175 (all sources contribute to total)", d.BottleML)
+	}
+	if d.BottleMLBreast != 100 {
+		t.Errorf("breast = %v, want 100 (only the 'breast' row)", d.BottleMLBreast)
+	}
+	if d.BottleMLFormula != 0 {
+		t.Errorf("formula = %v, want 0 (unknown sources must not leak into formula)", d.BottleMLFormula)
 	}
 }
 

@@ -12,6 +12,7 @@ import {
   dailyWindowEndingToday,
   formatDayShort,
   linePoints,
+  stacked2Layout,
   stackedDiaperLayout,
   summarize,
   tooltipXPercent,
@@ -213,6 +214,13 @@ const DIAPER_FILL = {
   mixed: "rgb(180 83 9)",
 } as const;
 
+// Bottle stacked-bar fills, breast (bottom) / formula (top). Kept
+// module-level for the same reason as DIAPER_FILL.
+const BOTTLE_FILL = {
+  breast: "rgb(244 114 182)",
+  formula: "rgb(253 186 116)",
+} as const;
+
 export const Route = createFileRoute("/_app/charts")({
   component: ChartsPage,
 });
@@ -277,7 +285,6 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
   // All four bar charts and the line chart share the same X axis (one
   // slot per day). Geometry is recomputed only when `days` changes.
   const totals = useMemo(() => summarize(days), [days]);
-  const bottle = useMemo(() => barLayout(days.map((d) => d.bottle_ml)), [days]);
   const nursing = useMemo(() => barLayout(days.map((d) => d.nursing_minutes)), [days]);
   const pumping = useMemo(() => barLayout(days.map((d) => d.pumping_ml)), [days]);
   const stacked = useMemo(
@@ -311,19 +318,31 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         primary={`${formatVolume(totals.bottleTotalMl, prefs.unit_volume)} total`}
         secondary={`${formatVolume(totals.bottleAvgMl, prefs.unit_volume)}/day avg`}
       >
-        <BarChart
-          bars={bottle.bars}
-          max={bottle.max}
-          fill="rgb(253 186 116)"
+        <BottleStackChart
           days={days}
-          ariaValue={(i) => formatVolume(days[i].bottle_ml, prefs.unit_volume)}
+          ariaValue={(i) =>
+            `${formatVolume(days[i].bottle_ml_breast ?? 0, prefs.unit_volume)} breast, ${formatVolume(days[i].bottle_ml_formula ?? 0, prefs.unit_volume)} formula, ${formatVolume(days[i].bottle_ml, prefs.unit_volume)} total`
+          }
           renderTooltip={(i) => (
             <TooltipBody date={days[i].date}>
-              <div>{formatVolume(days[i].bottle_ml, prefs.unit_volume)}</div>
+              <BottleTooltipRow
+                color={BOTTLE_FILL.breast}
+                label="breast"
+                value={formatVolume(days[i].bottle_ml_breast ?? 0, prefs.unit_volume)}
+              />
+              <BottleTooltipRow
+                color={BOTTLE_FILL.formula}
+                label="formula"
+                value={formatVolume(days[i].bottle_ml_formula ?? 0, prefs.unit_volume)}
+              />
+              <div className="mt-0.5 border-t border-white/10 pt-0.5 font-medium text-white">
+                {formatVolume(days[i].bottle_ml, prefs.unit_volume)} total
+              </div>
             </TooltipBody>
           )}
         />
         <Axis days={days} />
+        <BottleLegend />
       </ChartCard>
 
       <ChartCard
@@ -625,6 +644,123 @@ function DiaperLegend() {
       <LegendDot color={DIAPER_FILL.soiled} label="soiled" />
       <LegendDot color={DIAPER_FILL.mixed} label="mixed" />
     </ul>
+  );
+}
+
+// BottleStackChart renders a 2-segment stacked bar (breast bottom,
+// formula top) for the Bottle card. Mirrors DiaperStackChart's layout —
+// transparent full-slot HitOverlays own the pointer hit-test, and the
+// active-state outline is drawn ONCE around the full visible stack
+// rather than stroking each segment.
+//
+// Defensive fallback: when `bottle_ml_breast` and `bottle_ml_formula`
+// are both 0/undefined but the combined `bottle_ml` is positive (an old
+// BE that doesn't return per-source totals), render the combined total
+// as a single formula-colored segment so the chart isn't blank during
+// a mid-deploy window. The tooltip in that case still reads
+// "breast 0 ml / formula 0 ml / N ml total" — consciously acceptable.
+function BottleStackChart({
+  days,
+  ariaValue,
+  renderTooltip,
+}: {
+  days: ChartDaily[];
+  ariaValue: (i: number) => string;
+  renderTooltip: (i: number) => React.ReactNode;
+}) {
+  const stacked = useMemo(() => {
+    return stacked2Layout(
+      days.map((d) => {
+        const breast = d.bottle_ml_breast ?? 0;
+        const formula = d.bottle_ml_formula ?? 0;
+        const total = d.bottle_ml ?? 0;
+        if (breast === 0 && formula === 0 && total > 0) {
+          return { bottom: 0, top: total };
+        }
+        return { bottom: breast, top: formula };
+      }),
+    );
+  }, [days]);
+  const hover = useChartHover();
+  const n = days.length;
+  // Top of the visible stack per day (in VB units) so the active
+  // outline wraps the full stack from y=0 to top[i].yTop.
+  const stackTops = useMemo(() => stacked.top.map((t) => t.yTop), [stacked.top]);
+  return (
+    <div
+      ref={hover.containerRef}
+      className="relative h-20 w-full"
+      style={{ touchAction: "manipulation" }}
+    >
+      <svg
+        viewBox={`0 0 ${VB_W} ${VB_H}`}
+        preserveAspectRatio="none"
+        className="absolute inset-0 h-full w-full overflow-visible"
+        role="img"
+        aria-label="Daily bottle volume stacked bar chart"
+      >
+        {stacked.bottom.map((b) => (
+          <SegmentRect key={`bb${b.index}`} bar={b} fill={BOTTLE_FILL.breast} />
+        ))}
+        {stacked.top.map((b) => (
+          <SegmentRect key={`bt${b.index}`} bar={b} fill={BOTTLE_FILL.formula} />
+        ))}
+        {hover.activeIndex != null &&
+          stacked.bottom[hover.activeIndex] &&
+          stackTops[hover.activeIndex] > 0 && (
+            <rect
+              x={stacked.bottom[hover.activeIndex].x * VB_W}
+              y={VB_H - stackTops[hover.activeIndex] * VB_H}
+              width={stacked.bottom[hover.activeIndex].width * VB_W}
+              height={stackTops[hover.activeIndex] * VB_H}
+              fill="none"
+              stroke="white"
+              strokeWidth={0.5}
+              vectorEffect="non-scaling-stroke"
+              rx={0.5}
+            />
+          )}
+        <HitOverlays n={n} hover={hover} days={days} ariaValue={ariaValue} />
+      </svg>
+      {hover.activeIndex != null && (
+        <ChartTooltip xPct={tooltipXPercent(hover.activeIndex, n)}>
+          {renderTooltip(hover.activeIndex)}
+        </ChartTooltip>
+      )}
+    </div>
+  );
+}
+
+function BottleLegend() {
+  return (
+    <ul className="flex gap-3 text-[10px] text-white/60">
+      <LegendDot color={BOTTLE_FILL.breast} label="breast" />
+      <LegendDot color={BOTTLE_FILL.formula} label="formula" />
+    </ul>
+  );
+}
+
+function BottleTooltipRow({
+  color,
+  label,
+  value,
+}: {
+  color: string;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-white/80">
+      <span className="flex items-center gap-1 capitalize">
+        <span
+          aria-hidden="true"
+          className="inline-block h-2 w-2 rounded-sm"
+          style={{ backgroundColor: color }}
+        />
+        {label}
+      </span>
+      <span>{value}</span>
+    </div>
   );
 }
 

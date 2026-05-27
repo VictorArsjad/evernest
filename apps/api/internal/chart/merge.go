@@ -56,10 +56,23 @@ func buildDays(
 	return days
 }
 
+// mergeBottle increments the combined BottleML total plus the matching
+// per-source bucket (breast / formula). Unknown milk_source values still
+// land in the combined total (defensive: the summary tile must stay
+// truthful even if the schema CHECK grows new values) but in neither
+// sub-bucket.
 func mergeBottle(days []Daily, idx map[string]int, rows []bottleDayRow) {
 	for _, r := range rows {
-		if i, ok := idx[dateKey(r.Day)]; ok {
-			days[i].BottleML += r.AmountML
+		i, ok := idx[dateKey(r.Day)]
+		if !ok {
+			continue
+		}
+		days[i].BottleML += r.AmountML
+		switch r.MilkSource {
+		case "breast":
+			days[i].BottleMLBreast += r.AmountML
+		case "formula":
+			days[i].BottleMLFormula += r.AmountML
 		}
 	}
 }

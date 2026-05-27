@@ -116,6 +116,44 @@ export function stackedDiaperLayout(
   return { wet, soiled, mixed, max };
 }
 
+// stacked2Layout renders two same-x bars stacked bottom/top against a
+// shared max so two series can be compared honestly day-by-day. It is a
+// 2-segment specialization of stackedDiaperLayout (same slot/padding
+// math, same shared-max semantics) used by the Bottle chart's
+// breast (bottom) / formula (top) breakdown. Negative inputs are
+// clamped to zero and an all-zero or empty input returns zero-height
+// bars without producing NaN.
+export function stacked2Layout(
+  rows: { bottom: number; top: number }[],
+): { bottom: SparkBar[]; top: SparkBar[]; max: number } {
+  if (rows.length === 0) {
+    return { bottom: [], top: [], max: 0 };
+  }
+  const totals = rows.map((r) => Math.max(0, r.bottom) + Math.max(0, r.top));
+  const max = Math.max(0, ...totals);
+  const slot = 1 / rows.length;
+  const barWidth = slot * 0.7;
+  const padding = (slot - barWidth) / 2;
+  const bottom: SparkBar[] = [];
+  const top: SparkBar[] = [];
+  rows.forEach((r, i) => {
+    const b = Math.max(0, r.bottom);
+    const t = Math.max(0, r.top);
+    const bH = max === 0 ? 0 : b / max;
+    const tH = max === 0 ? 0 : t / max;
+    const x = i * slot + padding;
+    bottom.push({ index: i, x, width: barWidth, yBottom: 0, yTop: bH });
+    top.push({
+      index: i,
+      x,
+      width: barWidth,
+      yBottom: bH,
+      yTop: bH + tH,
+    });
+  });
+  return { bottom, top, max };
+}
+
 // LinePoint is one rendered point in a sparkline. `defined=false` means
 // the underlying value is null; the polyline renderer uses this to break
 // the line so a missing day shows as a gap rather than a zero pull-down.

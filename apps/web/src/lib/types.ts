@@ -187,7 +187,13 @@ export interface ChartGrowthSnapshot {
 // sync. One row per calendar day in the requested timezone.
 export interface ChartDaily {
   date: string;
+  // bottle_ml is the combined per-day total across milk sources (kept for
+  // the summary tile and old-BE compatibility). The per-source fields
+  // below split it into breast vs formula so the bottle chart can render
+  // a 2-segment stacked bar.
   bottle_ml: number;
+  bottle_ml_breast: number;
+  bottle_ml_formula: number;
   nursing_minutes: number;
   pumping_ml: number;
   diaper_total: number;

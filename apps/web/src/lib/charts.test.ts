@@ -6,6 +6,7 @@ import {
   formatDayShort,
   formatLocalYMD,
   linePoints,
+  stacked2Layout,
   stackedDiaperLayout,
   summarize,
   tooltipXPercent,
@@ -16,6 +17,8 @@ function emptyDay(date: string): ChartDaily {
   return {
     date,
     bottle_ml: 0,
+    bottle_ml_breast: 0,
+    bottle_ml_formula: 0,
     nursing_minutes: 0,
     pumping_ml: 0,
     diaper_total: 0,
@@ -120,6 +123,47 @@ describe("stackedDiaperLayout", () => {
 
   it("returns empty arrays for empty rows", () => {
     expect(stackedDiaperLayout([])).toEqual({ wet: [], soiled: [], mixed: [], max: 0 });
+  });
+});
+
+describe("stacked2Layout", () => {
+  it("stacks bottom/top against a shared total max", () => {
+    const rows = [
+      { bottom: 120, top: 60 }, // mixed-source day, total 180
+      { bottom: 0, top: 240 }, // formula-only, tallest, total 240
+      { bottom: 90, top: 0 }, // breast-only, total 90
+    ];
+    const { bottom, top, max } = stacked2Layout(rows);
+    expect(max).toBe(240);
+    // Tallest day fills to 1.0 at the top segment's yTop.
+    expect(top[1].yTop).toBeCloseTo(1);
+    // Bottom-only day: top segment has zero height and sits flush
+    // on top of the bottom segment.
+    expect(top[2].yBottom).toBeCloseTo(bottom[2].yTop);
+    expect(top[2].yTop).toBeCloseTo(bottom[2].yTop);
+    // Top-only day: bottom segment has zero height, top stacks from 0.
+    expect(bottom[1].yTop).toBe(0);
+    expect(top[1].yBottom).toBe(0);
+    // Mixed day: top stacks on top of bottom, sums to combined / max.
+    expect(top[0].yBottom).toBeCloseTo(bottom[0].yTop);
+    expect(top[0].yTop).toBeCloseTo(180 / 240);
+    // Both segments share the same x/width per slot.
+    expect(bottom[0].x).toBe(top[0].x);
+    expect(bottom[0].width).toBe(top[0].width);
+  });
+
+  it("handles all-zero input without crashing (no NaN, no negative widths)", () => {
+    const { bottom, top, max } = stacked2Layout([
+      { bottom: 0, top: 0 },
+      { bottom: 0, top: 0 },
+    ]);
+    expect(max).toBe(0);
+    expect(bottom.every((b) => b.yTop === 0 && b.width > 0)).toBe(true);
+    expect(top.every((b) => b.yTop === 0 && b.width > 0)).toBe(true);
+  });
+
+  it("returns empty arrays for empty rows", () => {
+    expect(stacked2Layout([])).toEqual({ bottom: [], top: [], max: 0 });
   });
 });
 
