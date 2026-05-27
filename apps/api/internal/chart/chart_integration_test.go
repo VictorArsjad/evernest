@@ -151,12 +151,17 @@ func (te *testEnv) do(t *testing.T, method, path string, body any, bearer string
 // payloads; we just want test fixtures with known timestamps.
 func (te *testEnv) seedBottle(t *testing.T, ts time.Time, ml float64) {
 	t.Helper()
+	te.seedBottleSource(t, ts, "formula", ml)
+}
+
+func (te *testEnv) seedBottleSource(t *testing.T, ts time.Time, milkSource string, ml float64) {
+	t.Helper()
 	_, err := te.store.Pool.Exec(context.Background(), `
 		INSERT INTO bottle_feeds (id, baby_id, occurred_at, milk_source, amount_ml, source)
-		VALUES ($1, $2, $3, 'formula', $4, 'manual')
-	`, uuidx.NewV7(), te.baby, ts, ml)
+		VALUES ($1, $2, $3, $4, $5, 'manual')
+	`, uuidx.NewV7(), te.baby, ts, milkSource, ml)
 	if err != nil {
-		t.Fatalf("seed bottle: %v", err)
+		t.Fatalf("seed bottle (%s): %v", milkSource, err)
 	}
 }
 
@@ -206,15 +211,17 @@ func (te *testEnv) seedGrowth(t *testing.T, ts time.Time, weightG, heightCM, hea
 
 type dailyResp struct {
 	Days []struct {
-		Date           string  `json:"date"`
-		BottleML       float64 `json:"bottle_ml"`
-		NursingMinutes int     `json:"nursing_minutes"`
-		PumpingML      float64 `json:"pumping_ml"`
-		DiaperTotal    int     `json:"diaper_total"`
-		DiaperWet      int     `json:"diaper_wet"`
-		DiaperSoiled   int     `json:"diaper_soiled"`
-		DiaperMixed    int     `json:"diaper_mixed"`
-		Growth         struct {
+		Date            string  `json:"date"`
+		BottleML        float64 `json:"bottle_ml"`
+		BottleMLBreast  float64 `json:"bottle_ml_breast"`
+		BottleMLFormula float64 `json:"bottle_ml_formula"`
+		NursingMinutes  int     `json:"nursing_minutes"`
+		PumpingML       float64 `json:"pumping_ml"`
+		DiaperTotal     int     `json:"diaper_total"`
+		DiaperWet       int     `json:"diaper_wet"`
+		DiaperSoiled    int     `json:"diaper_soiled"`
+		DiaperMixed     int     `json:"diaper_mixed"`
+		Growth          struct {
 			WeightG  *float64 `json:"weight_g"`
 			HeightCM *float64 `json:"height_cm"`
 			HeadCM   *float64 `json:"head_cm"`
@@ -234,14 +241,16 @@ func TestChartsDaily_HappyPathWithTZBucketing(t *testing.T) {
 		t.Fatalf("load location: %v", err)
 	}
 
-	// Day 25 (Jakarta): bottle 200 ml @ 10:00 local
+	// Day 25 (Jakarta): bottle 200 ml @ 10:00 local (formula).
 	te.seedBottle(t, time.Date(2026, 5, 25, 10, 0, 0, 0, loc), 200)
 
 	// Day 26 (Jakarta) bottles: 180 ml at 22:00 UTC May 25 = 05:00
-	// Jakarta May 26 (the bucketing fence post), plus 300 ml at 17:00
-	// Jakarta May 26. Total expected for d26 is 480.
+	// Jakarta May 26 (the bucketing fence post) — formula — plus 300 ml
+	// formula at 17:00 Jakarta May 26 and 100 ml *breast* at 10:00
+	// Jakarta May 26. Total expected for d26: 580 (formula 480 + breast 100).
 	te.seedBottle(t, time.Date(2026, 5, 25, 22, 0, 0, 0, time.UTC), 180)
 	te.seedBottle(t, time.Date(2026, 5, 26, 17, 0, 0, 0, loc), 300)
+	te.seedBottleSource(t, time.Date(2026, 5, 26, 10, 0, 0, 0, loc), "breast", 100)
 
 	// Day 25: nursing 10 min (600s left, 0s right)
 	te.seedNursing(t, time.Date(2026, 5, 25, 12, 0, 0, 0, loc), 600, 0)
@@ -287,6 +296,10 @@ func TestChartsDaily_HappyPathWithTZBucketing(t *testing.T) {
 	if d25.BottleML != 200 {
 		t.Errorf("d25 bottle = %v, want 200", d25.BottleML)
 	}
+	if d25.BottleMLFormula != 200 || d25.BottleMLBreast != 0 {
+		t.Errorf("d25 bottle split = (breast %v, formula %v), want (0, 200)",
+			d25.BottleMLBreast, d25.BottleMLFormula)
+	}
 	if d25.NursingMinutes != 10 {
 		t.Errorf("d25 nursing = %d, want 10", d25.NursingMinutes)
 	}
@@ -299,9 +312,14 @@ func TestChartsDaily_HappyPathWithTZBucketing(t *testing.T) {
 
 	d26 := parsed.Days[1]
 	// 22:00 UTC on May 25 (== 05:00 Jakarta on May 26) must land here,
-	// so total should be 180 (the fence-post row) + 300 (5pm Jakarta) = 480.
-	if d26.BottleML != 480 {
-		t.Errorf("d26 bottle = %v, want 480 (tz bucketing of fence-post row)", d26.BottleML)
+	// so total should be 180 (the fence-post row) + 300 (5pm Jakarta) +
+	// 100 ml breast (10am Jakarta) = 580.
+	if d26.BottleML != 580 {
+		t.Errorf("d26 bottle = %v, want 580 (tz bucketing of fence-post row + mixed sources)", d26.BottleML)
+	}
+	if d26.BottleMLBreast != 100 || d26.BottleMLFormula != 480 {
+		t.Errorf("d26 bottle split = (breast %v, formula %v), want (100, 480)",
+			d26.BottleMLBreast, d26.BottleMLFormula)
 	}
 	if d26.PumpingML != 200 {
 		t.Errorf("d26 pumping = %v, want 200", d26.PumpingML)
@@ -324,6 +342,10 @@ func TestChartsDaily_HappyPathWithTZBucketing(t *testing.T) {
 	d27 := parsed.Days[2]
 	if d27.BottleML != 0 || d27.NursingMinutes != 0 || d27.DiaperTotal != 0 {
 		t.Errorf("d27 should be all zero, got %+v", d27)
+	}
+	if d27.BottleMLBreast != 0 || d27.BottleMLFormula != 0 {
+		t.Errorf("d27 bottle split should be zero, got (breast %v, formula %v)",
+			d27.BottleMLBreast, d27.BottleMLFormula)
 	}
 	if d27.Growth.WeightG != nil || d27.Growth.HeightCM != nil || d27.Growth.HeadCM != nil {
 		t.Errorf("d27 growth should be all nil, got %+v", d27.Growth)

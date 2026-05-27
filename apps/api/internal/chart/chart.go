@@ -57,15 +57,21 @@ type DailyResponse struct {
 // pointers because "no measurement that day" is materially different from
 // "0 grams" and the FE renders the difference (broken line vs zero baseline).
 type Daily struct {
-	Date           string         `json:"date"`
-	BottleML       float64        `json:"bottle_ml"`
-	NursingMinutes int            `json:"nursing_minutes"`
-	PumpingML      float64        `json:"pumping_ml"`
-	DiaperTotal    int            `json:"diaper_total"`
-	DiaperWet      int            `json:"diaper_wet"`
-	DiaperSoiled   int            `json:"diaper_soiled"`
-	DiaperMixed    int            `json:"diaper_mixed"`
-	Growth         GrowthSnapshot `json:"growth"`
+	Date string `json:"date"`
+	// BottleML is the combined per-day total across all milk sources. Kept
+	// for the summary tile and old-FE compatibility; the per-source fields
+	// below split it into breast vs formula so the bottle chart can render
+	// a 2-segment stacked bar.
+	BottleML        float64        `json:"bottle_ml"`
+	BottleMLBreast  float64        `json:"bottle_ml_breast"`
+	BottleMLFormula float64        `json:"bottle_ml_formula"`
+	NursingMinutes  int            `json:"nursing_minutes"`
+	PumpingML       float64        `json:"pumping_ml"`
+	DiaperTotal     int            `json:"diaper_total"`
+	DiaperWet       int            `json:"diaper_wet"`
+	DiaperSoiled    int            `json:"diaper_soiled"`
+	DiaperMixed     int            `json:"diaper_mixed"`
+	Growth          GrowthSnapshot `json:"growth"`
 }
 
 // GrowthSnapshot carries the latest non-null reading for each metric on a
@@ -213,8 +219,9 @@ func writeBabyAuthErr(w http.ResponseWriter, err error) {
 // shape is dictated by the SQL select list.
 
 type bottleDayRow struct {
-	Day      time.Time
-	AmountML float64
+	Day        time.Time
+	MilkSource string
+	AmountML   float64
 }
 
 type pumpingDayRow struct {
@@ -245,12 +252,16 @@ type growthRow struct {
 }
 
 func (h *Handler) queryBottle(ctx context.Context, babyID uuid.UUID, fromUTC, toUTC time.Time, tz string) ([]bottleDayRow, error) {
+	// One row per (day, milk_source) so the FE can render a 2-segment
+	// stacked bar (breast vs formula). mergeBottle still sums both into
+	// the combined BottleML total for the summary tile.
 	rows, err := h.store.Pool.Query(ctx, `
 		SELECT (date_trunc('day', occurred_at AT TIME ZONE $1))::date AS day,
+		       milk_source,
 		       COALESCE(SUM(amount_ml), 0)::float8
 		FROM bottle_feeds
 		WHERE baby_id = $2 AND occurred_at >= $3 AND occurred_at < $4
-		GROUP BY 1
+		GROUP BY 1, 2
 	`, tz, babyID, fromUTC, toUTC)
 	if err != nil {
 		return nil, err
@@ -259,7 +270,7 @@ func (h *Handler) queryBottle(ctx context.Context, babyID uuid.UUID, fromUTC, to
 	var out []bottleDayRow
 	for rows.Next() {
 		var r bottleDayRow
-		if err := rows.Scan(&r.Day, &r.AmountML); err != nil {
+		if err := rows.Scan(&r.Day, &r.MilkSource, &r.AmountML); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
