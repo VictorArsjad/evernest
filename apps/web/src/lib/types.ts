@@ -1,6 +1,8 @@
 // Server response types. We mirror the Go structs by hand here; later we
 // may generate from the OpenAPI spec.
 
+import type { ChartPalette } from "./palette";
+
 export interface User {
   id: string;
   email: string;
@@ -157,6 +159,12 @@ export interface UserPreferences {
   // bars (which compare today's totals against age-based daily targets).
   // Default true; user can hide bars from the settings screen.
   show_recommended_targets: boolean;
+  // chart_palette controls the /charts page series colors. Stored as a
+  // JSONB column on user_preferences (migration 000008). The BE column
+  // default keeps legacy rows visually identical to the previous
+  // hard-coded fills — see lib/palette.ts for the resolve() helper that
+  // flattens (preset, overrides) into a concrete color per series.
+  chart_palette: ChartPalette;
   updated_at: string;
 }
 

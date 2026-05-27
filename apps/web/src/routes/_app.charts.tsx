@@ -19,6 +19,7 @@ import {
   type LinePoint,
   type SparkBar,
 } from "../lib/charts";
+import { DEFAULT_PALETTE, resolve } from "../lib/palette";
 import {
   useBabies,
   useDailyCharts,
@@ -191,35 +192,28 @@ function TooltipBody({
 }
 
 function DiaperTooltipRow({
+  color,
   label,
   value,
 }: {
+  color: string;
   label: string;
   value: number;
 }) {
   return (
     <div className="flex items-center justify-between gap-3 text-white/80">
-      <span className="capitalize">{label}</span>
+      <span className="flex items-center gap-1 capitalize">
+        <span
+          aria-hidden="true"
+          className="inline-block h-2 w-2 rounded-sm"
+          style={{ backgroundColor: color }}
+        />
+        {label}
+      </span>
       <span>{value}</span>
     </div>
   );
 }
-
-// Diaper segment fills, kept module-level so DiaperStackChart,
-// DiaperLegend and the swatchless legend stay in sync without
-// threading colors through props.
-const DIAPER_FILL = {
-  wet: "rgb(253 224 71)",
-  soiled: "rgb(217 119 6)",
-  mixed: "rgb(180 83 9)",
-} as const;
-
-// Bottle stacked-bar fills, breast (bottom) / formula (top). Kept
-// module-level for the same reason as DIAPER_FILL.
-const BOTTLE_FILL = {
-  breast: "rgb(244 114 182)",
-  formula: "rgb(253 186 116)",
-} as const;
 
 export const Route = createFileRoute("/_app/charts")({
   component: ChartsPage,
@@ -298,6 +292,22 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
     () => linePoints(days.map((d) => d.growth?.weight_g ?? null)),
     [days],
   );
+  // Resolve the user's palette once per render and pass concrete colors
+  // down to each chart. `?? DEFAULT_PALETTE` handles both old-BE
+  // (chart_palette absent on the response) and the brief loading window
+  // before useMyPreferences hydrates.
+  const colors = useMemo(
+    () => resolve(prefs.chart_palette ?? DEFAULT_PALETTE),
+    [prefs.chart_palette],
+  );
+  const diaperColors = useMemo(
+    () => ({
+      wet: colors.diaper_wet,
+      soiled: colors.diaper_soiled,
+      mixed: colors.diaper_mixed,
+    }),
+    [colors.diaper_wet, colors.diaper_soiled, colors.diaper_mixed],
+  );
 
   if (days.length === 0) {
     return (
@@ -320,18 +330,20 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
       >
         <BottleStackChart
           days={days}
+          breastColor={colors.bottle_breast}
+          formulaColor={colors.bottle_formula}
           ariaValue={(i) =>
             `${formatVolume(days[i].bottle_ml_breast ?? 0, prefs.unit_volume)} breast, ${formatVolume(days[i].bottle_ml_formula ?? 0, prefs.unit_volume)} formula, ${formatVolume(days[i].bottle_ml, prefs.unit_volume)} total`
           }
           renderTooltip={(i) => (
             <TooltipBody date={days[i].date}>
               <BottleTooltipRow
-                color={BOTTLE_FILL.breast}
+                color={colors.bottle_breast}
                 label="breast"
                 value={formatVolume(days[i].bottle_ml_breast ?? 0, prefs.unit_volume)}
               />
               <BottleTooltipRow
-                color={BOTTLE_FILL.formula}
+                color={colors.bottle_formula}
                 label="formula"
                 value={formatVolume(days[i].bottle_ml_formula ?? 0, prefs.unit_volume)}
               />
@@ -342,7 +354,10 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
           )}
         />
         <Axis days={days} />
-        <BottleLegend />
+        <BottleLegend
+          breastColor={colors.bottle_breast}
+          formulaColor={colors.bottle_formula}
+        />
       </ChartCard>
 
       <ChartCard
@@ -355,7 +370,7 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         <BarChart
           bars={nursing.bars}
           max={nursing.max}
-          fill="rgb(110 231 183)"
+          fill={colors.nursing}
           days={days}
           ariaValue={(i) => `${days[i].nursing_minutes} min`}
           renderTooltip={(i) => (
@@ -377,7 +392,7 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         <BarChart
           bars={pumping.bars}
           max={pumping.max}
-          fill="rgb(125 211 252)"
+          fill={colors.pumping}
           days={days}
           ariaValue={(i) => formatVolume(days[i].pumping_ml, prefs.unit_volume)}
           renderTooltip={(i) => (
@@ -398,15 +413,28 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
       >
         <DiaperStackChart
           stacked={stacked}
+          colors={diaperColors}
           days={days}
           ariaValue={(i) =>
             `${days[i].diaper_wet} wet, ${days[i].diaper_soiled} soiled, ${days[i].diaper_mixed} mixed`
           }
           renderTooltip={(i) => (
             <TooltipBody date={days[i].date}>
-              <DiaperTooltipRow label="wet" value={days[i].diaper_wet} />
-              <DiaperTooltipRow label="soiled" value={days[i].diaper_soiled} />
-              <DiaperTooltipRow label="mixed" value={days[i].diaper_mixed} />
+              <DiaperTooltipRow
+                color={diaperColors.wet}
+                label="wet"
+                value={days[i].diaper_wet}
+              />
+              <DiaperTooltipRow
+                color={diaperColors.soiled}
+                label="soiled"
+                value={days[i].diaper_soiled}
+              />
+              <DiaperTooltipRow
+                color={diaperColors.mixed}
+                label="mixed"
+                value={days[i].diaper_mixed}
+              />
               <div className="mt-0.5 border-t border-white/10 pt-0.5 text-white">
                 {days[i].diaper_total} total
               </div>
@@ -414,7 +442,7 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
           )}
         />
         <Axis days={days} />
-        <DiaperLegend />
+        <DiaperLegend colors={diaperColors} />
       </ChartCard>
 
       <ChartCard
@@ -434,7 +462,7 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         {weight.hasData ? (
           <LineChart
             points={weight.points}
-            stroke="rgb(196 181 253)"
+            stroke={colors.weight}
             days={days}
             ariaValue={(i) => {
               const g = days[i].growth?.weight_g;
@@ -557,11 +585,13 @@ function BarChart({
 
 function DiaperStackChart({
   stacked,
+  colors,
   days,
   ariaValue,
   renderTooltip,
 }: {
   stacked: ReturnType<typeof stackedDiaperLayout>;
+  colors: { wet: string; soiled: string; mixed: string };
   days: ChartDaily[];
   ariaValue: (i: number) => string;
   renderTooltip: (i: number) => React.ReactNode;
@@ -587,13 +617,13 @@ function DiaperStackChart({
         aria-label="Daily diaper count stacked bar chart"
       >
         {stacked.wet.map((b) => (
-          <SegmentRect key={`w${b.index}`} bar={b} fill={DIAPER_FILL.wet} />
+          <SegmentRect key={`w${b.index}`} bar={b} fill={colors.wet} />
         ))}
         {stacked.soiled.map((b) => (
-          <SegmentRect key={`s${b.index}`} bar={b} fill={DIAPER_FILL.soiled} />
+          <SegmentRect key={`s${b.index}`} bar={b} fill={colors.soiled} />
         ))}
         {stacked.mixed.map((b) => (
-          <SegmentRect key={`m${b.index}`} bar={b} fill={DIAPER_FILL.mixed} />
+          <SegmentRect key={`m${b.index}`} bar={b} fill={colors.mixed} />
         ))}
         {hover.activeIndex != null &&
           stacked.wet[hover.activeIndex] &&
@@ -637,12 +667,16 @@ function SegmentRect({ bar, fill }: { bar: SparkBar; fill: string }) {
   );
 }
 
-function DiaperLegend() {
+function DiaperLegend({
+  colors,
+}: {
+  colors: { wet: string; soiled: string; mixed: string };
+}) {
   return (
     <ul className="flex gap-3 text-[10px] text-white/60">
-      <LegendDot color={DIAPER_FILL.wet} label="wet" />
-      <LegendDot color={DIAPER_FILL.soiled} label="soiled" />
-      <LegendDot color={DIAPER_FILL.mixed} label="mixed" />
+      <LegendDot color={colors.wet} label="wet" />
+      <LegendDot color={colors.soiled} label="soiled" />
+      <LegendDot color={colors.mixed} label="mixed" />
     </ul>
   );
 }
@@ -661,10 +695,14 @@ function DiaperLegend() {
 // "breast 0 ml / formula 0 ml / N ml total" — consciously acceptable.
 function BottleStackChart({
   days,
+  breastColor,
+  formulaColor,
   ariaValue,
   renderTooltip,
 }: {
   days: ChartDaily[];
+  breastColor: string;
+  formulaColor: string;
   ariaValue: (i: number) => string;
   renderTooltip: (i: number) => React.ReactNode;
 }) {
@@ -700,10 +738,10 @@ function BottleStackChart({
         aria-label="Daily bottle volume stacked bar chart"
       >
         {stacked.bottom.map((b) => (
-          <SegmentRect key={`bb${b.index}`} bar={b} fill={BOTTLE_FILL.breast} />
+          <SegmentRect key={`bb${b.index}`} bar={b} fill={breastColor} />
         ))}
         {stacked.top.map((b) => (
-          <SegmentRect key={`bt${b.index}`} bar={b} fill={BOTTLE_FILL.formula} />
+          <SegmentRect key={`bt${b.index}`} bar={b} fill={formulaColor} />
         ))}
         {hover.activeIndex != null &&
           stacked.bottom[hover.activeIndex] &&
@@ -731,11 +769,17 @@ function BottleStackChart({
   );
 }
 
-function BottleLegend() {
+function BottleLegend({
+  breastColor,
+  formulaColor,
+}: {
+  breastColor: string;
+  formulaColor: string;
+}) {
   return (
     <ul className="flex gap-3 text-[10px] text-white/60">
-      <LegendDot color={BOTTLE_FILL.breast} label="breast" />
-      <LegendDot color={BOTTLE_FILL.formula} label="formula" />
+      <LegendDot color={breastColor} label="breast" />
+      <LegendDot color={formulaColor} label="formula" />
     </ul>
   );
 }

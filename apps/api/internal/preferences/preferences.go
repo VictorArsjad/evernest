@@ -17,9 +17,11 @@ package preferences
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -31,6 +33,21 @@ import (
 	"github.com/varsjad/evernest/apps/api/internal/httpx"
 	"github.com/varsjad/evernest/apps/api/internal/store"
 )
+
+// ChartPalette is the per-user chart color configuration. Persisted as a
+// single JSONB column on user_preferences. Preset is the curated baseline
+// (default matches today's hard-coded chart fills verbatim) and Overrides
+// is a sparse map of series-key -> "#rrggbb" that wins over the preset on
+// the FE side.
+//
+// Overrides keys are validated against a closed allowlist (see
+// allowedSeriesKeys) in the PUT handler — validator/v10 can enforce the
+// preset oneof but doesn't have first-class map-key validation, so the key
+// + hex check happens after the struct validator pass.
+type ChartPalette struct {
+	Preset    string            `json:"preset" validate:"required,oneof=default warm pastel high_contrast colorblind"`
+	Overrides map[string]string `json:"overrides"`
+}
 
 // UserPreferences mirrors the user_preferences row shape returned to the FE.
 // Field tags match the schema column names so the FE can deserialize without
@@ -44,8 +61,49 @@ type UserPreferences struct {
 	// bars (today vs. age-based daily target). Defaults to true server-side;
 	// users opt out via the settings screen. Stored as a boolean column on
 	// user_preferences (added in migration 000007).
-	ShowRecommendedTargets bool      `json:"show_recommended_targets"`
-	UpdatedAt              time.Time `json:"updated_at"`
+	ShowRecommendedTargets bool `json:"show_recommended_targets"`
+	// ChartPalette controls the /charts page series colors. Persisted as a
+	// jsonb column added in migration 000008; the column default
+	// ({preset:"default", overrides:{}}) keeps legacy rows visually
+	// identical to today.
+	ChartPalette ChartPalette `json:"chart_palette"`
+	UpdatedAt    time.Time    `json:"updated_at"`
+}
+
+// allowedSeriesKeys is the closed allowlist for ChartPalette.Overrides keys.
+// Any key outside this set is rejected with 422. The set matches the FE's
+// SeriesKey union so adding a new chart series is a coordinated FE+BE
+// change rather than something a malformed PUT can sneak in.
+var allowedSeriesKeys = map[string]struct{}{
+	"bottle_breast":  {},
+	"bottle_formula": {},
+	"nursing":        {},
+	"pumping":        {},
+	"diaper_wet":     {},
+	"diaper_soiled":  {},
+	"diaper_mixed":   {},
+	"weight":         {},
+}
+
+// hexColorRe matches the canonical 6-digit hex color form the FE color
+// input emits. We intentionally do not accept 3-digit shorthand or named
+// colors — the FE only ever writes the long form, and accepting other
+// shapes here would mean the resolved color on the FE depends on which
+// browser parsed the value last.
+var hexColorRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+// validateChartPalette runs the post-validator key/hex checks. Returns an
+// empty string on success or a user-facing reason on failure.
+func validateChartPalette(p ChartPalette) string {
+	for key, color := range p.Overrides {
+		if _, ok := allowedSeriesKeys[key]; !ok {
+			return "chart_palette.overrides: unknown series key " + key
+		}
+		if !hexColorRe.MatchString(color) {
+			return "chart_palette.overrides[" + key + "]: must be #rrggbb"
+		}
+	}
+	return ""
 }
 
 type Handler struct {
@@ -85,11 +143,19 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 // former case we preserve the existing value rather than silently flipping
 // it back to true. The other fields are required because they've always
 // been part of the contract.
+//
+// ChartPalette is required (no preserve-on-omit) because the FE always
+// reads the current value first and round-trips it on every save; an
+// omitted chart_palette is a bug in the FE, not a legitimate "leave as
+// is" signal. The struct's inner `oneof` on Preset enforces the preset
+// enum, and the post-validator pass in put() enforces the overrides
+// shape.
 type putReq struct {
-	TimeFormat             string `json:"time_format" validate:"required,oneof=24h 12h"`
-	Timezone               string `json:"timezone" validate:"required,min=1,max=64"`
-	Locale                 string `json:"locale" validate:"required,min=2,max=16"`
-	ShowRecommendedTargets *bool  `json:"show_recommended_targets,omitempty"`
+	TimeFormat             string       `json:"time_format" validate:"required,oneof=24h 12h"`
+	Timezone               string       `json:"timezone" validate:"required,min=1,max=64"`
+	Locale                 string       `json:"locale" validate:"required,min=2,max=16"`
+	ShowRecommendedTargets *bool        `json:"show_recommended_targets,omitempty"`
+	ChartPalette           ChartPalette `json:"chart_palette" validate:"required"`
 }
 
 func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +178,25 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", "invalid timezone: must be IANA tz name")
 		return
 	}
+	if msg := validateChartPalette(req.ChartPalette); msg != "" {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", msg)
+		return
+	}
+
+	// pgx accepts a []byte for a jsonb parameter and writes it as raw
+	// JSON. Marshalling here (rather than relying on pgx's reflection
+	// path on the struct) keeps the wire bytes obviously correct and
+	// guarantees `overrides: nil` lands as `{}` on disk — see
+	// chartPaletteToJSON.
+	paletteJSON, err := chartPaletteToJSON(req.ChartPalette)
+	if err != nil {
+		// Shouldn't happen: the inputs are all strings + a map of
+		// strings, both of which always marshal cleanly. Treat as a
+		// 500 so it's loud if it ever does.
+		h.logger.Error("marshal chart_palette", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not encode chart_palette")
+		return
+	}
 
 	// When the client omits show_recommended_targets (older FE builds) we
 	// preserve whatever's already on the row. COALESCE on the conflict
@@ -123,36 +208,44 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 	// is nil rather than passing NULL.
 	var prefs UserPreferences
 	prefs.UserID = uid
-	var err error
+	var paletteRaw []byte
 	if req.ShowRecommendedTargets != nil {
 		err = h.store.Pool.QueryRow(r.Context(), `
-			INSERT INTO user_preferences (user_id, time_format, timezone, locale, show_recommended_targets)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO user_preferences (user_id, time_format, timezone, locale, show_recommended_targets, chart_palette)
+			VALUES ($1, $2, $3, $4, $5, $6)
 			ON CONFLICT (user_id) DO UPDATE
 			   SET time_format              = EXCLUDED.time_format,
 			       timezone                 = EXCLUDED.timezone,
 			       locale                   = EXCLUDED.locale,
-			       show_recommended_targets = EXCLUDED.show_recommended_targets
-			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, updated_at
-		`, uid, req.TimeFormat, req.Timezone, req.Locale, *req.ShowRecommendedTargets).Scan(
-			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &prefs.UpdatedAt,
+			       show_recommended_targets = EXCLUDED.show_recommended_targets,
+			       chart_palette            = EXCLUDED.chart_palette
+			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, updated_at
+		`, uid, req.TimeFormat, req.Timezone, req.Locale, *req.ShowRecommendedTargets, paletteJSON).Scan(
+			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &prefs.UpdatedAt,
 		)
 	} else {
 		err = h.store.Pool.QueryRow(r.Context(), `
-			INSERT INTO user_preferences (user_id, time_format, timezone, locale)
-			VALUES ($1, $2, $3, $4)
+			INSERT INTO user_preferences (user_id, time_format, timezone, locale, chart_palette)
+			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (user_id) DO UPDATE
-			   SET time_format = EXCLUDED.time_format,
-			       timezone    = EXCLUDED.timezone,
-			       locale      = EXCLUDED.locale
-			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, updated_at
-		`, uid, req.TimeFormat, req.Timezone, req.Locale).Scan(
-			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &prefs.UpdatedAt,
+			   SET time_format   = EXCLUDED.time_format,
+			       timezone      = EXCLUDED.timezone,
+			       locale        = EXCLUDED.locale,
+			       chart_palette = EXCLUDED.chart_palette
+			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, updated_at
+		`, uid, req.TimeFormat, req.Timezone, req.Locale, paletteJSON).Scan(
+			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &prefs.UpdatedAt,
 		)
 	}
 	if err != nil {
 		h.logger.Error("upsert preferences", "err", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not save preferences")
+		return
+	}
+	prefs.ChartPalette, err = chartPaletteFromJSON(paletteRaw)
+	if err != nil {
+		h.logger.Error("decode chart_palette", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not decode chart_palette")
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, prefs)
@@ -164,12 +257,14 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 // the schema, so the only thing we need to pass is the user_id.
 func loadOrSeed(ctx context.Context, st *store.Store, uid uuid.UUID) (UserPreferences, error) {
 	var prefs UserPreferences
+	var paletteRaw []byte
 	err := st.Pool.QueryRow(ctx, `
-		SELECT user_id, time_format, timezone, locale, show_recommended_targets, updated_at
+		SELECT user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, updated_at
 		FROM user_preferences WHERE user_id = $1
-	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &prefs.UpdatedAt)
+	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &prefs.UpdatedAt)
 	if err == nil {
-		return prefs, nil
+		prefs.ChartPalette, err = chartPaletteFromJSON(paletteRaw)
+		return prefs, err
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return prefs, err
@@ -177,7 +272,39 @@ func loadOrSeed(ctx context.Context, st *store.Store, uid uuid.UUID) (UserPrefer
 	err = st.Pool.QueryRow(ctx, `
 		INSERT INTO user_preferences (user_id) VALUES ($1)
 		ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
-		RETURNING user_id, time_format, timezone, locale, show_recommended_targets, updated_at
-	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &prefs.UpdatedAt)
+		RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, updated_at
+	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &prefs.UpdatedAt)
+	if err != nil {
+		return prefs, err
+	}
+	prefs.ChartPalette, err = chartPaletteFromJSON(paletteRaw)
 	return prefs, err
+}
+
+// chartPaletteToJSON normalizes a nil overrides map to an empty object so
+// the value persisted on disk always matches the column-default shape.
+// Keeps SELECT-then-render predictable for the FE (it can rely on
+// overrides being a non-null object).
+func chartPaletteToJSON(p ChartPalette) ([]byte, error) {
+	if p.Overrides == nil {
+		p.Overrides = map[string]string{}
+	}
+	return json.Marshal(p)
+}
+
+// chartPaletteFromJSON unmarshals the raw jsonb bytes and ensures
+// Overrides is a non-nil map (even if disk somehow held `null`), again so
+// downstream consumers don't have to nil-guard on read.
+func chartPaletteFromJSON(raw []byte) (ChartPalette, error) {
+	var p ChartPalette
+	if len(raw) == 0 {
+		return ChartPalette{Preset: "default", Overrides: map[string]string{}}, nil
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return p, err
+	}
+	if p.Overrides == nil {
+		p.Overrides = map[string]string{}
+	}
+	return p, nil
 }

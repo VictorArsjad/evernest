@@ -9,6 +9,7 @@
 // views can render with placeholder values rather than blocking on the
 // preference fetch — a brief flash of canonical units is far better than
 // a brief flash of "Loading…" on the most visited screen in the app.
+import { DEFAULT_PALETTE, type ChartPalette } from "./palette";
 import { useBabySettings, useMyPreferences } from "./queries";
 
 export interface CombinedPreferences {
@@ -19,6 +20,11 @@ export interface CombinedPreferences {
   // Display flag for the Today banner's per-metric progress bars; lives
   // on user_preferences server-side. Default true.
   show_recommended_targets: boolean;
+  // chart_palette is the unresolved (preset, overrides) palette — the
+  // Charts route runs it through `resolve()` to get concrete colors per
+  // series. Falls back to DEFAULT_PALETTE during loading and against an
+  // older BE that doesn't return the field yet.
+  chart_palette: ChartPalette;
 }
 
 export const DEFAULT_PREFERENCES: CombinedPreferences = {
@@ -27,6 +33,7 @@ export const DEFAULT_PREFERENCES: CombinedPreferences = {
   unit_length: "cm",
   unit_weight: "kg",
   show_recommended_targets: true,
+  chart_palette: DEFAULT_PALETTE,
 };
 
 // usePreferences accepts a nullable babyId so callers don't need to gate
@@ -46,6 +53,7 @@ export function usePreferences(babyId: string | null): {
     unit_weight: baby.data?.unit_weight ?? DEFAULT_PREFERENCES.unit_weight,
     show_recommended_targets:
       me.data?.show_recommended_targets ?? DEFAULT_PREFERENCES.show_recommended_targets,
+    chart_palette: me.data?.chart_palette ?? DEFAULT_PREFERENCES.chart_palette,
   };
 
   // isLoading is true only on first paint; subsequent baby changes use

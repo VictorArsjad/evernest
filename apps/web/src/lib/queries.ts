@@ -3,6 +3,7 @@ import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tansta
 import { api, apiQueued } from "./api";
 import { useAuthStore } from "./authStore";
 import { kickAfterReauth } from "./outbox";
+import type { ChartPalette } from "./palette";
 import type {
   Baby,
   BabySettings,
@@ -740,6 +741,11 @@ export function useUpdateMyPreferences() {
       // user-create, but the FE always sends the current value on PUT
       // since the endpoint is full-replace (not PATCH).
       show_recommended_targets: boolean;
+      // chart_palette is required by the BE — the PUT handler rejects
+      // payloads missing it. Callers must always read the current value
+      // (via useMyPreferences) and round-trip it on every save, even
+      // when the field they're toggling is unrelated.
+      chart_palette: ChartPalette;
     }) => api<UserPreferences>("/me/preferences", { method: "PUT", body: vars }),
     onSuccess: (data) => qc.setQueryData(qk.myPreferences, data),
   });

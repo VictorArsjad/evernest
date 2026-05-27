@@ -13,6 +13,16 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useAuthStore } from "../lib/authStore";
 import {
+  PRESET_LABELS,
+  PRESET_NAMES,
+  PRESETS,
+  SERIES_LABELS,
+  resolve,
+  type ChartPalette,
+  type PresetName,
+  type SeriesKey,
+} from "../lib/palette";
+import {
   useBabies,
   useBabySettings,
   useCreateInvite,
@@ -107,6 +117,20 @@ function SettingsPage() {
           </p>
         ) : (
           <TodayBannerFields prefs={me.data} disabled={!me.data} />
+        )}
+      </section>
+
+      <section className="card flex flex-col gap-4 p-5">
+        <header className="flex items-baseline justify-between">
+          <h2 className="text-base font-semibold">Chart colors</h2>
+          <span className="text-xs text-white/40">Per user</span>
+        </header>
+        {me.isError ? (
+          <p className="text-sm text-red-400">
+            {me.error?.message ?? "Could not load your preferences."}
+          </p>
+        ) : (
+          <ChartColorsFields prefs={me.data} disabled={!me.data} />
         )}
       </section>
 
@@ -462,6 +486,7 @@ function UserTimeFields({
         timezone: prefs.timezone,
         locale: prefs.locale,
         show_recommended_targets: prefs.show_recommended_targets,
+        chart_palette: prefs.chart_palette,
       },
       { onSuccess: () => setSavedTick((t) => t + 1) },
     );
@@ -521,6 +546,7 @@ function TodayBannerFields({
         timezone: prefs.timezone,
         locale: prefs.locale,
         show_recommended_targets: next,
+        chart_palette: prefs.chart_palette,
       },
       { onSuccess: () => setSavedTick((t) => t + 1) },
     );
@@ -547,6 +573,185 @@ function TodayBannerFields({
           </span>
         </span>
       </label>
+      <SaveAffordance
+        show={showSaved}
+        pending={update.isPending}
+        error={update.error?.message ?? null}
+      />
+    </div>
+  );
+}
+
+// --- chart colors ---
+
+// ChartColorsFields renders the "Chart colors" Settings card: a row of
+// preset chips (each showing three preview dots), a divider, and an
+// "Advanced — customize per series" disclosure with one row per
+// SeriesKey for per-series overrides.
+//
+// Every change calls useUpdateMyPreferences with the FULL preferences
+// payload — the BE PUT is full-replace and now requires chart_palette,
+// so unchanged fields (time_format / timezone / locale /
+// show_recommended_targets) come from useMyPreferences().data and ride
+// along on every save.
+//
+// Preset selection preserves any in-flight overrides — only the
+// per-series "Reset" link removes an override. This matches user
+// intuition: "I want the warm vibe but keep my custom nursing color."
+function ChartColorsFields({
+  prefs,
+  disabled,
+}: {
+  prefs: UserPreferences | undefined;
+  disabled: boolean;
+}) {
+  const update = useUpdateMyPreferences();
+  const [savedTick, setSavedTick] = useState(0);
+  const [showSaved, setShowSaved] = useState(false);
+  useEffect(() => {
+    if (savedTick === 0) return;
+    setShowSaved(true);
+    const id = window.setTimeout(() => setShowSaved(false), 1800);
+    return () => window.clearTimeout(id);
+  }, [savedTick]);
+
+  const palette: ChartPalette = useMemo(
+    () => prefs?.chart_palette ?? { preset: "default", overrides: {} },
+    [prefs?.chart_palette],
+  );
+  const resolved = useMemo(() => resolve(palette), [palette]);
+
+  const save = (next: ChartPalette) => {
+    if (!prefs) return;
+    update.mutate(
+      {
+        time_format: prefs.time_format,
+        timezone: prefs.timezone,
+        locale: prefs.locale,
+        show_recommended_targets: prefs.show_recommended_targets,
+        chart_palette: next,
+      },
+      { onSuccess: () => setSavedTick((t) => t + 1) },
+    );
+  };
+
+  const onPick = (preset: PresetName) => {
+    save({ preset, overrides: palette.overrides });
+  };
+  const onOverride = (key: SeriesKey, color: string) => {
+    save({
+      preset: palette.preset,
+      overrides: { ...palette.overrides, [key]: color },
+    });
+  };
+  const onReset = (key: SeriesKey) => {
+    const rest: Partial<Record<SeriesKey, string>> = {};
+    for (const k of Object.keys(palette.overrides) as SeriesKey[]) {
+      if (k !== key) rest[k] = palette.overrides[k];
+    }
+    save({ preset: palette.preset, overrides: rest });
+  };
+
+  // Three sample series the chip preview dots show. Picked so each
+  // preset gives an immediate, glance-able sense of the vibe: a warm
+  // hue, a cool hue, and a yellow accent.
+  const PREVIEW_KEYS: SeriesKey[] = ["bottle_breast", "nursing", "diaper_wet"];
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        <span className="text-xs uppercase tracking-wide text-white/50">
+          Preset
+        </span>
+        <div className="flex flex-wrap gap-2">
+          {PRESET_NAMES.map((name) => {
+            const selected = palette.preset === name;
+            return (
+              <button
+                key={name}
+                type="button"
+                disabled={disabled || update.isPending}
+                onClick={() => onPick(name)}
+                aria-pressed={selected}
+                className={
+                  "flex flex-col items-center gap-1 rounded-lg border border-white/10 px-3 py-2 text-xs transition disabled:opacity-50 " +
+                  (selected
+                    ? "bg-white/10 text-white"
+                    : "text-white/70 hover:bg-white/5")
+                }
+              >
+                <span className="flex gap-1">
+                  {PREVIEW_KEYS.map((k) => (
+                    <span
+                      key={k}
+                      aria-hidden="true"
+                      className="inline-block h-2.5 w-2.5 rounded-full"
+                      style={{ backgroundColor: PRESETS[name][k] }}
+                    />
+                  ))}
+                </span>
+                <span>{PRESET_LABELS[name]}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <hr className="border-t border-white/5" />
+
+      <details className="group flex flex-col gap-2">
+        <summary className="cursor-pointer text-xs uppercase tracking-wide text-white/50 marker:text-white/40">
+          Advanced — customize per series
+        </summary>
+        <ul className="mt-2 flex flex-col gap-2">
+          {(Object.keys(SERIES_LABELS) as SeriesKey[]).map((key) => {
+            const value = resolved[key];
+            const hasOverride = key in palette.overrides;
+            return (
+              <li
+                key={key}
+                className="flex items-center gap-3 rounded-lg bg-bg-subtle px-3 py-2 text-sm"
+              >
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-4 w-4 shrink-0 rounded"
+                  style={{ backgroundColor: value }}
+                />
+                <span className="min-w-0 flex-1 truncate text-white/80">
+                  {SERIES_LABELS[key]}
+                </span>
+                <input
+                  type="color"
+                  aria-label={`${SERIES_LABELS[key]} color`}
+                  disabled={disabled || update.isPending}
+                  value={value}
+                  onChange={(e) => onOverride(key, e.target.value)}
+                  className="h-7 w-10 cursor-pointer rounded border border-white/10 bg-transparent p-0 disabled:opacity-50"
+                />
+                {hasOverride ? (
+                  <button
+                    type="button"
+                    disabled={disabled || update.isPending}
+                    onClick={() => onReset(key)}
+                    className="text-xs text-white/50 hover:text-white disabled:opacity-50"
+                  >
+                    Reset
+                  </button>
+                ) : (
+                  // Reserve the column so rows don't reflow as overrides
+                  // are added/removed.
+                  <span aria-hidden="true" className="w-[2.75rem]" />
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </details>
+
+      <p className="text-[11px] text-white/40">
+        Display only — never changes saved data.
+      </p>
+
       <SaveAffordance
         show={showSaved}
         pending={update.isPending}
