@@ -19,10 +19,6 @@
 // hides itself; calling `dismiss()` writes the current epoch so we can
 // expire the snooze. Cleared if `clearDismissal()` is called from a
 // future debug surface.
-//
-// TODO(CP6b): offline mutation outbox via IndexedDB lands in a separate
-// PR (CP6b) once CP5 stabilizes the mutation surface. See
-// `apps/web/src/lib/offline-outbox.todo.md` for the deferred scope.
 
 import { useCallback, useEffect, useState } from "react";
 
