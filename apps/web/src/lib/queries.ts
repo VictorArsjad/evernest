@@ -511,6 +511,10 @@ export function useUpdateMyPreferences() {
       time_format: "24h" | "12h";
       timezone: string;
       locale: string;
+      // Today-banner progress-bar toggle. Server defaults to true on
+      // user-create, but the FE always sends the current value on PUT
+      // since the endpoint is full-replace (not PATCH).
+      show_recommended_targets: boolean;
     }) => api<UserPreferences>("/me/preferences", { method: "PUT", body: vars }),
     onSuccess: (data) => qc.setQueryData(qk.myPreferences, data),
   });

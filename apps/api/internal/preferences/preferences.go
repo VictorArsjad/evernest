@@ -40,7 +40,12 @@ type UserPreferences struct {
 	TimeFormat string    `json:"time_format"`
 	Timezone   string    `json:"timezone"`
 	Locale     string    `json:"locale"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	// ShowRecommendedTargets gates the FE Today-banner's per-metric progress
+	// bars (today vs. age-based daily target). Defaults to true server-side;
+	// users opt out via the settings screen. Stored as a boolean column on
+	// user_preferences (added in migration 000007).
+	ShowRecommendedTargets bool      `json:"show_recommended_targets"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 type Handler struct {
@@ -74,10 +79,17 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 // putReq is the full-replace payload. We use string fields with `oneof` tags
 // rather than custom enum types because validator/v10 already enforces the
 // allowed values and the JSON shape stays trivial.
+//
+// ShowRecommendedTargets is a pointer so we can tell "client omitted this
+// field" (older FE builds) from "client explicitly sent false" — in the
+// former case we preserve the existing value rather than silently flipping
+// it back to true. The other fields are required because they've always
+// been part of the contract.
 type putReq struct {
-	TimeFormat string `json:"time_format" validate:"required,oneof=24h 12h"`
-	Timezone   string `json:"timezone" validate:"required,min=1,max=64"`
-	Locale     string `json:"locale" validate:"required,min=2,max=16"`
+	TimeFormat             string `json:"time_format" validate:"required,oneof=24h 12h"`
+	Timezone               string `json:"timezone" validate:"required,min=1,max=64"`
+	Locale                 string `json:"locale" validate:"required,min=2,max=16"`
+	ShowRecommendedTargets *bool  `json:"show_recommended_targets,omitempty"`
 }
 
 func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
@@ -101,19 +113,43 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// When the client omits show_recommended_targets (older FE builds) we
+	// preserve whatever's already on the row. COALESCE on the conflict
+	// path against $5 (which is NULL in that case) leaves the existing
+	// value untouched; on initial insert the column default of TRUE
+	// applies because COALESCE(NULL, NULL) keeps NULL out of the column
+	// and the schema default kicks in only for omitted columns. To get
+	// that behavior reliably we branch the SQL on whether the pointer
+	// is nil rather than passing NULL.
 	var prefs UserPreferences
 	prefs.UserID = uid
-	err := h.store.Pool.QueryRow(r.Context(), `
-		INSERT INTO user_preferences (user_id, time_format, timezone, locale)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (user_id) DO UPDATE
-		   SET time_format = EXCLUDED.time_format,
-		       timezone    = EXCLUDED.timezone,
-		       locale      = EXCLUDED.locale
-		RETURNING user_id, time_format, timezone, locale, updated_at
-	`, uid, req.TimeFormat, req.Timezone, req.Locale).Scan(
-		&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.UpdatedAt,
-	)
+	var err error
+	if req.ShowRecommendedTargets != nil {
+		err = h.store.Pool.QueryRow(r.Context(), `
+			INSERT INTO user_preferences (user_id, time_format, timezone, locale, show_recommended_targets)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (user_id) DO UPDATE
+			   SET time_format              = EXCLUDED.time_format,
+			       timezone                 = EXCLUDED.timezone,
+			       locale                   = EXCLUDED.locale,
+			       show_recommended_targets = EXCLUDED.show_recommended_targets
+			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, updated_at
+		`, uid, req.TimeFormat, req.Timezone, req.Locale, *req.ShowRecommendedTargets).Scan(
+			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &prefs.UpdatedAt,
+		)
+	} else {
+		err = h.store.Pool.QueryRow(r.Context(), `
+			INSERT INTO user_preferences (user_id, time_format, timezone, locale)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (user_id) DO UPDATE
+			   SET time_format = EXCLUDED.time_format,
+			       timezone    = EXCLUDED.timezone,
+			       locale      = EXCLUDED.locale
+			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, updated_at
+		`, uid, req.TimeFormat, req.Timezone, req.Locale).Scan(
+			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &prefs.UpdatedAt,
+		)
+	}
 	if err != nil {
 		h.logger.Error("upsert preferences", "err", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not save preferences")
@@ -129,9 +165,9 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 func loadOrSeed(ctx context.Context, st *store.Store, uid uuid.UUID) (UserPreferences, error) {
 	var prefs UserPreferences
 	err := st.Pool.QueryRow(ctx, `
-		SELECT user_id, time_format, timezone, locale, updated_at
+		SELECT user_id, time_format, timezone, locale, show_recommended_targets, updated_at
 		FROM user_preferences WHERE user_id = $1
-	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.UpdatedAt)
+	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &prefs.UpdatedAt)
 	if err == nil {
 		return prefs, nil
 	}
@@ -141,7 +177,7 @@ func loadOrSeed(ctx context.Context, st *store.Store, uid uuid.UUID) (UserPrefer
 	err = st.Pool.QueryRow(ctx, `
 		INSERT INTO user_preferences (user_id) VALUES ($1)
 		ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
-		RETURNING user_id, time_format, timezone, locale, updated_at
-	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.UpdatedAt)
+		RETURNING user_id, time_format, timezone, locale, show_recommended_targets, updated_at
+	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &prefs.UpdatedAt)
 	return prefs, err
 }

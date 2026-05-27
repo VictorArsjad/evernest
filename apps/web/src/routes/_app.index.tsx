@@ -1,18 +1,22 @@
 // Today screen layout:
-//   - 2x3 tile grid: 5 event kinds + a compact "Today" summary tile
+//   - TodayBanner infographic card (daily totals + 7-day sparkline)
+//   - 3-column action tile grid: 5 event kinds (Bottle / Nursing /
+//     Pumping / Diaper / Growth). Removing the old 6th "summary" tile
+//     leaves the second row left-aligned with one empty slot, which
+//     matches the design intent — the summary now lives above the grid.
 //   - Unified recent-events list across all kinds, newest first
-// Tiles for kinds that aren't shipped yet are visibly "Soon" placeholders
-// rather than dead links, and get wired up as each kind lands.
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { format, isToday, parseISO } from "date-fns";
 
 import { InstallPromptBanner } from "../components/InstallPromptBanner";
 import { useAuthStore } from "../lib/authStore";
+import { dailyWindowEndingToday } from "../lib/charts";
 import { formatElapsedHHMM } from "../lib/nursingTimer";
 import {
   useBabies,
   useBottleFeeds,
+  useDailyCharts,
   useDiapers,
   useEndNursing,
   useGrowths,
@@ -22,7 +26,9 @@ import {
   useOpenNursing,
   usePumpings,
 } from "../lib/queries";
+import { getDailyTargets, type DailyTargets } from "../lib/recommendations";
 import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
+import { formatTimeSince, lastEventAt, useNow } from "../lib/timeSince";
 import type { Baby, Nursing } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import {
@@ -32,6 +38,13 @@ import {
   formatWeight,
 } from "../lib/units";
 import { type CombinedPreferences, usePreferences } from "../lib/usePreferences";
+
+// Browser tz pinned at module init — the user's tz effectively never
+// changes mid-session, and re-reading on every render would invalidate
+// the sparkline query key on every paint. Mirrors the same pattern in
+// _app.charts.tsx.
+const BROWSER_TZ =
+  (typeof Intl !== "undefined" && Intl.DateTimeFormat().resolvedOptions().timeZone) || "UTC";
 
 export const Route = createFileRoute("/_app/")({
   component: TodayPage,
@@ -87,10 +100,20 @@ function TodayPage() {
   // chip in place of the standard Nursing tile when this resolves to a row.
   const openNursing = useOpenNursing(baby?.id ?? null);
   const growthsToday = useGrowths(baby?.id ?? null, todayStart, todayEnd);
-  // Latest measurement ever — fed into the summary tile. The default
-  // server-side window for growths covers the past year, which is plenty
-  // for "most-recent weight" since the rows return DESC by measured_at.
+  // Latest measurement ever — fed into the banner's Growth cell. The
+  // default server-side window for growths covers the past year, which
+  // is plenty for "most-recent weight" since the rows return DESC by
+  // measured_at.
   const growthsLatest = useGrowths(baby?.id ?? null);
+  // 7-day sparkline data — pulled from the same daily-aggregations
+  // endpoint that powers /charts. Memo'd window so the queryKey is
+  // stable across re-renders mid-day; it only flips at local midnight.
+  const sparkWindow = useMemo(() => dailyWindowEndingToday(new Date(), 7), []);
+  const sparkCharts = useDailyCharts(baby?.id ?? null, sparkWindow.from, sparkWindow.to, BROWSER_TZ);
+  // Single shared "now" tick for the banner's "X ago" labels. 60s is
+  // fast enough that "5m ago" never sits stale for more than a minute
+  // and slow enough to be invisible in CPU profiles.
+  const now = useNow(60_000);
 
   if (households.isLoading || babies.isLoading) {
     return <PageShell title="…">Loading…</PageShell>;
@@ -115,6 +138,22 @@ function TodayPage() {
   const latestWeightRow = growthsLatest.data?.find((g) => g.weight_g != null);
   const latestWeightG =
     latestWeightRow?.weight_g != null ? Number(latestWeightRow.weight_g) : null;
+
+  // Targets are gated by both the user pref AND the baby having a DoB.
+  // When either is unsatisfied, the banner renders cells without
+  // progress bars — visually cleaner than a long row of empty bars.
+  const targets: DailyTargets | null = prefs.show_recommended_targets
+    ? getDailyTargets(baby, now)
+    : null;
+  // "Last fed" combines bottle feeds and *completed* nursing sessions.
+  // An open nursing session is rendered as "Nursing now" with higher
+  // priority in TodayBanner, so we exclude open sessions here to avoid
+  // double-counting.
+  const lastFedAt = lastEventAt([
+    ...(feeds.data ?? []),
+    ...((nursings.data ?? []).filter((n) => n.ended_at != null)),
+  ]);
+  const lastDiaperAt = lastEventAt(diapers.data ?? []);
 
   const recent = mergeRecent({
     bottleFeeds: feeds.data,
@@ -155,6 +194,21 @@ function TodayPage() {
         </div>
       }
     >
+      <TodayBanner
+        totalMl={totalMl}
+        pumpedMl={pumpedMl}
+        nursingMin={nursingMin}
+        diaperCount={diaperCount}
+        latestWeightG={latestWeightG}
+        lastFedAt={lastFedAt}
+        lastDiaperAt={lastDiaperAt}
+        openNursing={openNursing.data ?? null}
+        now={now}
+        sparkline={(sparkCharts.data?.days ?? []).map((d) => d.bottle_ml)}
+        targets={targets}
+        prefs={prefs}
+      />
+
       <section className="grid grid-cols-3 gap-3">
         <Tile to="/log/bottle" babyId={baby.id} icon="🍼" label="Bottle" accent="peach" />
         {openNursing.data ? (
@@ -169,14 +223,6 @@ function TodayPage() {
         <Tile to="/log/pumping" babyId={baby.id} icon="💧" label="Pumping" accent="sky" />
         <Tile to="/log/diaper" babyId={baby.id} icon="🧷" label="Diaper" accent="lemon" />
         <Tile to="/log/growth" babyId={baby.id} icon="📏" label="Growth" accent="lilac" />
-        <SummaryTile
-          totalMl={totalMl}
-          pumpedMl={pumpedMl}
-          nursingMin={nursingMin}
-          diaperCount={diaperCount}
-          latestWeightG={latestWeightG}
-          prefs={prefs}
-        />
       </section>
 
       <section className="flex flex-col gap-2">
@@ -423,12 +469,29 @@ function EndNursingModal({
   );
 }
 
-function SummaryTile({
+// TodayBanner replaces the old square 6th-cell SummaryTile with a wider
+// infographic that:
+//   - leads with a glanceable "Fed Xh Ym ago" headline (or "Nursing
+//     now · 12m" when a session is open, taking priority over last-fed)
+//   - shows a thin 7-day sparkline of bottle ml in the top-right
+//   - renders 5 inline stat cells (one per activity) with optional
+//     progress bars vs. age-based daily targets when both
+//     `prefs.show_recommended_targets` is on AND the baby has a DoB.
+// Bars are clamped at 100% — overflow days don't shout, they just sit
+// at full bar. Growth has no daily total, so its cell shows the latest
+// weight with no bar regardless of settings.
+function TodayBanner({
   totalMl,
   pumpedMl,
   nursingMin,
   diaperCount,
   latestWeightG,
+  lastFedAt,
+  lastDiaperAt,
+  openNursing,
+  now,
+  sparkline,
+  targets,
   prefs,
 }: {
   totalMl: number;
@@ -436,28 +499,184 @@ function SummaryTile({
   nursingMin: number;
   diaperCount: number;
   latestWeightG: number | null;
+  lastFedAt: string | null;
+  lastDiaperAt: string | null;
+  openNursing: Nursing | null;
+  now: Date;
+  sparkline: number[];
+  targets: DailyTargets | null;
   prefs: CombinedPreferences;
 }) {
-  // The first four rows are "today" totals; weight is the latest reading
-  // ever (growth measurements are infrequent — a daily total would mostly
-  // be 0). It piggy-backs on the same tile so we don't blow out the 2x3
-  // grid for a one-row stat. Volume + weight values respect the user's
-  // chosen display unit; canonical math (sum of ml) happens upstream so
-  // the formatter only has to convert + render.
+  const nursingInProgressFor = openNursing
+    ? formatElapsedHHMM(openNursing.started_at, now)
+    : null;
+
   return (
-    <div className="flex aspect-square flex-col items-start justify-center gap-[2px] rounded-2xl border border-white/10 bg-bg-surface p-3">
-      <span className="text-[10px] uppercase tracking-wide text-white/40">Today</span>
-      <SummaryRow icon="🍼" rendered={formatVolume(totalMl, prefs.unit_volume)} />
-      <SummaryRow icon="👶" value={nursingMin} unit="min" />
-      <SummaryRow icon="💧" rendered={formatVolume(pumpedMl, prefs.unit_volume)} />
-      <SummaryRow icon="🧷" value={diaperCount} unit="" />
-      <SummaryRow
-        icon="📏"
-        rendered={
-          latestWeightG != null ? formatWeight(latestWeightG, prefs.unit_weight) : "—"
-        }
-      />
+    <section className="rounded-2xl border border-white/10 bg-bg-surface p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <span className="text-[10px] uppercase tracking-wide text-white/40">Today</span>
+          {nursingInProgressFor ? (
+            <div className="mt-1 text-lg font-semibold leading-tight">
+              Nursing now
+              <span className="ml-2 text-sm font-normal tabular-nums text-emerald-300">
+                · {nursingInProgressFor}
+              </span>
+            </div>
+          ) : lastFedAt ? (
+            <div className="mt-1 text-lg font-semibold leading-tight">
+              Fed {formatTimeSince(lastFedAt, now)}
+              {totalMl > 0 && (
+                <span className="ml-2 text-sm font-normal text-white/60">
+                  · {formatVolume(totalMl, prefs.unit_volume)}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="mt-1 text-lg font-semibold leading-tight text-white/60">
+              No feeds yet today
+            </div>
+          )}
+          {lastDiaperAt && (
+            <div className="text-xs text-white/60">
+              Last diaper {formatTimeSince(lastDiaperAt, now)}
+            </div>
+          )}
+        </div>
+        <Sparkline values={sparkline} />
+      </div>
+
+      <div className="mt-3 border-t border-white/10 pt-3">
+        <div className="grid grid-cols-5 gap-2">
+          <BannerStat
+            icon="🍼"
+            rendered={formatVolume(totalMl, prefs.unit_volume)}
+            barFill={targets ? totalMl / targets.bottle_ml : null}
+            barClass="bg-orange-300/70"
+          />
+          <BannerStat
+            icon="👶"
+            valueLabel={String(nursingMin)}
+            unitLabel="min"
+            barFill={targets ? nursingMin / targets.nursing_min : null}
+            barClass="bg-emerald-300/70"
+          />
+          <BannerStat
+            icon="💧"
+            rendered={formatVolume(pumpedMl, prefs.unit_volume)}
+            barFill={targets ? pumpedMl / targets.pumping_ml : null}
+            barClass="bg-sky-300/70"
+          />
+          <BannerStat
+            icon="🧷"
+            valueLabel={String(diaperCount)}
+            barFill={targets ? diaperCount / targets.diapers : null}
+            barClass="bg-yellow-300/70"
+          />
+          <BannerStat
+            icon="📏"
+            rendered={
+              latestWeightG != null ? formatWeight(latestWeightG, prefs.unit_weight) : "—"
+            }
+            // Growth doesn't have a daily total → no bar, ever.
+            barFill={null}
+            barClass=""
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// BannerStat renders one of the five inline stat cells in TodayBanner.
+// Accepts EITHER a pre-rendered "60 ml" string (unit-aware metrics) OR a
+// plain value/unit pair (fixed-unit metrics like nursing minutes or
+// diaper count). Same shape as the old SummaryRow but laid out
+// vertically so the bar can sit beneath the value.
+//
+// barFill is in [0, ∞). null → no bar rendered (Growth, or targets off).
+// Values >1 clamp visually at 100% so a 200% day doesn't push the bar
+// off-cell or make smaller days look insignificant by comparison.
+function BannerStat({
+  icon,
+  rendered,
+  valueLabel,
+  unitLabel,
+  barFill,
+  barClass,
+}: {
+  icon: string;
+  rendered?: string;
+  valueLabel?: string;
+  unitLabel?: string;
+  barFill: number | null;
+  barClass: string;
+}) {
+  let head = valueLabel ?? "";
+  let tail = unitLabel ?? "";
+  if (rendered != null) {
+    const parts = rendered.split(" ");
+    head = parts[0];
+    tail = parts.slice(1).join(" ");
+  }
+  const pct =
+    barFill == null
+      ? null
+      : Math.max(0, Math.min(1, Number.isFinite(barFill) ? barFill : 0));
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <div className="flex items-baseline gap-1">
+        <span className="text-xs leading-none">{icon}</span>
+        <span className="text-base font-semibold tabular-nums">{head}</span>
+        {tail && <span className="text-[10px] text-white/60">{tail}</span>}
+      </div>
+      {pct != null && (
+        <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
+          <div
+            className={`h-full rounded-full ${barClass}`}
+            style={{ width: `${pct * 100}%` }}
+          />
+        </div>
+      )}
     </div>
+  );
+}
+
+// Sparkline draws a tiny 7-bar SVG of recent daily totals. The last bar
+// is "today" and gets the accent fill; the others are dim. No axis or
+// labels — it's a glance affordance, not an analytical chart (the full
+// chart lives on /charts and is reachable via the header link).
+function Sparkline({ values }: { values: number[] }) {
+  if (values.length === 0) return <div className="w-20" aria-hidden />;
+  const max = Math.max(0, ...values);
+  const vbW = 70;
+  const vbH = 28;
+  const slot = vbW / values.length;
+  const barWidth = slot * 0.6;
+  const pad = (slot - barWidth) / 2;
+  return (
+    <svg
+      viewBox={`0 0 ${vbW} ${vbH}`}
+      className="h-7 w-20 shrink-0"
+      role="img"
+      aria-label={`7-day bottle intake sparkline (${values.length} day${values.length === 1 ? "" : "s"})`}
+    >
+      {values.map((v, i) => {
+        const h = max === 0 ? 0 : Math.max(1, (v / max) * vbH);
+        const isToday = i === values.length - 1;
+        return (
+          <rect
+            key={i}
+            x={i * slot + pad}
+            y={vbH - h}
+            width={barWidth}
+            height={h}
+            rx={1}
+            className={isToday ? "fill-accent" : "fill-white/25"}
+          />
+        );
+      })}
+    </svg>
   );
 }
 
@@ -482,42 +701,6 @@ function growthSummary(
     parts.push(`${formatLength(Number(g.head_circumference_cm), prefs.unit_length)} head`);
   }
   return parts.length > 0 ? parts.join(" · ") : "Measurement";
-}
-
-// SummaryRow takes EITHER a pre-rendered string (e.g. "60 ml") via
-// `rendered`, OR a value+unit pair for cases where the unit is fixed
-// regardless of preferences (nursing minutes, diaper count). The two
-// shapes share styling — single component keeps the tile vertical-rhythm
-// pixel-stable when prefs flip.
-function SummaryRow({
-  icon,
-  value,
-  unit,
-  rendered,
-}: {
-  icon: string;
-  value?: number | string;
-  unit?: string;
-  rendered?: string;
-}) {
-  if (rendered != null) {
-    const [head, ...rest] = rendered.split(" ");
-    const tail = rest.join(" ");
-    return (
-      <div className="flex items-baseline gap-1">
-        <span className="text-xs leading-none">{icon}</span>
-        <span className="text-base font-semibold tabular-nums">{head}</span>
-        {tail && <span className="text-[10px] text-white/60">{tail}</span>}
-      </div>
-    );
-  }
-  return (
-    <div className="flex items-baseline gap-1">
-      <span className="text-xs leading-none">{icon}</span>
-      <span className="text-base font-semibold tabular-nums">{value}</span>
-      {unit && <span className="text-[10px] text-white/60">{unit}</span>}
-    </div>
-  );
 }
 
 // --- recent list ---
