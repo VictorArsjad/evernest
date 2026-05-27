@@ -158,6 +158,21 @@ export function linePoints(values: (number | null)[]): {
   return { points, min, max, hasData };
 }
 
+// tooltipXPercent returns the horizontal center of the day-slot at
+// `index` in a series of `total` slots, expressed as a percent of the
+// chart container's width. This matches the slot math used by
+// `barLayout` / `stackedDiaperLayout` (slot = 1/total, bar centered in
+// its slot) so the tooltip caret lines up with the visible bar.
+//
+// Used by the tooltip primitive in _app.charts.tsx; kept pure here so
+// the math has a regression test independent of the SVG rendering.
+// Returns 50 for empty / non-positive `total` so the caller never
+// produces a NaN style value.
+export function tooltipXPercent(index: number, total: number): number {
+  if (!Number.isFinite(total) || total <= 0) return 50;
+  return ((index + 0.5) / total) * 100;
+}
+
 // formatDayShort returns "May 25" style short labels for axis ticks.
 // Given the API returns ISO YYYY-MM-DD already in the requested tz, we
 // don't need to re-localize — just split and look up the month.
