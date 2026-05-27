@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
 
 import { bootstrapAuth } from "./lib/api";
+import { sync as syncOutbox } from "./lib/outbox";
 import { routeTree } from "./routeTree.gen";
 import "./styles/index.css";
 
@@ -50,4 +51,10 @@ bootstrapAuth().finally(() => {
       </QueryClientProvider>
     </StrictMode>,
   );
+  // CP6b: kick a single drain attempt of the offline mutation outbox
+  // once the auth bootstrap settled. Records pending from a previous
+  // session (the user closed the tab while offline; refresh just now)
+  // get re-sent here. Failure (still offline) is silent — useOutbox
+  // will retry on `window.online` and on subsequent mutations.
+  void syncOutbox();
 });

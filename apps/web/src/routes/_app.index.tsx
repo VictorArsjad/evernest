@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import { format, isToday, parseISO } from "date-fns";
 
 import { InstallPromptBanner } from "../components/InstallPromptBanner";
+import { SyncStatusBadge } from "../components/SyncStatusBadge";
 import { useAuthStore } from "../lib/authStore";
 import { dailyWindowEndingToday } from "../lib/charts";
 import { formatElapsedHHMM } from "../lib/nursingTimer";
@@ -31,6 +32,7 @@ import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
 import { formatTimeSince, lastEventAt, useNow } from "../lib/timeSince";
 import type { Baby, Nursing } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
+import { useOutbox } from "../lib/useOutbox";
 import {
   formatLength,
   formatTime,
@@ -54,6 +56,21 @@ function TodayPage() {
   const nav = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
+
+  // CP6b: subscribe to the offline outbox so the badge + recent-row
+  // "syncing…" hints + "all caught up" toast all read from a single
+  // hook. inflightKeys is a Set<string> of idempotencyKeys still in
+  // the queue; RecentRow toggles a small clock icon when its row id
+  // is in this set.
+  const outbox = useOutbox();
+  const [caughtUpToast, setCaughtUpToast] = useState<number | null>(null);
+  useEffect(() => {
+    if (outbox.caughtUpAt == null) return;
+    setCaughtUpToast(outbox.caughtUpAt);
+    // Auto-dismiss after 3s so it doesn't linger across navigations.
+    const id = window.setTimeout(() => setCaughtUpToast(null), 3000);
+    return () => window.clearTimeout(id);
+  }, [outbox.caughtUpAt]);
 
   const households = useHouseholds();
   // First household is the "active" household for now — multi-household UI
@@ -180,6 +197,7 @@ function TodayPage() {
       onSignOut={() => logout.mutate()}
       headerExtra={
         <div className="flex items-center gap-3">
+          <SyncStatusBadge />
           <Link to="/charts" className="text-xs text-white/60 hover:text-white">
             View charts →
           </Link>
@@ -237,7 +255,12 @@ function TodayPage() {
         )}
         <ul className="flex flex-col gap-2">
           {recent.map((ev) => (
-            <RecentRow key={`${ev.kind}-${ev.data.id}`} ev={ev} prefs={prefs} />
+            <RecentRow
+              key={`${ev.kind}-${ev.data.id}`}
+              ev={ev}
+              prefs={prefs}
+              syncing={outbox.inflightKeys.has(ev.data.id)}
+            />
           ))}
         </ul>
       </section>
@@ -249,6 +272,18 @@ function TodayPage() {
           without conflicting with this card. Auto-hides when installed
           or recently dismissed; see useInstallPrompt for the gating. */}
       <InstallPromptBanner />
+
+      {caughtUpToast != null && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed inset-x-0 bottom-6 z-40 mx-auto flex max-w-xs items-center justify-center"
+        >
+          <div className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-1.5 text-xs font-medium text-emerald-100 shadow-lg">
+            All caught up
+          </div>
+        </div>
+      )}
     </PageShell>
   );
 }
@@ -705,7 +740,18 @@ function growthSummary(
 
 // --- recent list ---
 
-function RecentRow({ ev, prefs }: { ev: RecentEvent; prefs: CombinedPreferences }) {
+function RecentRow({
+  ev,
+  prefs,
+  syncing,
+}: {
+  ev: RecentEvent;
+  prefs: CombinedPreferences;
+  // CP6b: the row was created or modified via a mutation that's still
+  // sitting in the outbox queue. Render a small "syncing…" hint so
+  // the user knows the row is local-only until the queue drains.
+  syncing?: boolean;
+}) {
   const at = parseISO(ev.at);
   const icon =
     ev.kind === "bottle"
@@ -724,6 +770,15 @@ function RecentRow({ ev, prefs }: { ev: RecentEvent; prefs: CombinedPreferences 
         <span className="text-sm tabular-nums text-white/60 w-16">
           {formatTime(ev.at, prefs.time_format)}
         </span>
+        {syncing && (
+          <span
+            title="Waiting for network sync"
+            aria-label="Waiting for network sync"
+            className="rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] text-white/50"
+          >
+            ⏳ syncing
+          </span>
+        )}
       </div>
       <div className="min-w-0 flex-1">
         {ev.kind === "bottle" && (

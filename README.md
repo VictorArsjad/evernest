@@ -25,6 +25,13 @@ A baby tracking app — feedings, pumping, diapers, growth, and charts — desig
 - Stay signed in across hard-reloads (auto-refresh via httpOnly cookie).
 - Sign out.
 - Install as a real app on iOS (Safari → Share → Add to Home Screen) or Android (Chrome's install prompt is surfaced via an in-app banner on the Today hub). Runs standalone with a proper app icon, dark status bar, and offline-capable shell via a Workbox-generated service worker.
+- Log feeds, diapers, pumpings, nursing sessions, and growth measurements while offline. The mutation lands in the Today list immediately with a small "syncing…" hint, and an IndexedDB-backed outbox replays it the next time the network returns. The Today header shows a compact `↑ N` badge whenever the queue has items, and `⚠ N` if any mutation hit a permanent error (4xx); tap the badge to retry or discard individually.
+
+## Offline-first
+
+Reads use TanStack Query's normal cache so the app boots from the cached Today list when offline. Writes go through a thin IndexedDB outbox (`apps/web/src/lib/outbox.ts`): every event kind generates its row id client-side, the BE accepts that id and `INSERT ... ON CONFLICT (id) DO NOTHING` makes replay safe to repeat, and the outbox processes records sequentially with exponential backoff (1s → 2s → 4s → … capped at 60s, then `dead` after eight tries). Permanent 4xx errors move straight to `dead`; 401s pause without burning the retry budget and resume after the next successful login. The Today hub subscribes via a small pub/sub so the badge and per-row "syncing…" hint update without polling, and fires an "All caught up" toast once per recovery.
+
+Known v1 limitations: the replay loop is foreground-only — a backgrounded tab won't drain until it's focused again. Workbox's `BackgroundSync` plugin is the natural v2 upgrade if that becomes a real problem. Multiple Evernest tabs each hold their own outbox; the only failure mode is a double-replay of the same mutation, which the BE deduplicates by id.
 
 ## Quick start
 

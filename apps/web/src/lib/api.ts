@@ -7,7 +7,18 @@
 //   the original request once. If refresh fails, clears auth state.
 // - Throws `ApiError` (with the server's error envelope when present) on
 //   non-2xx responses so TanStack Query treats them as errors.
+//
+// CP6b adds `apiQueued()` as the mutation seam: on network failure / 5xx
+// it enqueues the mutation into the offline outbox and resolves with a
+// caller-supplied synthetic response so TanStack Query's onSuccess paths
+// run optimistically. Reads (GET) still use `api()` directly — they
+// don't get queued because there's nothing to replay.
 import { useAuthStore } from "./authStore";
+import {
+  type DispatchResult,
+  enqueueMutation,
+  setDispatcher,
+} from "./outbox";
 import type { TokenResponse } from "./types";
 
 export class ApiError extends Error {
@@ -127,3 +138,108 @@ export async function bootstrapAuth(): Promise<boolean> {
   }
   return true;
 }
+
+// --- mutation seam: apiQueued ---
+//
+// apiQueued tries the real request first (so when online, latency is
+// unchanged) and on a network failure or 5xx falls through to the
+// outbox. It returns the caller-supplied synthetic response in that
+// case so TanStack Query's onSuccess paths still run — the optimistic
+// row appears in the cache, the form clears, the user is told the save
+// succeeded even though it'll actually flush later.
+//
+// Decisions:
+//   - 4xx (excluding 401) → throw. Caller error / validation; retrying
+//     won't help, surface it.
+//   - 401 → the underlying api() already tried one refresh and a retry.
+//     If we still ended up 401 the session is fully gone — enqueue
+//     pending so that once the user re-auths and triggers sync(), it
+//     drains. Caller still sees the synthetic "success" so the form
+//     doesn't sit on an error state for what they perceive as a
+//     transient hiccup.
+//   - 5xx / network → enqueue + return synthetic.
+
+export interface QueuedOpts<T> extends RequestOpts {
+  // Required for non-GET requests so the outbox can dedupe a
+  // double-tap of "Save" before the first send completes.
+  idempotencyKey: string;
+  // Synthetic response returned to the caller when the request is
+  // queued. For creates this is typically the full new row shape so
+  // optimistic cache updates have something to write.
+  synthesize: () => T;
+}
+
+export async function apiQueued<T>(path: string, opts: QueuedOpts<T>): Promise<T> {
+  try {
+    return await api<T>(path, opts);
+  } catch (err) {
+    if (!shouldEnqueue(err)) throw err;
+    await enqueueMutation({
+      method: opts.method as "POST" | "PUT" | "PATCH" | "DELETE",
+      path,
+      body: opts.body,
+      idempotencyKey: opts.idempotencyKey,
+    });
+    return opts.synthesize();
+  }
+}
+
+function shouldEnqueue(err: unknown): boolean {
+  // TypeError from fetch == network failure. The classic "navigator
+  // didn't even reach the server" case; obvious queue candidate.
+  if (err instanceof TypeError) return true;
+  if (err instanceof ApiError) {
+    // 5xx is transient — server might recover; queue + retry.
+    if (err.status >= 500) return true;
+    // 401 here means the refresh + retry dance in api() already failed.
+    // Session is fully expired; queue and let post-login sync drain.
+    if (err.status === 401) return true;
+    // 4xx → caller error (validation / missing baby / etc.). Don't
+    // queue; surface to the user immediately.
+    return false;
+  }
+  // Unknown error type — be conservative and surface, don't queue.
+  return false;
+}
+
+// Outbox dispatcher: drives replay attempts. Returns a tagged result
+// the outbox uses to decide drop / dead / pending / retry.
+async function outboxDispatch(record: {
+  method: "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  body?: unknown;
+}): Promise<DispatchResult> {
+  try {
+    const data = await api<unknown>(record.path, {
+      method: record.method,
+      body: record.body,
+    });
+    return { kind: "ok", status: 200, data };
+  } catch (err) {
+    if (err instanceof TypeError) {
+      return {
+        kind: "transient",
+        status: 0,
+        message: err.message || "network error",
+      };
+    }
+    if (err instanceof ApiError) {
+      if (err.status === 401) {
+        return { kind: "auth_error", status: 401, message: err.message };
+      }
+      if (err.status >= 500) {
+        return { kind: "transient", status: err.status, message: err.message };
+      }
+      return { kind: "client_error", status: err.status, message: err.message };
+    }
+    return {
+      kind: "transient",
+      status: 0,
+      message: (err as Error)?.message ?? "dispatch failed",
+    };
+  }
+}
+
+// Wire the dispatcher at module load. Tests that want to swap it can
+// call setDispatcher(...) themselves.
+setDispatcher(outboxDispatch);
