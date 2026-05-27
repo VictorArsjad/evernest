@@ -160,13 +160,32 @@ func readBody(r *http.Response) string {
 
 // --- /v1/me/preferences ---
 
+// chartPalette mirrors preferences.ChartPalette on the wire so the test
+// suite can deserialize the response without importing the production
+// package (this is an external _test package).
+type chartPalette struct {
+	Preset    string            `json:"preset"`
+	Overrides map[string]string `json:"overrides"`
+}
+
 type prefsResp struct {
-	UserID                 uuid.UUID `json:"user_id"`
-	TimeFormat             string    `json:"time_format"`
-	Timezone               string    `json:"timezone"`
-	Locale                 string    `json:"locale"`
-	ShowRecommendedTargets bool      `json:"show_recommended_targets"`
-	UpdatedAt              time.Time `json:"updated_at"`
+	UserID                 uuid.UUID    `json:"user_id"`
+	TimeFormat             string       `json:"time_format"`
+	Timezone               string       `json:"timezone"`
+	Locale                 string       `json:"locale"`
+	ShowRecommendedTargets bool         `json:"show_recommended_targets"`
+	ChartPalette           chartPalette `json:"chart_palette"`
+	UpdatedAt              time.Time    `json:"updated_at"`
+}
+
+// defaultPalettePayload is the value the FE round-trips on a PUT when the
+// user hasn't customized colors yet. Centralized so the many existing
+// non-palette-focused tests don't all have to spell it out.
+func defaultPalettePayload() map[string]any {
+	return map[string]any{
+		"preset":    "default",
+		"overrides": map[string]any{},
+	}
 }
 
 func TestUserPreferences_GetReturnsDefaults(t *testing.T) {
@@ -185,15 +204,24 @@ func TestUserPreferences_GetReturnsDefaults(t *testing.T) {
 	if !got.ShowRecommendedTargets {
 		t.Fatalf("show_recommended_targets default should be true: %+v", got)
 	}
+	// New users land on the `default` chart preset (which matches today's
+	// hard-coded colors) with no per-series overrides.
+	if got.ChartPalette.Preset != "default" {
+		t.Fatalf("chart_palette default preset should be 'default', got %q", got.ChartPalette.Preset)
+	}
+	if len(got.ChartPalette.Overrides) != 0 {
+		t.Fatalf("chart_palette overrides should be empty by default, got %+v", got.ChartPalette.Overrides)
+	}
 }
 
 func TestUserPreferences_PutPersists(t *testing.T) {
 	te := newTestEnv(t)
 	// PUT to a non-default value, then GET back.
 	res := te.do(t, "PUT", "/v1/me/preferences", map[string]any{
-		"time_format": "12h",
-		"timezone":    "Asia/Jakarta",
-		"locale":      "id",
+		"time_format":   "12h",
+		"timezone":      "Asia/Jakarta",
+		"locale":        "id",
+		"chart_palette": defaultPalettePayload(),
 	}, te.token)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("put prefs: %d %s", res.StatusCode, readBody(res))
@@ -234,6 +262,7 @@ func TestUserPreferences_PutShowTargets(t *testing.T) {
 		"timezone":                 "UTC",
 		"locale":                   "en",
 		"show_recommended_targets": false,
+		"chart_palette":            defaultPalettePayload(),
 	}, te.token)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("put prefs (off): %d %s", res.StatusCode, readBody(res))
@@ -248,9 +277,10 @@ func TestUserPreferences_PutShowTargets(t *testing.T) {
 	// server preserves the false we just set rather than resetting to
 	// the default.
 	res = te.do(t, "PUT", "/v1/me/preferences", map[string]any{
-		"time_format": "12h",
-		"timezone":    "UTC",
-		"locale":      "en",
+		"time_format":   "12h",
+		"timezone":      "UTC",
+		"locale":        "en",
+		"chart_palette": defaultPalettePayload(),
 	}, te.token)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("put prefs (omit): %d %s", res.StatusCode, readBody(res))
@@ -282,6 +312,117 @@ func TestUserPreferences_RejectsBadEnum(t *testing.T) {
 			res := te.do(t, "PUT", "/v1/me/preferences", tc.body, te.token)
 			if res.StatusCode != tc.code {
 				t.Fatalf("want %d, got %d: %s", tc.code, res.StatusCode, readBody(res))
+			}
+			_ = res.Body.Close()
+		})
+	}
+}
+
+// TestUserPreferences_ChartPaletteRoundTrip exercises the happy path for
+// the M3 palette column: PUT a non-default preset plus a single per-series
+// override, GET it back, and confirm both fields persisted byte-for-byte.
+func TestUserPreferences_ChartPaletteRoundTrip(t *testing.T) {
+	te := newTestEnv(t)
+	res := te.do(t, "PUT", "/v1/me/preferences", map[string]any{
+		"time_format": "24h",
+		"timezone":    "UTC",
+		"locale":      "en",
+		"chart_palette": map[string]any{
+			"preset": "warm",
+			"overrides": map[string]any{
+				"bottle_breast": "#ff8800",
+			},
+		},
+	}, te.token)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("put prefs: %d %s", res.StatusCode, readBody(res))
+	}
+	var got prefsResp
+	decodeJSON(t, res, &got)
+	if got.ChartPalette.Preset != "warm" {
+		t.Fatalf("preset mismatch: got %q want %q", got.ChartPalette.Preset, "warm")
+	}
+	if got.ChartPalette.Overrides["bottle_breast"] != "#ff8800" {
+		t.Fatalf("override mismatch: got %+v", got.ChartPalette.Overrides)
+	}
+
+	// Re-fetch via GET to confirm the value survived the DB round-trip
+	// (and wasn't just echoed straight back from the request body).
+	res = te.do(t, "GET", "/v1/me/preferences", nil, te.token)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("get prefs: %d %s", res.StatusCode, readBody(res))
+	}
+	var refetched prefsResp
+	decodeJSON(t, res, &refetched)
+	if refetched.ChartPalette.Preset != "warm" {
+		t.Fatalf("refetched preset mismatch: got %q want %q", refetched.ChartPalette.Preset, "warm")
+	}
+	if refetched.ChartPalette.Overrides["bottle_breast"] != "#ff8800" {
+		t.Fatalf("refetched override mismatch: got %+v", refetched.ChartPalette.Overrides)
+	}
+	if len(refetched.ChartPalette.Overrides) != 1 {
+		t.Fatalf("expected exactly one override, got %d: %+v", len(refetched.ChartPalette.Overrides), refetched.ChartPalette.Overrides)
+	}
+}
+
+// TestUserPreferences_ChartPaletteRejectsBadInput covers the three classes
+// of palette-specific validation failure: unknown preset, unknown series
+// key in overrides, and malformed hex. All three should land as 422.
+func TestUserPreferences_ChartPaletteRejectsBadInput(t *testing.T) {
+	te := newTestEnv(t)
+	base := func() map[string]any {
+		return map[string]any{
+			"time_format": "24h",
+			"timezone":    "UTC",
+			"locale":      "en",
+		}
+	}
+	cases := []struct {
+		name    string
+		palette map[string]any
+	}{
+		{
+			name: "unknown preset",
+			palette: map[string]any{
+				"preset":    "neon",
+				"overrides": map[string]any{},
+			},
+		},
+		{
+			name: "unknown series key",
+			palette: map[string]any{
+				"preset": "default",
+				"overrides": map[string]any{
+					"sleep": "#112233",
+				},
+			},
+		},
+		{
+			name: "malformed hex",
+			palette: map[string]any{
+				"preset": "default",
+				"overrides": map[string]any{
+					"nursing": "112233", // missing leading '#'
+				},
+			},
+		},
+		{
+			name: "short hex",
+			palette: map[string]any{
+				"preset": "default",
+				"overrides": map[string]any{
+					"nursing": "#abc",
+				},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := base()
+			body["chart_palette"] = tc.palette
+			res := te.do(t, "PUT", "/v1/me/preferences", body, te.token)
+			if res.StatusCode != http.StatusUnprocessableEntity {
+				t.Fatalf("want 422, got %d: %s", res.StatusCode, readBody(res))
 			}
 			_ = res.Body.Close()
 		})
