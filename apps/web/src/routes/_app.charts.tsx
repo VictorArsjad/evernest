@@ -4,7 +4,7 @@
 // recharts/visx would buy us. Mobile-first: full-width cards on narrow
 // viewports, two-up on `sm:`.
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuthStore } from "../lib/authStore";
 import {
@@ -14,6 +14,7 @@ import {
   linePoints,
   stackedDiaperLayout,
   summarize,
+  tooltipXPercent,
   type LinePoint,
   type SparkBar,
 } from "../lib/charts";
@@ -52,6 +53,165 @@ const BROWSER_TZ =
 // sparkline rather than a "real" chart.
 const VB_W = 100;
 const VB_H = 40;
+
+// --- chart hover primitive ---
+
+// useChartHover owns the active-bar index for a single chart card. The
+// hover state is per-chart (not global) so tooltips on different cards
+// don't fight each other when the user drags across the grid.
+//
+// - `setActive(i)` shows the tooltip at `i`.
+// - `clear()` hides it.
+// - `toggle(i)` is the mobile tap behavior: tap a bar shows it; tapping
+//   the same bar again toggles off; tapping a different bar moves it.
+// - `containerRef` is attached to the chart wrapper; the effect below
+//   listens for a `pointerdown` anywhere on the document and clears the
+//   active state when the event landed outside this chart, so a mobile
+//   user can dismiss a tooltip by tapping anywhere off-chart.
+function useChartHover() {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const setActive = useCallback((i: number) => setActiveIndex(i), []);
+  const clear = useCallback(() => setActiveIndex(null), []);
+  const toggle = useCallback((i: number) => {
+    setActiveIndex((prev) => (prev === i ? null : i));
+  }, []);
+
+  useEffect(() => {
+    if (activeIndex == null) return;
+    const onDown = (e: PointerEvent) => {
+      const c = containerRef.current;
+      if (!c) return;
+      if (e.target instanceof Node && c.contains(e.target)) return;
+      setActiveIndex(null);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [activeIndex]);
+
+  return { activeIndex, setActive, clear, toggle, containerRef };
+}
+
+type ChartHover = ReturnType<typeof useChartHover>;
+
+// ChartTooltip is the dark popover anchored above the active bar. It is
+// absolutely positioned with `pointer-events-none` so it never affects
+// layout or eats events; the `clamp(8%, x%, 92%)` keeps the popover from
+// running off the edges of the card without any JS measurement.
+function ChartTooltip({
+  xPct,
+  children,
+}: {
+  xPct: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      role="tooltip"
+      className="pointer-events-none absolute -top-1 z-10 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-lg border border-white/10 bg-bg-subtle px-2 py-1.5 text-[11px] tabular-nums text-white shadow-lg"
+      style={{ left: `clamp(8%, ${xPct}%, 92%)` }}
+    >
+      {children}
+      <span
+        aria-hidden="true"
+        className="absolute left-1/2 top-full h-0 w-0 -translate-x-1/2 border-x-4 border-t-4 border-x-transparent border-t-white/10"
+      />
+    </div>
+  );
+}
+
+// HitOverlays renders one full-height transparent rect per day-slot for
+// bar-style charts. Rendered AFTER the visible bars (it's the last
+// child of the <svg>) so it always wins the pointer hit-test, which
+// matters for zero-days where the visible bar is a half-pixel tick.
+//
+// Pointer-type gating: mouse uses hover (enter/leave), touch/pen uses
+// tap-toggle (pointerdown). The outside-tap dismiss is owned by
+// useChartHover so we don't need an explicit "tap away" handler here.
+function HitOverlays({
+  n,
+  hover,
+  days,
+  ariaValue,
+}: {
+  n: number;
+  hover: ChartHover;
+  days: ChartDaily[];
+  ariaValue: (i: number) => string;
+}) {
+  if (n === 0) return null;
+  const slot = VB_W / n;
+  return (
+    <>
+      {Array.from({ length: n }, (_, i) => {
+        const isActive = hover.activeIndex === i;
+        return (
+          <rect
+            key={`hit-${i}`}
+            x={i * slot}
+            y={0}
+            width={slot}
+            height={VB_H}
+            fill="transparent"
+            role="button"
+            tabIndex={-1}
+            aria-label={`${formatDayShort(days[i].date)}: ${ariaValue(i)}`}
+            aria-pressed={isActive}
+            onPointerEnter={(e) => {
+              if (e.pointerType === "mouse") hover.setActive(i);
+            }}
+            onPointerLeave={(e) => {
+              if (e.pointerType === "mouse") hover.clear();
+            }}
+            onPointerDown={(e) => {
+              if (e.pointerType !== "mouse") hover.toggle(i);
+            }}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+function TooltipBody({
+  date,
+  children,
+}: {
+  date: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="text-white/60">{formatDayShort(date)}</div>
+      {children}
+    </div>
+  );
+}
+
+function DiaperTooltipRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-white/80">
+      <span className="capitalize">{label}</span>
+      <span>{value}</span>
+    </div>
+  );
+}
+
+// Diaper segment fills, kept module-level so DiaperStackChart,
+// DiaperLegend and the swatchless legend stay in sync without
+// threading colors through props.
+const DIAPER_FILL = {
+  wet: "rgb(253 224 71)",
+  soiled: "rgb(217 119 6)",
+  mixed: "rgb(180 83 9)",
+} as const;
 
 export const Route = createFileRoute("/_app/charts")({
   component: ChartsPage,
@@ -151,7 +311,18 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         primary={`${formatVolume(totals.bottleTotalMl, prefs.unit_volume)} total`}
         secondary={`${formatVolume(totals.bottleAvgMl, prefs.unit_volume)}/day avg`}
       >
-        <BarChart bars={bottle.bars} max={bottle.max} fill="rgb(253 186 116)" />
+        <BarChart
+          bars={bottle.bars}
+          max={bottle.max}
+          fill="rgb(253 186 116)"
+          days={days}
+          ariaValue={(i) => formatVolume(days[i].bottle_ml, prefs.unit_volume)}
+          renderTooltip={(i) => (
+            <TooltipBody date={days[i].date}>
+              <div>{formatVolume(days[i].bottle_ml, prefs.unit_volume)}</div>
+            </TooltipBody>
+          )}
+        />
         <Axis days={days} />
       </ChartCard>
 
@@ -162,7 +333,18 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         primary={`${totals.nursingTotalMin} min total`}
         secondary={`${Math.round(totals.nursingAvgMin)} min/day avg`}
       >
-        <BarChart bars={nursing.bars} max={nursing.max} fill="rgb(110 231 183)" />
+        <BarChart
+          bars={nursing.bars}
+          max={nursing.max}
+          fill="rgb(110 231 183)"
+          days={days}
+          ariaValue={(i) => `${days[i].nursing_minutes} min`}
+          renderTooltip={(i) => (
+            <TooltipBody date={days[i].date}>
+              <div>{days[i].nursing_minutes} min</div>
+            </TooltipBody>
+          )}
+        />
         <Axis days={days} />
       </ChartCard>
 
@@ -173,7 +355,18 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         primary={`${formatVolume(totals.pumpingTotalMl, prefs.unit_volume)} total`}
         secondary={`${formatVolume(totals.pumpingAvgMl, prefs.unit_volume)}/day avg`}
       >
-        <BarChart bars={pumping.bars} max={pumping.max} fill="rgb(125 211 252)" />
+        <BarChart
+          bars={pumping.bars}
+          max={pumping.max}
+          fill="rgb(125 211 252)"
+          days={days}
+          ariaValue={(i) => formatVolume(days[i].pumping_ml, prefs.unit_volume)}
+          renderTooltip={(i) => (
+            <TooltipBody date={days[i].date}>
+              <div>{formatVolume(days[i].pumping_ml, prefs.unit_volume)}</div>
+            </TooltipBody>
+          )}
+        />
         <Axis days={days} />
       </ChartCard>
 
@@ -184,7 +377,23 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         primary={`${totals.diaperTotal} total`}
         secondary={`${totals.diaperAvg.toFixed(1)} /day avg`}
       >
-        <DiaperStackChart stacked={stacked} />
+        <DiaperStackChart
+          stacked={stacked}
+          days={days}
+          ariaValue={(i) =>
+            `${days[i].diaper_wet} wet, ${days[i].diaper_soiled} soiled, ${days[i].diaper_mixed} mixed`
+          }
+          renderTooltip={(i) => (
+            <TooltipBody date={days[i].date}>
+              <DiaperTooltipRow label="wet" value={days[i].diaper_wet} />
+              <DiaperTooltipRow label="soiled" value={days[i].diaper_soiled} />
+              <DiaperTooltipRow label="mixed" value={days[i].diaper_mixed} />
+              <div className="mt-0.5 border-t border-white/10 pt-0.5 text-white">
+                {days[i].diaper_total} total
+              </div>
+            </TooltipBody>
+          )}
+        />
         <Axis days={days} />
         <DiaperLegend />
       </ChartCard>
@@ -204,7 +413,24 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         wide
       >
         {weight.hasData ? (
-          <LineChart points={weight.points} stroke="rgb(196 181 253)" />
+          <LineChart
+            points={weight.points}
+            stroke="rgb(196 181 253)"
+            days={days}
+            ariaValue={(i) => {
+              const g = days[i].growth?.weight_g;
+              return g != null ? formatWeight(g, prefs.unit_weight) : "";
+            }}
+            renderTooltip={(i) => {
+              const g = days[i].growth?.weight_g;
+              if (g == null) return null;
+              return (
+                <TooltipBody date={days[i].date}>
+                  <div>{formatWeight(g, prefs.unit_weight)}</div>
+                </TooltipBody>
+              );
+            }}
+          />
         ) : (
           <EmptyState>No measurements in this window</EmptyState>
         )}
@@ -246,9 +472,29 @@ function ChartCard({
   );
 }
 
-function BarChart({ bars, max, fill }: { bars: SparkBar[]; max: number; fill: string }) {
+function BarChart({
+  bars,
+  max,
+  fill,
+  days,
+  ariaValue,
+  renderTooltip,
+}: {
+  bars: SparkBar[];
+  max: number;
+  fill: string;
+  days: ChartDaily[];
+  ariaValue: (i: number) => string;
+  renderTooltip: (i: number) => React.ReactNode;
+}) {
+  const hover = useChartHover();
+  const n = days.length;
   return (
-    <div className="relative h-20 w-full">
+    <div
+      ref={hover.containerRef}
+      className="relative h-20 w-full"
+      style={{ touchAction: "manipulation" }}
+    >
       <svg
         viewBox={`0 0 ${VB_W} ${VB_H}`}
         preserveAspectRatio="none"
@@ -259,6 +505,7 @@ function BarChart({ bars, max, fill }: { bars: SparkBar[]; max: number; fill: st
         {bars.map((b) => {
           const h = (b.yTop - b.yBottom) * VB_H;
           const y = VB_H - b.yTop * VB_H;
+          const isActive = hover.activeIndex === b.index;
           return (
             <rect
               key={b.index}
@@ -272,21 +519,47 @@ function BarChart({ bars, max, fill }: { bars: SparkBar[]; max: number; fill: st
               fill={fill}
               opacity={max === 0 ? 0.2 : h === 0 ? 0.3 : 0.85}
               rx={0.5}
+              stroke={isActive ? "white" : undefined}
+              strokeWidth={isActive ? 0.5 : 0}
+              vectorEffect={isActive ? "non-scaling-stroke" : undefined}
             />
           );
         })}
+        <HitOverlays n={n} hover={hover} days={days} ariaValue={ariaValue} />
       </svg>
+      {hover.activeIndex != null && (
+        <ChartTooltip xPct={tooltipXPercent(hover.activeIndex, n)}>
+          {renderTooltip(hover.activeIndex)}
+        </ChartTooltip>
+      )}
     </div>
   );
 }
 
 function DiaperStackChart({
   stacked,
+  days,
+  ariaValue,
+  renderTooltip,
 }: {
   stacked: ReturnType<typeof stackedDiaperLayout>;
+  days: ChartDaily[];
+  ariaValue: (i: number) => string;
+  renderTooltip: (i: number) => React.ReactNode;
 }) {
+  const hover = useChartHover();
+  const n = days.length;
+  // Topmost stack height per day (in VB units) so the active outline
+  // wraps the full visible stack rather than just one segment.
+  const stackTops = useMemo(() => {
+    return stacked.mixed.map((m) => m.yTop);
+  }, [stacked.mixed]);
   return (
-    <div className="relative h-20 w-full">
+    <div
+      ref={hover.containerRef}
+      className="relative h-20 w-full"
+      style={{ touchAction: "manipulation" }}
+    >
       <svg
         viewBox={`0 0 ${VB_W} ${VB_H}`}
         preserveAspectRatio="none"
@@ -303,7 +576,28 @@ function DiaperStackChart({
         {stacked.mixed.map((b) => (
           <SegmentRect key={`m${b.index}`} bar={b} fill={DIAPER_FILL.mixed} />
         ))}
+        {hover.activeIndex != null &&
+          stacked.wet[hover.activeIndex] &&
+          stackTops[hover.activeIndex] > 0 && (
+            <rect
+              x={stacked.wet[hover.activeIndex].x * VB_W}
+              y={VB_H - stackTops[hover.activeIndex] * VB_H}
+              width={stacked.wet[hover.activeIndex].width * VB_W}
+              height={stackTops[hover.activeIndex] * VB_H}
+              fill="none"
+              stroke="white"
+              strokeWidth={0.5}
+              vectorEffect="non-scaling-stroke"
+              rx={0.5}
+            />
+          )}
+        <HitOverlays n={n} hover={hover} days={days} ariaValue={ariaValue} />
       </svg>
+      {hover.activeIndex != null && (
+        <ChartTooltip xPct={tooltipXPercent(hover.activeIndex, n)}>
+          {renderTooltip(hover.activeIndex)}
+        </ChartTooltip>
+      )}
     </div>
   );
 }
@@ -324,12 +618,6 @@ function SegmentRect({ bar, fill }: { bar: SparkBar; fill: string }) {
   );
 }
 
-const DIAPER_FILL = {
-  wet: "rgb(253 224 71)",
-  soiled: "rgb(217 119 6)",
-  mixed: "rgb(180 83 9)",
-} as const;
-
 function DiaperLegend() {
   return (
     <ul className="flex gap-3 text-[10px] text-white/60">
@@ -349,7 +637,19 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-function LineChart({ points, stroke }: { points: LinePoint[]; stroke: string }) {
+function LineChart({
+  points,
+  stroke,
+  days,
+  ariaValue,
+  renderTooltip,
+}: {
+  points: LinePoint[];
+  stroke: string;
+  days: ChartDaily[];
+  ariaValue: (i: number) => string;
+  renderTooltip: (i: number) => React.ReactNode;
+}) {
   // Build polyline segments split on null gaps. Each contiguous run of
   // defined points becomes one polyline; nulls between runs break the
   // line so a missing measurement renders as an empty stretch rather
@@ -367,8 +667,14 @@ function LineChart({ points, stroke }: { points: LinePoint[]; stroke: string }) 
   }
   if (current.length > 0) segments.push(current);
 
+  const hover = useChartHover();
+  const n = days.length;
   return (
-    <div className="relative h-24 w-full">
+    <div
+      ref={hover.containerRef}
+      className="relative h-24 w-full"
+      style={{ touchAction: "manipulation" }}
+    >
       <svg
         viewBox={`0 0 ${VB_W} ${VB_H}`}
         preserveAspectRatio="none"
@@ -388,10 +694,56 @@ function LineChart({ points, stroke }: { points: LinePoint[]; stroke: string }) 
         ))}
         {points
           .filter((p) => p.defined)
-          .map((p) => (
-            <circle key={p.index} cx={p.x * VB_W} cy={VB_H - p.y * VB_H} r={1.2} fill={stroke} />
-          ))}
+          .map((p) => {
+            const isActive = hover.activeIndex === p.index;
+            const cx = p.x * VB_W;
+            const cy = VB_H - p.y * VB_H;
+            return (
+              <g key={p.index}>
+                {isActive && (
+                  <circle cx={cx} cy={cy} r={4} fill={stroke} opacity={0.25} />
+                )}
+                <circle cx={cx} cy={cy} r={isActive ? 2.4 : 1.2} fill={stroke} />
+              </g>
+            );
+          })}
+        {/* Hit overlays only on defined days — undefined days have no
+            dot to hover and we don't want a tooltip showing "—". */}
+        {points.map((p) => {
+          if (!p.defined) return null;
+          const slot = VB_W / n;
+          const x = p.index * slot;
+          const isActive = hover.activeIndex === p.index;
+          return (
+            <rect
+              key={`hit-${p.index}`}
+              x={x}
+              y={0}
+              width={slot}
+              height={VB_H}
+              fill="transparent"
+              role="button"
+              tabIndex={-1}
+              aria-label={`${formatDayShort(days[p.index].date)}: ${ariaValue(p.index)}`}
+              aria-pressed={isActive}
+              onPointerEnter={(e) => {
+                if (e.pointerType === "mouse") hover.setActive(p.index);
+              }}
+              onPointerLeave={(e) => {
+                if (e.pointerType === "mouse") hover.clear();
+              }}
+              onPointerDown={(e) => {
+                if (e.pointerType !== "mouse") hover.toggle(p.index);
+              }}
+            />
+          );
+        })}
       </svg>
+      {hover.activeIndex != null && points[hover.activeIndex]?.defined && (
+        <ChartTooltip xPct={tooltipXPercent(hover.activeIndex, n)}>
+          {renderTooltip(hover.activeIndex)}
+        </ChartTooltip>
+      )}
     </div>
   );
 }
