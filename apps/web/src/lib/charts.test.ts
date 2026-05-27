@@ -8,6 +8,7 @@ import {
   linePoints,
   stackedDiaperLayout,
   summarize,
+  tooltipXPercent,
 } from "./charts";
 import type { ChartDaily } from "./types";
 
@@ -146,6 +147,25 @@ describe("linePoints", () => {
     const { points, hasData } = linePoints([null, 4200, null]);
     expect(hasData).toBe(true);
     expect(points[1].y).toBe(0.5);
+  });
+});
+
+describe("tooltipXPercent", () => {
+  it("returns the slot center as a percent of the chart width", () => {
+    // 7 slots, slot width = 1/7 ≈ 14.2857%. Center of slot 0 is at half
+    // a slot width.
+    expect(tooltipXPercent(0, 7)).toBeCloseTo((0.5 / 7) * 100);
+    expect(tooltipXPercent(3, 7)).toBeCloseTo((3.5 / 7) * 100);
+    expect(tooltipXPercent(6, 7)).toBeCloseTo((6.5 / 7) * 100);
+  });
+
+  it("places a single-slot tooltip at the visual center", () => {
+    expect(tooltipXPercent(0, 1)).toBeCloseTo(50);
+  });
+
+  it("falls back to 50% for non-positive totals (no NaN style values)", () => {
+    expect(tooltipXPercent(0, 0)).toBe(50);
+    expect(tooltipXPercent(0, -1)).toBe(50);
   });
 });
 
