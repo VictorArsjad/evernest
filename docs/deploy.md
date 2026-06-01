@@ -121,6 +121,23 @@ make compose-prod-config # docker compose config on the merged prod overlay
 make image-be            # build the api image locally (linux/amd64)
 ```
 
+### Standalone home-server stack
+
+For a single-file deploy (no overlay merge), use `infra/docker-compose.homeserver.yml`.
+It defaults to the published GHCR image (`EVERNEST_API_IMAGE`, e.g.
+`ghcr.io/victorarsjad/evernest-api:743149a`):
+
+```bash
+cp infra/.env.homeserver.example .env
+# edit .env — passwords, JWT_SECRET, TS_AUTHKEY, web origins
+echo "$GHCR_PAT" | docker login ghcr.io -u <gh-user> --password-stdin
+docker compose -f infra/docker-compose.homeserver.yml --env-file .env up -d
+```
+
+The merged prod overlay (`docker-compose.yml` + `docker-compose.prod.yml`) remains
+what CI uses on deploy; set `EVERNEST_API_IMAGE` in `.env` to pin a SHA instead of
+`:latest`.
+
 ## What CI cannot verify
 
 These only work after a real push to `master`:

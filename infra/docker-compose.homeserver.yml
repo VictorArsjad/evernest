@@ -1,0 +1,85 @@
+# Self-contained Evernest stack for a home server.
+#
+# Pulls the published API image from GHCR (runs migrations on boot), Postgres
+# for storage, and a Tailscale sidecar for HTTPS ingress on your tailnet.
+# The web app is served separately (e.g. GitHub Pages); point CORS / invite
+# links at that origin in .env.
+#
+# Prerequisites:
+#   1. Copy infra/.env.homeserver.example → .env (repo root or alongside this file)
+#   2. docker login ghcr.io   # read:packages PAT if the image is private
+#   3. docker compose -f infra/docker-compose.homeserver.yml --env-file .env up -d
+#
+# Smoke-check (from any tailnet device):
+#   docker exec evernest-tailscale tailscale status
+#   curl https://<TS_HOSTNAME>.<tail>.ts.net/healthz
+
+name: evernest
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-evernest}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-evernest}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-evernest} -d $${POSTGRES_DB:-evernest}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: evernest-tailscale
+    hostname: ${TS_HOSTNAME:-evernest}
+    restart: unless-stopped
+    cap_add:
+      - net_admin
+      - sys_module
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ts-state:/var/lib/tailscale
+      - ./docker/tailscale-serve.json:/config/serve.json:ro
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY in .env (reusable, ephemeral=false, tag:server)}
+      TS_HOSTNAME: ${TS_HOSTNAME:-evernest}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "false"
+      TS_EXTRA_ARGS: --accept-dns=false
+    healthcheck:
+      test: ["CMD", "tailscale", "status", "--peers=false"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  api:
+    image: ${EVERNEST_API_IMAGE:-ghcr.io/victorarsjad/evernest-api:743149a}
+    pull_policy: always
+    restart: unless-stopped
+    network_mode: "service:tailscale"
+    depends_on:
+      tailscale:
+        condition: service_started
+      db:
+        condition: service_healthy
+    environment:
+      API_BIND: ${API_BIND:-0.0.0.0}
+      API_PORT: ${API_PORT:-8080}
+      DATABASE_URL: postgres://${POSTGRES_USER:-evernest}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-evernest}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (openssl rand -hex 32)}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
+      REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-30}
+      CORS_ALLOW_ORIGIN: ${CORS_ALLOW_ORIGIN:?set CORS_ALLOW_ORIGIN to your web app origin}
+      PUBLIC_WEB_ORIGIN: ${PUBLIC_WEB_ORIGIN:?set PUBLIC_WEB_ORIGIN to your web app origin}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-none}
+
+volumes:
+  db-data:
+  ts-state:

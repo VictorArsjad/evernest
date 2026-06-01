@@ -26,7 +26,7 @@ services:
   api:
     # Replace the local build with the published image so deploys are a pure
     # pull-restart, no go toolchain on the home server.
-    image: ghcr.io/${GHCR_OWNER}/evernest-api:latest
+    image: ${EVERNEST_API_IMAGE:-ghcr.io/${GHCR_OWNER}/evernest-api:latest}
     build: !reset null
     pull_policy: always
     # Share the tailscale sidecar's netns. Result: the api binds 0.0.0.0:8080
