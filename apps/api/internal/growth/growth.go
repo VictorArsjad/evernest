@@ -1,6 +1,6 @@
 // Package growth implements CRUD for growth measurements (weight / height /
 // head circumference). Mirrors bottlefeed/diaper/pumping/nursing: POST/GET/
-// DELETE with UUIDv7 client-id idempotency and baby-membership authz.
+// PATCH/DELETE with UUIDv7 client-id idempotency and baby-membership authz.
 //
 // Growth's quirk vs the other event kinds: every measurement is independently
 // optional (you might just weigh the baby without re-measuring height), but
@@ -63,6 +63,7 @@ func (h *Handler) BabyRoutes(r chi.Router) {
 
 // ItemRoutes mounts under /v1/growths/{id}.
 func (h *Handler) ItemRoutes(r chi.Router) {
+	r.Patch("/", h.update)
 	r.Delete("/", h.delete)
 }
 
@@ -194,6 +195,131 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, g)
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// updateReq is the PATCH body. Each measurement supports an explicit
+// "clear" via the *_present companion: send `{"weight_g": null}` to
+// remove a weight from the row. The DB's "at least one non-NULL"
+// CHECK is mirrored in Go so the user gets a structured 422 instead
+// of a generic 500 if a clear would leave the row empty.
+//
+// Notes follows the same "send empty string to clear" convention as
+// the other event kinds.
+type updateReq struct {
+	MeasuredAt          *time.Time `json:"measured_at,omitempty"`
+	WeightG             *float64   `json:"weight_g,omitempty" validate:"omitempty,gt=0,lt=30000"`
+	ClearWeight         bool       `json:"clear_weight_g,omitempty"`
+	HeightCM            *float64   `json:"height_cm,omitempty" validate:"omitempty,gt=0,lt=200"`
+	ClearHeight         bool       `json:"clear_height_cm,omitempty"`
+	HeadCircumferenceCM *float64   `json:"head_circumference_cm,omitempty" validate:"omitempty,gt=0,lt=80"`
+	ClearHead           bool       `json:"clear_head_circumference_cm,omitempty"`
+	Notes               *string    `json:"notes,omitempty"`
+}
+
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	uid := auth.UserIDFrom(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var (
+		babyID                                                       uuid.UUID
+		curWeightG, curHeightCM, curHeadCM                           *float64
+	)
+	err = h.store.Pool.QueryRow(r.Context(), `
+		SELECT baby_id, weight_g, height_cm, head_circumference_cm
+		FROM growths WHERE id = $1
+	`, id).Scan(&babyID, &curWeightG, &curHeightCM, &curHeadCM)
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "growth not found")
+		return
+	}
+	if err != nil {
+		h.logger.Error("lookup growth", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "lookup failed")
+		return
+	}
+	if _, err := baby.MustOwnBaby(r.Context(), h.store, uid, babyID); err != nil {
+		writeBabyAuthErr(w, err)
+		return
+	}
+
+	var req updateReq
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := h.v.Struct(req); err != nil {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+		return
+	}
+
+	// Compute the post-merge state for the three measurements to enforce
+	// the "at least one non-NULL" invariant before hitting the DB.
+	mergedWeight := curWeightG
+	if req.ClearWeight {
+		mergedWeight = nil
+	} else if req.WeightG != nil {
+		mergedWeight = req.WeightG
+	}
+	mergedHeight := curHeightCM
+	if req.ClearHeight {
+		mergedHeight = nil
+	} else if req.HeightCM != nil {
+		mergedHeight = req.HeightCM
+	}
+	mergedHead := curHeadCM
+	if req.ClearHead {
+		mergedHead = nil
+	} else if req.HeadCircumferenceCM != nil {
+		mergedHead = req.HeadCircumferenceCM
+	}
+	if mergedWeight == nil && mergedHeight == nil && mergedHead == nil {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed",
+			"at least one of weight_g, height_cm, head_circumference_cm must be set")
+		return
+	}
+
+	notesPresent := req.Notes != nil
+	var notesValue string
+	if notesPresent {
+		notesValue = *req.Notes
+	}
+
+	// $3/$4 (and pairs) say "if clear flag true OR new value non-null,
+	// replace; else keep". Clear takes precedence over a new value when
+	// both are present, matching the merge logic above.
+	var out Growth
+	err = h.store.Pool.QueryRow(r.Context(), `
+		UPDATE growths SET
+			measured_at           = COALESCE($2, measured_at),
+			weight_g              = CASE WHEN $3::boolean THEN NULL
+			                             WHEN $4::numeric IS NOT NULL THEN $4
+			                             ELSE weight_g END,
+			height_cm             = CASE WHEN $5::boolean THEN NULL
+			                             WHEN $6::numeric IS NOT NULL THEN $6
+			                             ELSE height_cm END,
+			head_circumference_cm = CASE WHEN $7::boolean THEN NULL
+			                             WHEN $8::numeric IS NOT NULL THEN $8
+			                             ELSE head_circumference_cm END,
+			notes                 = CASE WHEN $9::boolean THEN NULLIF($10, '') ELSE notes END
+		WHERE id = $1
+		RETURNING id, baby_id, measured_at, weight_g, height_cm, head_circumference_cm,
+			notes, source, created_at
+	`, id, req.MeasuredAt,
+		req.ClearWeight, req.WeightG,
+		req.ClearHeight, req.HeightCM,
+		req.ClearHead, req.HeadCircumferenceCM,
+		notesPresent, notesValue).
+		Scan(&out.ID, &out.BabyID, &out.MeasuredAt, &out.WeightG, &out.HeightCM,
+			&out.HeadCircumferenceCM, &out.Notes, &out.Source, &out.CreatedAt)
+	if err != nil {
+		h.logger.Error("update growth", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not update growth")
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

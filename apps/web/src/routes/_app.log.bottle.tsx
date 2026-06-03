@@ -1,16 +1,32 @@
 // Quick-log form for bottle feeds. Defaults to "now" (24h local time) and
-// uses big tap targets — designed for one-handed logging.
+// uses big tap targets — designed for one-handed logging. In edit mode
+// (`?edit=<uuid>`) the form is reused to update an existing row instead
+// of creating a new one, with a Delete button at the bottom for the
+// "logged this twice by mistake" case.
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { useBabies, useCreateBottleFeed, useHouseholds } from "../lib/queries";
+import {
+  useBabies,
+  useCreateBottleFeed,
+  useDeleteBottleFeed,
+  useHouseholds,
+  useUpdateBottleFeed,
+} from "../lib/queries";
+import type { BottleFeed } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
-import { displayVolumeToMl, volumeUnitLabel } from "../lib/units";
+import {
+  displayVolumeToMl,
+  mlToDisplayVolume,
+  volumeUnitLabel,
+} from "../lib/units";
 import { usePreferences } from "../lib/usePreferences";
 
 const search = z.object({
   babyId: z.string().uuid().optional(),
+  edit: z.string().uuid().optional(),
 });
 
 export const Route = createFileRoute("/_app/log/bottle")({
@@ -25,6 +41,12 @@ function nowLocalDatetimeInput(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function isoToLocalDatetimeInput(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function localToISO(local: string): string {
   // Browser parses "YYYY-MM-DDTHH:mm" as local; toISOString converts to UTC.
   return new Date(local).toISOString();
@@ -32,7 +54,7 @@ function localToISO(local: string): string {
 
 function LogBottlePage() {
   const nav = useNavigate();
-  const { babyId: babyIdFromSearch } = Route.useSearch();
+  const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
   const babies = useBabies(householdId);
@@ -42,21 +64,57 @@ function LogBottlePage() {
   const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
   const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
 
+  const isEditMode = !!editId;
+
+  // In edit mode, pull the row out of any cached bottle-feeds list so we
+  // can prefill the form fields. Recent only shows today, so the cache is
+  // warm in practice; for cold-cache deep links the user sees an empty
+  // form and re-enters values (acceptable v1 trade-off — no extra GET).
+  const qc = useQueryClient();
+  const existing: BottleFeed | null = useMemo(() => {
+    if (!editId || !babyId) return null;
+    const lists = qc.getQueriesData<BottleFeed[] | undefined>({
+      queryKey: ["babies", babyId, "bottle-feeds"],
+    }) as Array<[unknown, BottleFeed[] | undefined]>;
+    return (
+      lists.flatMap(([, list]) => list ?? []).find((r) => r.id === editId) ?? null
+    );
+  }, [qc, editId, babyId]);
+
   const [amount, setAmount] = useState("");
   const [source, setSource] = useState<"breast" | "formula">("formula");
   const [occurredLocal, setOccurredLocal] = useState(nowLocalDatetimeInput);
   const [notes, setNotes] = useState("");
 
-  // Re-snap "now" if the page sat unsubmitted for a while.
+  const create = useCreateBottleFeed();
+  const update = useUpdateBottleFeed();
+  const del = useDeleteBottleFeed();
+  const { prefs } = usePreferences(babyId);
+  const volLabel = volumeUnitLabel(prefs.unit_volume);
+
+  // Prefill once when the row arrives. Ref-guarded so a later cache
+  // update (e.g. the user's own optimistic upsert after submit) doesn't
+  // clobber in-progress typing.
+  const prefilledRef = useRef(false);
   useEffect(() => {
+    if (!isEditMode || prefilledRef.current || !existing) return;
+    setAmount(String(mlToDisplayVolume(Number(existing.amount_ml), prefs.unit_volume)));
+    setSource(existing.milk_source);
+    setOccurredLocal(isoToLocalDatetimeInput(existing.occurred_at));
+    setNotes(existing.notes ?? "");
+    prefilledRef.current = true;
+  }, [isEditMode, existing, prefs.unit_volume]);
+
+  // Re-snap "now" if the page sat unsubmitted for a while — but ONLY in
+  // create mode. Restamping a user's deliberate edit would silently
+  // overwrite the original timestamp.
+  useEffect(() => {
+    if (isEditMode) return;
     const onFocus = () => setOccurredLocal(nowLocalDatetimeInput());
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, []);
+  }, [isEditMode]);
 
-  const create = useCreateBottleFeed();
-  const { prefs } = usePreferences(babyId);
-  const volLabel = volumeUnitLabel(prefs.unit_volume);
   // Display-unit bounds: 2000 ml ≈ 67.6 oz. Same physical ceiling
   // either way; the canonical-ml clamp on submit re-applies the API
   // constraint so a partial-conversion edge can't sneak past.
@@ -66,10 +124,29 @@ function LogBottlePage() {
   const isAmountValid =
     Number.isFinite(amountNum) && amountNum > 0 && amountNum <= maxDisplay;
 
+  const pending = isEditMode ? update.isPending : create.isPending;
+  const errorMsg = isEditMode ? update.error?.message : create.error?.message;
+  const hadError = isEditMode ? update.isError : create.isError;
+
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!babyId || !isAmountValid) return;
     const canonicalMl = displayVolumeToMl(amountNum, prefs.unit_volume);
+    if (isEditMode && editId) {
+      update.mutate(
+        {
+          id: editId,
+          babyId,
+          occurred_at: localToISO(occurredLocal),
+          milk_source: source,
+          amount_ml: canonicalMl,
+          // Empty string clears the note server-side; non-empty replaces it.
+          notes: notes.trim(),
+        },
+        { onSuccess: () => nav({ to: "/" }) },
+      );
+      return;
+    }
     create.mutate(
       {
         babyId,
@@ -89,7 +166,9 @@ function LogBottlePage() {
   return (
     <main className="flex flex-1 flex-col gap-4 p-5">
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Log bottle feed</h1>
+        <h1 className="text-2xl font-semibold">
+          {isEditMode ? "Edit bottle feed" : "Log bottle feed"}
+        </h1>
         <button onClick={() => nav({ to: "/" })} className="text-sm text-white/60">
           Cancel
         </button>
@@ -152,17 +231,29 @@ function LogBottlePage() {
           />
         </label>
 
-        {create.isError && (
-          <p className="text-sm text-red-400">{create.error?.message ?? "could not save"}</p>
+        {hadError && (
+          <p className="text-sm text-red-400">{errorMsg ?? "could not save"}</p>
         )}
 
         <button
           type="submit"
           className="btn-primary text-lg"
-          disabled={create.isPending || !isAmountValid}
+          disabled={pending || !isAmountValid}
         >
-          {create.isPending ? "Saving…" : "Save"}
+          {pending ? "Saving…" : isEditMode ? "Save changes" : "Save"}
         </button>
+
+        {isEditMode && editId && (
+          <DeleteEntryButton
+            pending={del.isPending}
+            onConfirm={() =>
+              del.mutate(
+                { id: editId, babyId },
+                { onSuccess: () => nav({ to: "/" }) },
+              )
+            }
+          />
+        )}
       </form>
     </main>
   );
@@ -189,6 +280,49 @@ function SourceButton({
       }
     >
       {children}
+    </button>
+  );
+}
+
+// DeleteEntryButton — two-tap inline confirm. First tap arms; second tap
+// fires. The arm auto-resets after 3s if the user does nothing, so a
+// stray finger on Delete on phone-edge never deletes anything.
+export function DeleteEntryButton({
+  pending,
+  onConfirm,
+}: {
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const id = window.setTimeout(() => setArmed(false), 3000);
+    return () => window.clearTimeout(id);
+  }, [armed]);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        onConfirm();
+      }}
+      disabled={pending}
+      className={
+        "mt-1 rounded-xl border px-4 py-3 text-sm font-medium transition disabled:opacity-50 " +
+        (armed
+          ? "border-red-400/60 bg-red-400/15 text-red-200"
+          : "border-red-400/30 bg-transparent text-red-300 hover:bg-red-400/5")
+      }
+    >
+      {pending
+        ? "Deleting…"
+        : armed
+          ? "Tap again to confirm delete"
+          : "Delete entry"}
     </button>
   );
 }

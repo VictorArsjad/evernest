@@ -423,6 +423,96 @@ func TestPatchValidation(t *testing.T) {
 	_ = missingID.Body.Close()
 }
 
+// TestEditClosedNursingSession covers the closed-session edit path of
+// PATCH /v1/nursing-sessions/{id}. The handler dispatches on the row's
+// current ended_at state — if non-NULL, the body is interpreted as a
+// partial edit rather than the legacy close-session contract.
+func TestEditClosedNursingSession(t *testing.T) {
+	te := newTestEnv(t)
+	babyPath := "/v1/babies/" + te.babyID.String() + "/nursing-sessions"
+
+	startedAt := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
+	endedAt := startedAt.Add(20 * time.Minute)
+
+	// Seed a closed session directly.
+	closed := te.do(t, "POST", babyPath, te.token, map[string]any{
+		"started_at":       startedAt.Format(time.RFC3339),
+		"ended_at":         endedAt.Format(time.RFC3339),
+		"nursing_side":     "both",
+		"starting_breast":  "left",
+		"left_duration_s":  600,
+		"right_duration_s": 600,
+		"notes":            "original notes",
+	})
+	if closed.StatusCode != http.StatusCreated {
+		t.Fatalf("seed closed: %d: %s", closed.StatusCode, readBody(closed))
+	}
+	var row nursingResp
+	decodeJSON(t, closed, &row)
+	itemPath := "/v1/nursing-sessions/" + row.ID.String()
+
+	// Edit: change side to right-only, drop right duration, update notes.
+	editResp := te.do(t, "PATCH", itemPath, te.token, map[string]any{
+		"nursing_side":     "right",
+		"left_duration_s":  0,
+		"right_duration_s": 900,
+		"notes":            "corrected",
+	})
+	if editResp.StatusCode != http.StatusOK {
+		t.Fatalf("edit closed: want 200, got %d: %s", editResp.StatusCode, readBody(editResp))
+	}
+	var edited nursingResp
+	decodeJSON(t, editResp, &edited)
+	if edited.NursingSide != "right" {
+		t.Fatalf("edit: nursing_side = %s, want right", edited.NursingSide)
+	}
+	if edited.LeftDurationS != 0 || edited.RightDurationS != 900 {
+		t.Fatalf("edit: durations %d/%d, want 0/900", edited.LeftDurationS, edited.RightDurationS)
+	}
+	if edited.Notes == nil || *edited.Notes != "corrected" {
+		t.Fatalf("edit: notes = %v, want \"corrected\"", edited.Notes)
+	}
+	// ended_at must remain non-null (edits cannot re-open a closed session).
+	if edited.EndedAt == nil {
+		t.Fatal("edit: ended_at unexpectedly cleared")
+	}
+
+	// Clearing notes via empty string -> NULL on the row.
+	clearResp := te.do(t, "PATCH", itemPath, te.token, map[string]any{
+		"notes": "",
+	})
+	if clearResp.StatusCode != http.StatusOK {
+		t.Fatalf("clear notes: want 200, got %d: %s", clearResp.StatusCode, readBody(clearResp))
+	}
+	var cleared nursingResp
+	decodeJSON(t, clearResp, &cleared)
+	if cleared.Notes != nil {
+		t.Fatalf("clear notes: notes = %q, want nil", *cleared.Notes)
+	}
+
+	// clear_starting_breast: true -> NULL.
+	clearBreast := te.do(t, "PATCH", itemPath, te.token, map[string]any{
+		"clear_starting_breast": true,
+	})
+	if clearBreast.StatusCode != http.StatusOK {
+		t.Fatalf("clear starting_breast: want 200, got %d: %s", clearBreast.StatusCode, readBody(clearBreast))
+	}
+	var clearedBreast nursingResp
+	decodeJSON(t, clearBreast, &clearedBreast)
+	if clearedBreast.StartingBreast != nil {
+		t.Fatalf("clear starting_breast: %q, want nil", *clearedBreast.StartingBreast)
+	}
+
+	// ended_at < started_at after merging in the requested started_at -> 422.
+	bad := te.do(t, "PATCH", itemPath, te.token, map[string]any{
+		"started_at": endedAt.Add(time.Hour).Format(time.RFC3339),
+	})
+	if bad.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("edit started_at past ended_at: want 422, got %d: %s", bad.StatusCode, readBody(bad))
+	}
+	_ = bad.Body.Close()
+}
+
 // --- helpers ---
 
 func decodeJSON(t *testing.T, r *http.Response, v any) {

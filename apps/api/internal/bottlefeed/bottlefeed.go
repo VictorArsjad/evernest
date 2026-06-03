@@ -1,6 +1,8 @@
-// Package bottlefeed implements CRUD for bottle feeds. The current surface
-// is POST/GET/DELETE — edits are delete-and-recreate, which is fine for the
-// kinds of corrections users actually make (mistyped volume).
+// Package bottlefeed implements CRUD for bottle feeds. Surface is
+// POST/GET/PATCH/DELETE. PATCH is partial: omitted fields stay untouched,
+// and the server preserves id / source / created_at / created_by_user_id
+// regardless of input so an import_babyplus row stays correctly tagged
+// after a user-driven correction.
 package bottlefeed
 
 import (
@@ -51,6 +53,7 @@ func (h *Handler) BabyRoutes(r chi.Router) {
 
 // ItemRoutes mounts under /v1/bottle-feeds/{id}.
 func (h *Handler) ItemRoutes(r chi.Router) {
+	r.Patch("/", h.update)
 	r.Delete("/", h.delete)
 }
 
@@ -162,6 +165,76 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, bf)
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// updateReq is the PATCH body. Every field is optional; an omitted field
+// is left alone. Notes follow a "send empty string to clear" convention
+// because Go's JSON decoder can't distinguish "absent" from "explicit
+// null" on a *string, and a sentinel string keeps the contract simple
+// without adding an Optional[T] wrapper just for this one column.
+type updateReq struct {
+	OccurredAt *time.Time `json:"occurred_at,omitempty"`
+	MilkSource *string    `json:"milk_source,omitempty" validate:"omitempty,oneof=breast formula"`
+	AmountML   *float64   `json:"amount_ml,omitempty" validate:"omitempty,gt=0,lte=2000"`
+	Notes      *string    `json:"notes,omitempty"`
+}
+
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	uid := auth.UserIDFrom(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var babyID uuid.UUID
+	err = h.store.Pool.QueryRow(r.Context(), `SELECT baby_id FROM bottle_feeds WHERE id = $1`, id).Scan(&babyID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "bottle feed not found")
+		return
+	}
+	if err != nil {
+		h.logger.Error("lookup bottle feed", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "lookup failed")
+		return
+	}
+	if _, err := baby.MustOwnBaby(r.Context(), h.store, uid, babyID); err != nil {
+		writeBabyAuthErr(w, err)
+		return
+	}
+
+	var req updateReq
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := h.v.Struct(req); err != nil {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+		return
+	}
+
+	notesPresent := req.Notes != nil
+	var notesValue string
+	if notesPresent {
+		notesValue = *req.Notes
+	}
+
+	var out BottleFeed
+	err = h.store.Pool.QueryRow(r.Context(), `
+		UPDATE bottle_feeds SET
+			occurred_at = COALESCE($2, occurred_at),
+			milk_source = COALESCE($3, milk_source),
+			amount_ml   = COALESCE($4, amount_ml),
+			notes       = CASE WHEN $5::boolean THEN NULLIF($6, '') ELSE notes END
+		WHERE id = $1
+		RETURNING id, baby_id, occurred_at, milk_source, amount_ml, notes, source, created_at
+	`, id, req.OccurredAt, req.MilkSource, req.AmountML, notesPresent, notesValue).
+		Scan(&out.ID, &out.BabyID, &out.OccurredAt, &out.MilkSource, &out.AmountML, &out.Notes, &out.Source, &out.CreatedAt)
+	if err != nil {
+		h.logger.Error("update bottle feed", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not update bottle feed")
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

@@ -763,6 +763,78 @@ function RecentRow({
           : ev.kind === "growth"
             ? "📏"
             : "👶";
+  // Tap target: the row body links to the matching /log/<kind>?edit=<id>
+  // form so users can correct mistyped values. Open nursing sessions are
+  // intentionally NOT editable from here — those flow through the
+  // in-progress chip's End-now modal, which is the only place that
+  // owns the close-session transition. Syncing rows stay tappable
+  // because the edit form prefills from the same cache that holds the
+  // unsynced row.
+  const editable = !(ev.kind === "nursing" && ev.data.ended_at == null);
+  const body = (
+    <>
+      {ev.kind === "bottle" && (
+        <>
+          <div className="text-base font-medium">
+            {formatVolume(Number(ev.data.amount_ml), prefs.unit_volume)}
+            <span className="ml-2 text-xs font-normal text-white/50">
+              {ev.data.milk_source === "breast" ? "expressed" : "formula"}
+            </span>
+          </div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+      )}
+      {ev.kind === "diaper" && (
+        <>
+          <div className="text-base font-medium capitalize">{ev.data.type} diaper</div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+      )}
+      {ev.kind === "pumping" && (
+        <>
+          <div className="text-base font-medium">
+            {formatVolume(Number(ev.data.amount_ml), prefs.unit_volume)} pumped
+            {ev.data.duration_seconds != null && (
+              <span className="ml-2 text-xs font-normal text-white/50">
+                · {Math.round(ev.data.duration_seconds / 60)} min
+              </span>
+            )}
+          </div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+      )}
+      {ev.kind === "nursing" && (
+        <>
+          <div className="text-base font-medium">
+            Nursed {Math.round((ev.data.left_duration_s + ev.data.right_duration_s) / 60)} min
+            <span className="ml-2 text-xs font-normal capitalize text-white/50">
+              · {ev.data.nursing_side}
+            </span>
+          </div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+      )}
+      {ev.kind === "growth" && (
+        <>
+          <div className="text-base font-medium">{growthSummary(ev.data, prefs)}</div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+      )}
+      {!isToday(at) && (
+        <div className="text-xs text-white/40">{format(at, "MMM d")}</div>
+      )}
+    </>
+  );
   return (
     <li className="card flex items-center gap-3 p-3">
       <div className="flex shrink-0 items-center gap-2">
@@ -780,68 +852,17 @@ function RecentRow({
           </span>
         )}
       </div>
-      <div className="min-w-0 flex-1">
-        {ev.kind === "bottle" && (
-          <>
-            <div className="text-base font-medium">
-              {formatVolume(Number(ev.data.amount_ml), prefs.unit_volume)}
-              <span className="ml-2 text-xs font-normal text-white/50">
-                {ev.data.milk_source === "breast" ? "expressed" : "formula"}
-              </span>
-            </div>
-            {ev.data.notes && (
-              <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
-            )}
-          </>
-        )}
-        {ev.kind === "diaper" && (
-          <>
-            <div className="text-base font-medium capitalize">{ev.data.type} diaper</div>
-            {ev.data.notes && (
-              <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
-            )}
-          </>
-        )}
-        {ev.kind === "pumping" && (
-          <>
-            <div className="text-base font-medium">
-              {formatVolume(Number(ev.data.amount_ml), prefs.unit_volume)} pumped
-              {ev.data.duration_seconds != null && (
-                <span className="ml-2 text-xs font-normal text-white/50">
-                  · {Math.round(ev.data.duration_seconds / 60)} min
-                </span>
-              )}
-            </div>
-            {ev.data.notes && (
-              <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
-            )}
-          </>
-        )}
-        {ev.kind === "nursing" && (
-          <>
-            <div className="text-base font-medium">
-              Nursed {Math.round((ev.data.left_duration_s + ev.data.right_duration_s) / 60)} min
-              <span className="ml-2 text-xs font-normal capitalize text-white/50">
-                · {ev.data.nursing_side}
-              </span>
-            </div>
-            {ev.data.notes && (
-              <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
-            )}
-          </>
-        )}
-        {ev.kind === "growth" && (
-          <>
-            <div className="text-base font-medium">{growthSummary(ev.data, prefs)}</div>
-            {ev.data.notes && (
-              <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
-            )}
-          </>
-        )}
-        {!isToday(at) && (
-          <div className="text-xs text-white/40">{format(at, "MMM d")}</div>
-        )}
-      </div>
+      {editable ? (
+        <Link
+          to={`/log/${ev.kind}`}
+          search={{ babyId: ev.data.baby_id, edit: ev.data.id }}
+          className="-my-3 -mr-3 flex min-w-0 flex-1 flex-col justify-center py-3 pr-3 transition active:opacity-70"
+        >
+          {body}
+        </Link>
+      ) : (
+        <div className="min-w-0 flex-1">{body}</div>
+      )}
     </li>
   );
 }
