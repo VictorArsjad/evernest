@@ -277,7 +277,7 @@ function TodayPage() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed inset-x-0 bottom-6 z-40 mx-auto flex max-w-xs items-center justify-center"
+          className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+1.5rem)] z-40 mx-auto flex max-w-xs items-center justify-center"
         >
           <div className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-1.5 text-xs font-medium text-emerald-100 shadow-lg">
             All caught up
@@ -447,7 +447,7 @@ function EndNursingModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:items-center">
       <form
         onSubmit={onSubmit}
         className="w-full max-w-sm rounded-2xl border border-white/10 bg-bg-surface p-5 shadow-xl"
