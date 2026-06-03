@@ -24,10 +24,17 @@ const queryClient = new QueryClient({
   },
 });
 
+// Vite injects BASE_URL from the `base` config (e.g. "/evernest/" on GH
+// Pages, "/" on local dev). TanStack Router needs this as `basepath` or it
+// tries to match "/evernest/..." against route entries defined as "/..."
+// and renders a 404. Strip the trailing slash — router expects no trailing.
+const ROUTER_BASEPATH = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
+
 const router = createRouter({
   routeTree,
   context: { queryClient },
   defaultPreload: "intent",
+  basepath: ROUTER_BASEPATH,
 });
 
 declare module "@tanstack/react-router" {
