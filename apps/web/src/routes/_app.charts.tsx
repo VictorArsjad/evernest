@@ -339,12 +339,12 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
             <TooltipBody date={days[i].date}>
               <BottleTooltipRow
                 color={colors.bottle_breast}
-                label="breast"
+                label="Breast"
                 value={formatVolume(days[i].bottle_ml_breast ?? 0, prefs.unit_volume)}
               />
               <BottleTooltipRow
                 color={colors.bottle_formula}
-                label="formula"
+                label="Formula"
                 value={formatVolume(days[i].bottle_ml_formula ?? 0, prefs.unit_volume)}
               />
               <div className="mt-0.5 border-t border-white/10 pt-0.5 font-medium text-white">
@@ -422,17 +422,17 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
             <TooltipBody date={days[i].date}>
               <DiaperTooltipRow
                 color={diaperColors.wet}
-                label="wet"
+                label="Wet"
                 value={days[i].diaper_wet}
               />
               <DiaperTooltipRow
                 color={diaperColors.soiled}
-                label="soiled"
+                label="Soiled"
                 value={days[i].diaper_soiled}
               />
               <DiaperTooltipRow
                 color={diaperColors.mixed}
-                label="mixed"
+                label="Mixed"
                 value={days[i].diaper_mixed}
               />
               <div className="mt-0.5 border-t border-white/10 pt-0.5 text-white">
@@ -674,9 +674,9 @@ function DiaperLegend({
 }) {
   return (
     <ul className="flex gap-3 text-[10px] text-white/60">
-      <LegendDot color={colors.wet} label="wet" />
-      <LegendDot color={colors.soiled} label="soiled" />
-      <LegendDot color={colors.mixed} label="mixed" />
+      <LegendDot color={colors.wet} label="Wet" />
+      <LegendDot color={colors.soiled} label="Soiled" />
+      <LegendDot color={colors.mixed} label="Mixed" />
     </ul>
   );
 }
@@ -778,8 +778,8 @@ function BottleLegend({
 }) {
   return (
     <ul className="flex gap-3 text-[10px] text-white/60">
-      <LegendDot color={breastColor} label="breast" />
-      <LegendDot color={formulaColor} label="formula" />
+      <LegendDot color={breastColor} label="Breast" />
+      <LegendDot color={formulaColor} label="Formula" />
     </ul>
   );
 }
