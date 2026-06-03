@@ -44,7 +44,16 @@ services:
       - /dev/net/tun:/dev/net/tun
     volumes:
       - ts-state:/var/lib/tailscale
-      - ./docker/tailscale-serve.json:/config/serve.json:ro
+    # Serve config is injected via Compose `configs:` instead of a bind mount.
+    # Portainer Git stacks set the compose project dir to the repo root, so a
+    # relative bind like ./docker/tailscale-serve.json silently creates an
+    # empty directory on the host (Docker's default when the source is
+    # missing) and tailscale boots with no serve config. Inlining sidesteps
+    # the path-resolution mismatch entirely.
+    configs:
+      - source: tailscale_serve
+        target: /config/serve.json
+        mode: 0444
     environment:
       TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY in .env (reusable, ephemeral=false, tag:server)}
       TS_HOSTNAME: ${TS_HOSTNAME:-evernest}
@@ -53,7 +62,11 @@ services:
       TS_USERSPACE: "false"
       TS_EXTRA_ARGS: --accept-dns=false
     healthcheck:
-      test: ["CMD", "tailscale", "status", "--peers=false"]
+      # The official image runs tailscaled with --socket=/tmp/tailscaled.sock
+      # and tries to symlink it to the default path, but on container restarts
+      # the symlink target already exists and the boot script gives up. Always
+      # talk to the actual socket so this healthcheck doesn't false-fail.
+      test: ["CMD", "tailscale", "--socket=/tmp/tailscaled.sock", "status", "--peers=false"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -83,3 +96,21 @@ services:
 volumes:
   db-data:
   ts-state:
+
+configs:
+  tailscale_serve:
+    # `$${TS_CERT_DOMAIN}` is escaped so Compose passes through the literal
+    # `${TS_CERT_DOMAIN}` — tailscaled expands it at runtime to the actual
+    # cert domain (e.g. evernest.<tail>.ts.net). Keep in sync with
+    # infra/docker/tailscale-serve.json, which is still used by the prod
+    # overlay (deploy-api.yml SSH path).
+    content: |
+      {
+        "TCP": { "443": { "HTTPS": true } },
+        "Web": {
+          "$${TS_CERT_DOMAIN}:443": {
+            "Handlers": { "/": { "Proxy": "http://127.0.0.1:8080" } }
+          }
+        },
+        "AllowFunnel": { "$${TS_CERT_DOMAIN}:443": false }
+      }
