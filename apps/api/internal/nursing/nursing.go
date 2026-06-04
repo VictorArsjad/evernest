@@ -70,7 +70,11 @@ func (h *Handler) BabyRoutes(r chi.Router) {
 
 // ItemRoutes mounts under /v1/nursing-sessions/{id}.
 func (h *Handler) ItemRoutes(r chi.Router) {
-	r.Patch("/", h.end)
+	// PATCH dispatches based on row state: if ended_at IS NULL we're
+	// closing an open session (legacy close-PATCH behaviour); if
+	// ended_at IS NOT NULL we're editing a closed session's fields.
+	// See patch().
+	r.Patch("/", h.patch)
 	r.Delete("/", h.delete)
 }
 
@@ -312,7 +316,26 @@ type endReq struct {
 	RightDurationS *int      `json:"right_duration_s" validate:"required,gte=0,lte=21600"`
 }
 
-func (h *Handler) end(w http.ResponseWriter, r *http.Request) {
+// editReq is the PATCH body for editing a closed session. Every field is
+// optional. Sending ended_at = null is not supported (we don't let edits
+// re-open a closed session — that's a state machine transition, not a
+// correction). See bottlefeed for the notes "send empty string to clear"
+// convention.
+type editReq struct {
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	StartingBreast *string    `json:"starting_breast,omitempty" validate:"omitempty,oneof=left right"`
+	ClearStartingBreast bool  `json:"clear_starting_breast,omitempty"`
+	NursingSide    *string    `json:"nursing_side,omitempty" validate:"omitempty,oneof=left right both"`
+	LeftDurationS  *int       `json:"left_duration_s,omitempty" validate:"omitempty,gte=0,lte=21600"`
+	RightDurationS *int       `json:"right_duration_s,omitempty" validate:"omitempty,gte=0,lte=21600"`
+	Notes          *string    `json:"notes,omitempty"`
+}
+
+// patch dispatches between "close open session" (legacy contract) and
+// "edit closed session" (new) based on the row's ended_at state. Both
+// paths share the lookup + authz preamble.
+func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 	uid := auth.UserIDFrom(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -320,8 +343,6 @@ func (h *Handler) end(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up the row first so we can authz against its baby's household
-	// AND short-circuit on already-closed before doing any work.
 	var (
 		babyID    uuid.UUID
 		startedAt time.Time
@@ -335,7 +356,7 @@ func (h *Handler) end(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.logger.Error("lookup nursing for end", "err", err)
+		h.logger.Error("lookup nursing for patch", "err", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "lookup failed")
 		return
 	}
@@ -343,12 +364,17 @@ func (h *Handler) end(w http.ResponseWriter, r *http.Request) {
 		writeBabyAuthErr(w, err)
 		return
 	}
-	if endedAt != nil {
-		httpx.WriteError(w, http.StatusConflict, "already_closed",
-			"nursing session is already closed")
+
+	if endedAt == nil {
+		h.endOpenSession(w, r, id, startedAt)
 		return
 	}
+	h.editClosedSession(w, r, id, startedAt, *endedAt)
+}
 
+// endOpenSession handles the legacy close-the-session PATCH contract.
+// Body must include ended_at + both per-side durations.
+func (h *Handler) endOpenSession(w http.ResponseWriter, r *http.Request, id uuid.UUID, startedAt time.Time) {
 	var req endReq
 	if err := httpx.DecodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
@@ -364,7 +390,7 @@ func (h *Handler) end(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var out Nursing
-	err = h.store.Pool.QueryRow(r.Context(), `
+	err := h.store.Pool.QueryRow(r.Context(), `
 		UPDATE nursing_sessions
 		SET ended_at = $2, left_duration_s = $3, right_duration_s = $4
 		WHERE id = $1 AND ended_at IS NULL
@@ -381,8 +407,80 @@ func (h *Handler) end(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.logger.Error("update nursing", "err", err)
+		h.logger.Error("update nursing (close)", "err", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not close nursing session")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// editClosedSession handles partial edits to an already-closed nursing
+// row. Guarded by `WHERE ended_at IS NOT NULL` so a concurrent close
+// can't sneak the row back into the open path mid-edit.
+func (h *Handler) editClosedSession(w http.ResponseWriter, r *http.Request, id uuid.UUID, startedAt, endedAt time.Time) {
+	var req editReq
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := h.v.Struct(req); err != nil {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+		return
+	}
+
+	// Validate the merged started_at/ended_at pair up front. Either field
+	// may be omitted, so substitute the stored value for the missing side.
+	effectiveStart := startedAt
+	if req.StartedAt != nil {
+		effectiveStart = *req.StartedAt
+	}
+	effectiveEnd := endedAt
+	if req.EndedAt != nil {
+		effectiveEnd = *req.EndedAt
+	}
+	if effectiveEnd.Before(effectiveStart) {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed",
+			"ended_at must be >= started_at")
+		return
+	}
+
+	notesPresent := req.Notes != nil
+	var notesValue string
+	if notesPresent {
+		notesValue = *req.Notes
+	}
+
+	var out Nursing
+	err := h.store.Pool.QueryRow(r.Context(), `
+		UPDATE nursing_sessions SET
+			started_at       = COALESCE($2, started_at),
+			ended_at         = COALESCE($3, ended_at),
+			starting_breast  = CASE WHEN $4::boolean THEN NULL
+			                        WHEN $5::text IS NOT NULL THEN $5
+			                        ELSE starting_breast END,
+			nursing_side     = COALESCE($6, nursing_side),
+			left_duration_s  = COALESCE($7, left_duration_s),
+			right_duration_s = COALESCE($8, right_duration_s),
+			notes            = CASE WHEN $9::boolean THEN NULLIF($10, '') ELSE notes END
+		WHERE id = $1 AND ended_at IS NOT NULL
+		RETURNING id, baby_id, started_at, ended_at, starting_breast, nursing_side,
+			left_duration_s, right_duration_s, notes, source, created_at
+	`, id, req.StartedAt, req.EndedAt,
+		req.ClearStartingBreast, req.StartingBreast,
+		req.NursingSide, req.LeftDurationS, req.RightDurationS,
+		notesPresent, notesValue).
+		Scan(&out.ID, &out.BabyID, &out.StartedAt, &out.EndedAt, &out.StartingBreast, &out.NursingSide,
+			&out.LeftDurationS, &out.RightDurationS, &out.Notes, &out.Source, &out.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Either the row vanished mid-flight or a concurrent close/reopen
+		// flipped ended_at between our lookup and our UPDATE.
+		httpx.WriteError(w, http.StatusConflict, "session_state_changed",
+			"nursing session state changed; refetch and retry")
+		return
+	}
+	if err != nil {
+		h.logger.Error("update nursing (edit)", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not update nursing session")
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)

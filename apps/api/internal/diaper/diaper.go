@@ -1,6 +1,8 @@
 // Package diaper implements CRUD for diaper changes. Mirrors the bottlefeed
-// shape: POST/GET/DELETE with UUIDv7 client-id idempotency. Diapers carry no
-// amount or duration — just an enum (wet/soiled/mixed) and optional notes.
+// shape: POST/GET/PATCH/DELETE with UUIDv7 client-id idempotency. Diapers
+// carry no amount or duration — just an enum (wet/soiled/mixed) and optional
+// notes. PATCH is partial (omitted fields stay untouched) and preserves
+// id / source / created_at / created_by_user_id server-side.
 package diaper
 
 import (
@@ -50,6 +52,7 @@ func (h *Handler) BabyRoutes(r chi.Router) {
 
 // ItemRoutes mounts under /v1/diapers/{id}.
 func (h *Handler) ItemRoutes(r chi.Router) {
+	r.Patch("/", h.update)
 	r.Delete("/", h.delete)
 }
 
@@ -158,6 +161,71 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, d)
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// updateReq is the PATCH body. All fields optional. See bottlefeed.update
+// for the "send empty string to clear notes" convention.
+type updateReq struct {
+	OccurredAt *time.Time `json:"occurred_at,omitempty"`
+	Type       *string    `json:"type,omitempty" validate:"omitempty,oneof=wet soiled mixed"`
+	Notes      *string    `json:"notes,omitempty"`
+}
+
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	uid := auth.UserIDFrom(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var babyID uuid.UUID
+	err = h.store.Pool.QueryRow(r.Context(), `SELECT baby_id FROM diapers WHERE id = $1`, id).Scan(&babyID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "diaper not found")
+		return
+	}
+	if err != nil {
+		h.logger.Error("lookup diaper", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "lookup failed")
+		return
+	}
+	if _, err := baby.MustOwnBaby(r.Context(), h.store, uid, babyID); err != nil {
+		writeBabyAuthErr(w, err)
+		return
+	}
+
+	var req updateReq
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := h.v.Struct(req); err != nil {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+		return
+	}
+
+	notesPresent := req.Notes != nil
+	var notesValue string
+	if notesPresent {
+		notesValue = *req.Notes
+	}
+
+	var out Diaper
+	err = h.store.Pool.QueryRow(r.Context(), `
+		UPDATE diapers SET
+			occurred_at = COALESCE($2, occurred_at),
+			type        = COALESCE($3, type),
+			notes       = CASE WHEN $4::boolean THEN NULLIF($5, '') ELSE notes END
+		WHERE id = $1
+		RETURNING id, baby_id, occurred_at, type, notes, source, created_at
+	`, id, req.OccurredAt, req.Type, notesPresent, notesValue).
+		Scan(&out.ID, &out.BabyID, &out.OccurredAt, &out.Type, &out.Notes, &out.Source, &out.CreatedAt)
+	if err != nil {
+		h.logger.Error("update diaper", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not update diaper")
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

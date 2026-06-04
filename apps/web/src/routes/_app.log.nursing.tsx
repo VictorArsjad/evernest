@@ -4,16 +4,35 @@
 // started_at + total duration when saving as a closed session; "Start
 // now" submits an open session (no ended_at, no per-side durations) which
 // the Today screen later closes via the in-progress chip.
+//
+// In edit mode (`?edit=<uuid>`):
+//   - Only CLOSED sessions can be field-edited. If the row is still open
+//     (ended_at IS NULL), we show an inline notice and disable Save —
+//     the End-now modal on Today owns that transition. Delete remains
+//     enabled so "I tapped Start nursing by accident" is still cleanable.
+//   - The "Start now" button is hidden (no relogging while editing).
+//   - The submit recomputes ended_at from started_at + total duration
+//     just like the create path, so a duration tweak keeps the row
+//     internally consistent.
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { useBabies, useCreateNursing, useHouseholds } from "../lib/queries";
+import {
+  useBabies,
+  useCreateNursing,
+  useDeleteNursing,
+  useHouseholds,
+  useUpdateNursing,
+} from "../lib/queries";
 import { useActiveBaby } from "../lib/useActiveBaby";
-import type { NursingSide, StartingBreast } from "../lib/types";
+import type { Nursing, NursingSide, StartingBreast } from "../lib/types";
+import { DeleteEntryButton } from "./_app.log.bottle";
 
 const search = z.object({
   babyId: z.string().uuid().optional(),
+  edit: z.string().uuid().optional(),
 });
 
 export const Route = createFileRoute("/_app/log/nursing")({
@@ -23,6 +42,12 @@ export const Route = createFileRoute("/_app/log/nursing")({
 
 function nowLocalDatetimeInput(): string {
   const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function isoToLocalDatetimeInput(iso: string): string {
+  const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
@@ -39,12 +64,25 @@ function parseMinutes(raw: string): number {
 
 function LogNursingPage() {
   const nav = useNavigate();
-  const { babyId: babyIdFromSearch } = Route.useSearch();
+  const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
   const babies = useBabies(householdId);
   const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
   const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
+
+  const isEditMode = !!editId;
+  const qc = useQueryClient();
+  const existing: Nursing | null = useMemo(() => {
+    if (!editId || !babyId) return null;
+    const lists = qc.getQueriesData<Nursing[] | undefined>({
+      queryKey: ["babies", babyId, "nursing-sessions"],
+    }) as Array<[unknown, Nursing[] | undefined]>;
+    return (
+      lists.flatMap(([, list]) => list ?? []).find((r) => r.id === editId) ?? null
+    );
+  }, [qc, editId, babyId]);
+  const editingOpenSession = isEditMode && existing != null && existing.ended_at == null;
 
   const [side, setSide] = useState<NursingSide>("both");
   // starting_breast only meaningful when both sides nursed.
@@ -54,13 +92,36 @@ function LogNursingPage() {
   const [startedLocal, setStartedLocal] = useState(nowLocalDatetimeInput);
   const [notes, setNotes] = useState("");
 
+  const create = useCreateNursing();
+  const update = useUpdateNursing();
+  const del = useDeleteNursing();
+
+  const prefilledRef = useRef(false);
   useEffect(() => {
+    if (!isEditMode || prefilledRef.current || !existing) return;
+    setSide(existing.nursing_side);
+    if (existing.starting_breast) setStartingBreast(existing.starting_breast);
+    setLeftMin(
+      existing.left_duration_s > 0
+        ? String(Math.round(existing.left_duration_s / 60))
+        : "",
+    );
+    setRightMin(
+      existing.right_duration_s > 0
+        ? String(Math.round(existing.right_duration_s / 60))
+        : "",
+    );
+    setStartedLocal(isoToLocalDatetimeInput(existing.started_at));
+    setNotes(existing.notes ?? "");
+    prefilledRef.current = true;
+  }, [isEditMode, existing]);
+
+  useEffect(() => {
+    if (isEditMode) return;
     const onFocus = () => setStartedLocal(nowLocalDatetimeInput());
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, []);
-
-  const create = useCreateNursing();
+  }, [isEditMode]);
 
   const leftMinNum = useMemo(() => parseMinutes(leftMin), [leftMin]);
   const rightMinNum = useMemo(() => parseMinutes(rightMin), [rightMin]);
@@ -71,13 +132,35 @@ function LogNursingPage() {
   const totalSeconds =
     (leftActive ? Math.round(leftMinNum * 60) : 0) +
     (rightActive ? Math.round(rightMinNum * 60) : 0);
-  const isValid = leftValid && rightValid && totalSeconds > 0;
+  const isValid =
+    leftValid && rightValid && totalSeconds > 0 && !editingOpenSession;
+
+  const pending = isEditMode ? update.isPending : create.isPending;
+  const errorMsg = isEditMode ? update.error?.message : create.error?.message;
+  const hadError = isEditMode ? update.isError : create.isError;
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!babyId || !isValid) return;
     const startedISO = localToISO(startedLocal);
     const endedISO = new Date(new Date(startedISO).getTime() + totalSeconds * 1000).toISOString();
+    if (isEditMode && editId) {
+      update.mutate(
+        {
+          id: editId,
+          babyId,
+          started_at: startedISO,
+          ended_at: endedISO,
+          starting_breast: side === "both" ? startingBreast : (side as StartingBreast),
+          nursing_side: side,
+          left_duration_s: leftActive ? Math.round(leftMinNum * 60) : 0,
+          right_duration_s: rightActive ? Math.round(rightMinNum * 60) : 0,
+          notes: notes.trim(),
+        },
+        { onSuccess: () => nav({ to: "/" }) },
+      );
+      return;
+    }
     create.mutate(
       {
         babyId,
@@ -118,13 +201,23 @@ function LogNursingPage() {
   return (
     <main className="flex flex-1 flex-col gap-4 p-5">
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Log nursing</h1>
+        <h1 className="text-2xl font-semibold">
+          {isEditMode ? "Edit nursing" : "Log nursing"}
+        </h1>
         <button onClick={() => nav({ to: "/" })} className="text-sm text-white/60">
           Cancel
         </button>
       </header>
 
       <form onSubmit={onSubmit} className="card flex flex-col gap-5 p-5">
+        {editingOpenSession && (
+          <p className="rounded-xl border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
+            This session is still in progress. End it from the Today screen
+            before editing its fields. Delete is still available below if
+            you started it by mistake.
+          </p>
+        )}
+
         <div>
           <span className="text-xs uppercase tracking-wide text-white/50">Side</span>
           <div className="mt-2 grid grid-cols-3 gap-2">
@@ -166,7 +259,7 @@ function LogNursingPage() {
               label="Left"
               value={leftMin}
               onChange={setLeftMin}
-              autoFocus={side === "left" || side === "both"}
+              autoFocus={!isEditMode && (side === "left" || side === "both")}
             />
           )}
           {rightActive && (
@@ -174,7 +267,7 @@ function LogNursingPage() {
               label="Right"
               value={rightMin}
               onChange={setRightMin}
-              autoFocus={side === "right"}
+              autoFocus={!isEditMode && side === "right"}
             />
           )}
         </div>
@@ -202,31 +295,53 @@ function LogNursingPage() {
           />
         </label>
 
-        {create.isError && (
-          <p className="text-sm text-red-400">{create.error?.message ?? "could not save"}</p>
+        {hadError && (
+          <p className="text-sm text-red-400">{errorMsg ?? "could not save"}</p>
         )}
 
-        <div className="grid grid-cols-2 gap-2">
-          {/* "Start now" comes first because it's the lower-friction path
-              ("baby latched, fill out details later"), but Save stays the
-              primary visual action so users who already have the durations
-              don't accidentally drop them. */}
-          <button
-            type="button"
-            onClick={onStartNow}
-            disabled={create.isPending}
-            className="rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 text-base font-medium text-accent transition active:scale-95 disabled:opacity-50"
-          >
-            Start now
-          </button>
+        {isEditMode ? (
           <button
             type="submit"
             className="btn-primary text-lg"
-            disabled={create.isPending || !isValid}
+            disabled={pending || !isValid}
           >
-            {create.isPending ? "Saving…" : "Save"}
+            {pending ? "Saving…" : "Save changes"}
           </button>
-        </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            {/* "Start now" comes first because it's the lower-friction path
+                ("baby latched, fill out details later"), but Save stays the
+                primary visual action so users who already have the durations
+                don't accidentally drop them. */}
+            <button
+              type="button"
+              onClick={onStartNow}
+              disabled={create.isPending}
+              className="rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 text-base font-medium text-accent transition active:scale-95 disabled:opacity-50"
+            >
+              Start now
+            </button>
+            <button
+              type="submit"
+              className="btn-primary text-lg"
+              disabled={create.isPending || !isValid}
+            >
+              {create.isPending ? "Saving…" : "Save"}
+            </button>
+          </div>
+        )}
+
+        {isEditMode && editId && (
+          <DeleteEntryButton
+            pending={del.isPending}
+            onConfirm={() =>
+              del.mutate(
+                { id: editId, babyId },
+                { onSuccess: () => nav({ to: "/" }) },
+              )
+            }
+          />
+        )}
       </form>
     </main>
   );

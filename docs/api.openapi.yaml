@@ -616,6 +616,40 @@ paths:
   /v1/bottle-feeds/{id}:
     parameters:
       - $ref: "#/components/parameters/IDPath"
+    patch:
+      tags: [Bottle Feeds]
+      operationId: updateBottleFeed
+      summary: Update a bottle feed
+      description: |
+        Partial update. Fields omitted from the request body are left
+        unchanged. Server preserves `id`, `source`, `created_at`, and
+        `created_by_user_id` regardless of input. To clear `notes`, send
+        an empty string; omitting the field leaves notes unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBottleFeedRequest"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BottleFeed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       tags: [Bottle Feeds]
       operationId: deleteBottleFeed
@@ -698,6 +732,37 @@ paths:
   /v1/diapers/{id}:
     parameters:
       - $ref: "#/components/parameters/IDPath"
+    patch:
+      tags: [Diapers]
+      operationId: updateDiaper
+      summary: Update a diaper change
+      description: |
+        Partial update. Same contract as `PATCH /v1/bottle-feeds/{id}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDiaperRequest"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Diaper"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       tags: [Diapers]
       operationId: deleteDiaper
@@ -779,6 +844,37 @@ paths:
   /v1/pumpings/{id}:
     parameters:
       - $ref: "#/components/parameters/IDPath"
+    patch:
+      tags: [Pumpings]
+      operationId: updatePumping
+      summary: Update a pumping session
+      description: |
+        Partial update. Same contract as `PATCH /v1/bottle-feeds/{id}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePumpingRequest"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pumping"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       tags: [Pumpings]
       operationId: deletePumping
@@ -859,9 +955,97 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/babies/{babyID}/nursing-sessions/open:
+    parameters:
+      - $ref: "#/components/parameters/BabyIDPath"
+    get:
+      tags: [Nursing Sessions]
+      operationId: getOpenNursingSession
+      summary: Get the in-progress nursing session for this baby
+      description: |
+        Returns `200` with the open session if one exists, or `204` if no
+        nursing session is currently open for this baby. The Today screen
+        polls this on render to derive the "nursing now" chip without
+        scanning the full per-day list.
+      responses:
+        "200":
+          description: Open session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Nursing"
+        "204":
+          description: No open session for this baby.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /v1/nursing-sessions/{id}:
     parameters:
       - $ref: "#/components/parameters/IDPath"
+    patch:
+      tags: [Nursing Sessions]
+      operationId: updateNursingSession
+      summary: Close an open session OR edit a closed one
+      description: |
+        Dispatches based on the row's current `ended_at` state:
+
+        - **Open session** (`ended_at IS NULL`): closes the session.
+          Body must include `ended_at`, `left_duration_s`, and
+          `right_duration_s` (all required). This is the legacy
+          close-session contract. Returns `409 already_closed` if the
+          row was closed by a concurrent request.
+        - **Closed session** (`ended_at IS NOT NULL`): partial edit.
+          All fields optional. Sending `ended_at: null` is not
+          supported (edits can't re-open a closed session). The notes
+          and `starting_breast` clear conventions match the other
+          event PATCHes. Returns `409 session_state_changed` if the
+          row was deleted or re-opened mid-edit.
+
+        Server preserves `id`, `source`, `created_at`, and
+        `created_by_user_id` regardless of input.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/EndNursingRequest"
+                - $ref: "#/components/schemas/UpdateNursingRequest"
+      responses:
+        "200":
+          description: Closed (open session path) or updated (closed session path).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Nursing"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            Either `already_closed` (close-path) or
+            `session_state_changed` (edit-path) — see description.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       tags: [Nursing Sessions]
       operationId: deleteNursingSession
@@ -951,6 +1135,41 @@ paths:
   /v1/growths/{id}:
     parameters:
       - $ref: "#/components/parameters/IDPath"
+    patch:
+      tags: [Growths]
+      operationId: updateGrowth
+      summary: Update a growth measurement
+      description: |
+        Partial update. Each measurement (`weight_g`, `height_cm`,
+        `head_circumference_cm`) can be cleared via its companion
+        `clear_*` boolean. The DB's "at least one non-NULL" CHECK is
+        mirrored in Go and surfaces as `422` if a clear would empty
+        the row.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateGrowthRequest"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Growth"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       tags: [Growths]
       operationId: deleteGrowth
@@ -1417,6 +1636,30 @@ components:
           type: string
           example: "took it eagerly"
 
+    UpdateBottleFeedRequest:
+      type: object
+      description: |
+        All fields optional. Omitted fields are left unchanged. Send an
+        empty string for `notes` to clear it.
+      properties:
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T08:30:00Z"
+        milk_source:
+          type: string
+          enum: [breast, formula]
+          example: breast
+        amount_ml:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 2000
+          example: 120
+        notes:
+          type: string
+          example: "took it eagerly"
+
     Diaper:
       type: object
       required: [id, baby_id, occurred_at, type, source, created_at]
@@ -1457,6 +1700,24 @@ components:
           format: uuid
           description: Optional client-supplied UUIDv7 for idempotency.
           example: 01919b89-2d3e-7f4a-b5c6-d7e8f9a0b1c2
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T09:15:00Z"
+        type:
+          type: string
+          enum: [wet, soiled, mixed]
+          example: mixed
+        notes:
+          type: string
+          example: "blowout"
+
+    UpdateDiaperRequest:
+      type: object
+      description: |
+        All fields optional. Omitted fields are left unchanged. Send an
+        empty string for `notes` to clear it.
+      properties:
         occurred_at:
           type: string
           format: date-time
@@ -1527,6 +1788,31 @@ components:
           minimum: 0
           maximum: 2000
           description: Volume in mL. Note `>= 0` (zero is allowed for "tracked but no output").
+          example: 90
+        duration_seconds:
+          type: integer
+          minimum: 0
+          maximum: 21600
+          example: 1200
+        notes:
+          type: string
+          example: "morning session"
+
+    UpdatePumpingRequest:
+      type: object
+      description: |
+        All fields optional. Omitted fields are left unchanged. Send an
+        empty string for `notes` to clear it.
+      properties:
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T10:00:00Z"
+        amount_ml:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 2000
           example: 90
         duration_seconds:
           type: integer
@@ -1636,6 +1922,70 @@ components:
           type: string
           example: "fell asleep on right"
 
+    EndNursingRequest:
+      type: object
+      required: [ended_at, left_duration_s, right_duration_s]
+      description: |
+        Body shape for closing an OPEN nursing session via
+        `PATCH /v1/nursing-sessions/{id}`. All three fields required.
+      properties:
+        ended_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T11:25:00Z"
+        left_duration_s:
+          type: integer
+          minimum: 0
+          maximum: 21600
+          example: 600
+        right_duration_s:
+          type: integer
+          minimum: 0
+          maximum: 21600
+          example: 900
+
+    UpdateNursingRequest:
+      type: object
+      description: |
+        Body shape for editing a CLOSED nursing session via
+        `PATCH /v1/nursing-sessions/{id}`. All fields optional. Set
+        `clear_starting_breast: true` to clear that nullable column.
+        Send an empty string for `notes` to clear it.
+      properties:
+        started_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T11:00:00Z"
+        ended_at:
+          type: string
+          format: date-time
+          description: When provided, must be `>= started_at`.
+          example: "2026-05-26T11:25:00Z"
+        starting_breast:
+          type: string
+          enum: [left, right]
+          example: left
+        clear_starting_breast:
+          type: boolean
+          example: false
+        nursing_side:
+          type: string
+          enum: [left, right, both]
+          example: both
+        left_duration_s:
+          type: integer
+          minimum: 0
+          maximum: 21600
+          example: 600
+        right_duration_s:
+          type: integer
+          minimum: 0
+          maximum: 21600
+          example: 900
+        notes:
+          type: string
+          example: "fell asleep on right"
+
     Growth:
       type: object
       required: [id, baby_id, measured_at, source, created_at]
@@ -1712,6 +2062,51 @@ components:
           exclusiveMinimum: 0
           exclusiveMaximum: 80
           example: 39.2
+        notes:
+          type: string
+          example: "post-bath"
+
+    UpdateGrowthRequest:
+      type: object
+      description: |
+        All fields optional. Omitted fields are left unchanged. Each
+        measurement can be explicitly cleared via its companion
+        `clear_*_g` / `clear_*_cm` boolean. The "at least one non-NULL
+        measurement" invariant is enforced after the merge: if a clear
+        would empty the row, the server returns `422`. Send an empty
+        string for `notes` to clear it.
+      properties:
+        measured_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T07:00:00Z"
+        weight_g:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          exclusiveMaximum: 30000
+          example: 5400
+        clear_weight_g:
+          type: boolean
+          example: false
+        height_cm:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          exclusiveMaximum: 200
+          example: 58.5
+        clear_height_cm:
+          type: boolean
+          example: false
+        head_circumference_cm:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          exclusiveMaximum: 80
+          example: 39.2
+        clear_head_circumference_cm:
+          type: boolean
+          example: false
         notes:
           type: string
           example: "post-bath"

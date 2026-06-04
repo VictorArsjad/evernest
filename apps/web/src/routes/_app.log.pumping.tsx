@@ -1,17 +1,33 @@
 // Quick-log form for pumping sessions. Required: volume in ml. Optional:
 // duration in minutes (UI minutes -> stored as duration_seconds). Default
 // "When" is now; same focus-restamp behaviour as the other log forms.
+// In edit mode (`?edit=<uuid>`) the form patches an existing row and
+// exposes a Delete button for accidental double-logs.
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { useBabies, useCreatePumping, useHouseholds } from "../lib/queries";
+import {
+  useBabies,
+  useCreatePumping,
+  useDeletePumping,
+  useHouseholds,
+  useUpdatePumping,
+} from "../lib/queries";
 import { useActiveBaby } from "../lib/useActiveBaby";
-import { displayVolumeToMl, volumeUnitLabel } from "../lib/units";
+import type { Pumping } from "../lib/types";
+import {
+  displayVolumeToMl,
+  mlToDisplayVolume,
+  volumeUnitLabel,
+} from "../lib/units";
 import { usePreferences } from "../lib/usePreferences";
+import { DeleteEntryButton } from "./_app.log.bottle";
 
 const search = z.object({
   babyId: z.string().uuid().optional(),
+  edit: z.string().uuid().optional(),
 });
 
 export const Route = createFileRoute("/_app/log/pumping")({
@@ -25,34 +41,69 @@ function nowLocalDatetimeInput(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function isoToLocalDatetimeInput(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function localToISO(local: string): string {
   return new Date(local).toISOString();
 }
 
 function LogPumpingPage() {
   const nav = useNavigate();
-  const { babyId: babyIdFromSearch } = Route.useSearch();
+  const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
   const babies = useBabies(householdId);
   const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
   const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
 
+  const isEditMode = !!editId;
+  const qc = useQueryClient();
+  const existing: Pumping | null = useMemo(() => {
+    if (!editId || !babyId) return null;
+    const lists = qc.getQueriesData<Pumping[] | undefined>({
+      queryKey: ["babies", babyId, "pumpings"],
+    }) as Array<[unknown, Pumping[] | undefined]>;
+    return (
+      lists.flatMap(([, list]) => list ?? []).find((r) => r.id === editId) ?? null
+    );
+  }, [qc, editId, babyId]);
+
   const [amount, setAmount] = useState("");
   const [durationMin, setDurationMin] = useState("");
   const [occurredLocal, setOccurredLocal] = useState(nowLocalDatetimeInput);
   const [notes, setNotes] = useState("");
 
-  useEffect(() => {
-    const onFocus = () => setOccurredLocal(nowLocalDatetimeInput());
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, []);
-
   const create = useCreatePumping();
+  const update = useUpdatePumping();
+  const del = useDeletePumping();
   const { prefs } = usePreferences(babyId);
   const volLabel = volumeUnitLabel(prefs.unit_volume);
   const maxDisplay = prefs.unit_volume === "oz" ? 70 : 2000;
+
+  const prefilledRef = useRef(false);
+  useEffect(() => {
+    if (!isEditMode || prefilledRef.current || !existing) return;
+    setAmount(String(mlToDisplayVolume(Number(existing.amount_ml), prefs.unit_volume)));
+    setDurationMin(
+      existing.duration_seconds != null
+        ? String(Math.round(Number(existing.duration_seconds) / 60))
+        : "",
+    );
+    setOccurredLocal(isoToLocalDatetimeInput(existing.occurred_at));
+    setNotes(existing.notes ?? "");
+    prefilledRef.current = true;
+  }, [isEditMode, existing, prefs.unit_volume]);
+
+  useEffect(() => {
+    if (isEditMode) return;
+    const onFocus = () => setOccurredLocal(nowLocalDatetimeInput());
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [isEditMode]);
 
   const amountNum = useMemo(() => Number.parseFloat(amount), [amount]);
   const isAmountValid =
@@ -61,16 +112,36 @@ function LogPumpingPage() {
   const isDurationValid =
     durationMin === "" || (Number.isFinite(durationMinNum) && durationMinNum >= 0 && durationMinNum <= 360);
 
+  const pending = isEditMode ? update.isPending : create.isPending;
+  const errorMsg = isEditMode ? update.error?.message : create.error?.message;
+  const hadError = isEditMode ? update.isError : create.isError;
+
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!babyId || !isAmountValid || !isDurationValid) return;
+    const amount_ml = displayVolumeToMl(amountNum, prefs.unit_volume);
+    const duration_seconds =
+      durationMin === "" ? undefined : Math.round(durationMinNum * 60);
+    if (isEditMode && editId) {
+      update.mutate(
+        {
+          id: editId,
+          babyId,
+          occurred_at: localToISO(occurredLocal),
+          amount_ml,
+          duration_seconds,
+          notes: notes.trim(),
+        },
+        { onSuccess: () => nav({ to: "/" }) },
+      );
+      return;
+    }
     create.mutate(
       {
         babyId,
         occurred_at: localToISO(occurredLocal),
-        amount_ml: displayVolumeToMl(amountNum, prefs.unit_volume),
-        duration_seconds:
-          durationMin === "" ? undefined : Math.round(durationMinNum * 60),
+        amount_ml,
+        duration_seconds,
         notes: notes.trim() || undefined,
       },
       { onSuccess: () => nav({ to: "/" }) },
@@ -84,7 +155,9 @@ function LogPumpingPage() {
   return (
     <main className="flex flex-1 flex-col gap-4 p-5">
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Log pumping</h1>
+        <h1 className="text-2xl font-semibold">
+          {isEditMode ? "Edit pumping" : "Log pumping"}
+        </h1>
         <button onClick={() => nav({ to: "/" })} className="text-sm text-white/60">
           Cancel
         </button>
@@ -152,17 +225,29 @@ function LogPumpingPage() {
           />
         </label>
 
-        {create.isError && (
-          <p className="text-sm text-red-400">{create.error?.message ?? "could not save"}</p>
+        {hadError && (
+          <p className="text-sm text-red-400">{errorMsg ?? "could not save"}</p>
         )}
 
         <button
           type="submit"
           className="btn-primary text-lg"
-          disabled={create.isPending || !isAmountValid || !isDurationValid}
+          disabled={pending || !isAmountValid || !isDurationValid}
         >
-          {create.isPending ? "Saving…" : "Save"}
+          {pending ? "Saving…" : isEditMode ? "Save changes" : "Save"}
         </button>
+
+        {isEditMode && editId && (
+          <DeleteEntryButton
+            pending={del.isPending}
+            onConfirm={() =>
+              del.mutate(
+                { id: editId, babyId },
+                { onSuccess: () => nav({ to: "/" }) },
+              )
+            }
+          />
+        )}
       </form>
     </main>
   );

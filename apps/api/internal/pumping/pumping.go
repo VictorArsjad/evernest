@@ -1,7 +1,8 @@
 // Package pumping implements CRUD for pumping sessions (mother expressing
 // milk; no baby is "fed" here, we just track the volume + optional duration).
-// Same shape as bottlefeed/diaper: POST/GET/DELETE, UUIDv7 client-id
-// idempotency, baby-membership authz.
+// Same shape as bottlefeed/diaper: POST/GET/PATCH/DELETE, UUIDv7 client-id
+// idempotency, baby-membership authz. PATCH is partial; see bottlefeed for
+// the contract.
 package pumping
 
 import (
@@ -52,6 +53,7 @@ func (h *Handler) BabyRoutes(r chi.Router) {
 
 // ItemRoutes mounts under /v1/pumpings/{id}.
 func (h *Handler) ItemRoutes(r chi.Router) {
+	r.Patch("/", h.update)
 	r.Delete("/", h.delete)
 }
 
@@ -160,6 +162,76 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, p)
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// updateReq is the PATCH body. All fields optional. duration_seconds and
+// notes both follow the "send sentinel to clear" convention (empty string
+// for notes; for duration_seconds we don't allow clearing since the field
+// is genuinely optional at create-time — if the user wants to remove a
+// duration they edited in by accident they can delete and re-log).
+type updateReq struct {
+	OccurredAt      *time.Time `json:"occurred_at,omitempty"`
+	AmountML        *float64   `json:"amount_ml,omitempty" validate:"omitempty,gte=0,lte=2000"`
+	DurationSeconds *int       `json:"duration_seconds,omitempty" validate:"omitempty,gte=0,lte=21600"`
+	Notes           *string    `json:"notes,omitempty"`
+}
+
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	uid := auth.UserIDFrom(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var babyID uuid.UUID
+	err = h.store.Pool.QueryRow(r.Context(), `SELECT baby_id FROM pumpings WHERE id = $1`, id).Scan(&babyID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "pumping not found")
+		return
+	}
+	if err != nil {
+		h.logger.Error("lookup pumping", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "lookup failed")
+		return
+	}
+	if _, err := baby.MustOwnBaby(r.Context(), h.store, uid, babyID); err != nil {
+		writeBabyAuthErr(w, err)
+		return
+	}
+
+	var req updateReq
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := h.v.Struct(req); err != nil {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+		return
+	}
+
+	notesPresent := req.Notes != nil
+	var notesValue string
+	if notesPresent {
+		notesValue = *req.Notes
+	}
+
+	var out Pumping
+	err = h.store.Pool.QueryRow(r.Context(), `
+		UPDATE pumpings SET
+			occurred_at      = COALESCE($2, occurred_at),
+			amount_ml        = COALESCE($3, amount_ml),
+			duration_seconds = COALESCE($4, duration_seconds),
+			notes            = CASE WHEN $5::boolean THEN NULLIF($6, '') ELSE notes END
+		WHERE id = $1
+		RETURNING id, baby_id, occurred_at, amount_ml, duration_seconds, notes, source, created_at
+	`, id, req.OccurredAt, req.AmountML, req.DurationSeconds, notesPresent, notesValue).
+		Scan(&out.ID, &out.BabyID, &out.OccurredAt, &out.AmountML, &out.DurationSeconds, &out.Notes, &out.Source, &out.CreatedAt)
+	if err != nil {
+		h.logger.Error("update pumping", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not update pumping")
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
