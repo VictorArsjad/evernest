@@ -138,6 +138,11 @@ The merged prod overlay (`docker-compose.yml` + `docker-compose.prod.yml`) remai
 what CI uses on deploy; set `EVERNEST_API_IMAGE` in `.env` to pin a SHA instead of
 `:latest`.
 
+### Experimental: Portainer API homelab CI
+
+Opt-in alternative that redeploys via Portainer’s API (no SSH, no git clone on
+the host). Disabled by default — see [homelab-ci-experimental.md](./homelab-ci-experimental.md).
+
 ## What CI cannot verify
 
 These only work after a real push to `master`:

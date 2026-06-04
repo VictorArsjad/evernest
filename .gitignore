@@ -27,6 +27,9 @@ go.work.sum
 # env file
 .env
 .env.local
+# CP7 home-server env carries real TS_AUTHKEY / JWT_SECRET / DB password —
+# the `.example` sibling is the one that should land in the repo.
+infra/.env.homeserver
 
 # Editor/IDE
 # .idea/
