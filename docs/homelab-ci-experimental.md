@@ -76,21 +76,25 @@ Note the numeric **stack Id** and **endpoint Id**.
 
 ### 3. GitHub repo configuration
 
-**Variable** (Settings → Secrets and variables → Actions → Variables):
+The split between `vars` and `secrets` follows what's actually sensitive: the
+API key (and optional git PAT) live in `secrets`; the URL and IDs live in
+`vars` so they're visible in the Actions UI for debugging.
+
+**Variables** (Settings → Secrets and variables → Actions → Variables):
 
 | Name | Value |
 |---|---|
-| `HOMELAB_DEPLOY_ENABLED` | `true` when ready (leave unset/false while testing) |
-
-**Secrets:**
-
-| Secret | Purpose |
-|---|---|
-| `TS_OAUTH_CLIENT_ID` / `TS_OAUTH_SECRET` | Same as prod — runner joins tailnet to reach Portainer |
+| `HOMELAB_DEPLOY_ENABLED` | `true` when ready (leave unset/`false` while testing) |
 | `PORTAINER_URL` | Base URL, tailnet-reachable (e.g. `https://ubuntu.<tail>.ts.net:9443`) |
-| `PORTAINER_API_KEY` | Access token (`ptr_...`) |
 | `PORTAINER_STACK_ID` | Numeric stack id |
 | `PORTAINER_ENDPOINT_ID` | Numeric endpoint id (usually `1`) |
+
+**Secrets** (Settings → Secrets and variables → Actions → Secrets):
+
+| Name | Purpose |
+|---|---|
+| `TS_OAUTH_CLIENT_ID` / `TS_OAUTH_SECRET` | Same as prod — runner joins tailnet to reach Portainer |
+| `PORTAINER_API_KEY` | Access token (`ptr_...`) |
 | `PORTAINER_GIT_TOKEN` | Optional — GitHub PAT if Portainer stack pulls a private repo |
 
 **Important:** while experimenting, keep `HOMELAB_DEPLOY_ENABLED` false (or

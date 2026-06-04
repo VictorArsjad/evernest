@@ -96,17 +96,20 @@ jobs:
 
       - name: portainer git redeploy
         env:
-          PORTAINER_URL: ${{ secrets.PORTAINER_URL }}
+          # URL, stack id, and endpoint id aren't sensitive (URL is tailnet-only,
+          # ids are inert without the API key) so they live in `vars` for
+          # auditability. Only the API key + optional git PAT are secrets.
+          PORTAINER_URL: ${{ vars.PORTAINER_URL }}
+          PORTAINER_STACK_ID: ${{ vars.PORTAINER_STACK_ID }}
+          PORTAINER_ENDPOINT_ID: ${{ vars.PORTAINER_ENDPOINT_ID }}
           PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
-          PORTAINER_STACK_ID: ${{ secrets.PORTAINER_STACK_ID }}
-          PORTAINER_ENDPOINT_ID: ${{ secrets.PORTAINER_ENDPOINT_ID }}
           PORTAINER_GIT_TOKEN: ${{ secrets.PORTAINER_GIT_TOKEN }}
           DEPLOYED_SHA: ${{ needs.build-push.outputs.sha_tag }}
         run: |
           set -euo pipefail
           for v in PORTAINER_URL PORTAINER_API_KEY PORTAINER_STACK_ID PORTAINER_ENDPOINT_ID; do
             if [ -z "${!v:-}" ]; then
-              echo "::error::$v secret is not set — see docs/homelab-ci-experimental.md"
+              echo "::error::$v is empty — check repo vars (URL/STACK_ID/ENDPOINT_ID) and secrets (API_KEY); see docs/homelab-ci-experimental.md"
               exit 1
             fi
           done
