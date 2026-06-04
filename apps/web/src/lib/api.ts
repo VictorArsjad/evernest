@@ -1,12 +1,21 @@
 // Typed fetch wrapper.
 //
 // Behavior:
-// - Includes `credentials: 'include'` so the refresh cookie is sent.
 // - Attaches the in-memory access token as `Authorization: Bearer ...`.
 // - On a 401 from a non-/auth request, attempts a single refresh and retries
 //   the original request once. If refresh fails, clears auth state.
 // - Throws `ApiError` (with the server's error envelope when present) on
 //   non-2xx responses so TanStack Query treats them as errors.
+//
+// Refresh-token transport: the token is persisted in localStorage by
+// authStore (see authStore.ts header comment) and sent in the body of
+// /v1/auth/refresh + /v1/auth/logout. iOS Safari ITP blocks cross-site
+// cookies between github.io and our ts.net API, which used to log users
+// out every ~15min. For migration safety, if localStorage is empty we
+// fall through to a single `credentials: 'include'` refresh call so a
+// user with the legacy cookie still gets a clean upgrade on first page
+// load post-deploy. Once the cookie path is removed BE-side we can drop
+// the fallback here too.
 //
 // CP6b adds `apiQueued()` as the mutation seam: on network failure / 5xx
 // it enqueues the mutation into the offline outbox and resolves with a
@@ -56,10 +65,22 @@ async function tryRefresh(): Promise<TokenResponse | null> {
   if (!refreshInflight) {
     refreshInflight = (async () => {
       try {
-        const res = await fetch(`${BASE}/auth/refresh`, {
-          method: "POST",
-          credentials: "include",
-        });
+        const stored = useAuthStore.getState().refreshToken;
+        // Prefer the body-based call. If localStorage is empty (first
+        // boot post-deploy with only the legacy cookie), fall back to
+        // credentials:'include' with an empty body so the BE picks the
+        // cookie up and we get migrated to localStorage on success.
+        const init: RequestInit = stored
+          ? {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refresh_token: stored }),
+            }
+          : {
+              method: "POST",
+              credentials: "include",
+            };
+        const res = await fetch(`${BASE}/auth/refresh`, init);
         if (!res.ok) return null;
         const data = (await res.json()) as TokenResponse;
         useAuthStore.getState().setSession(data);
@@ -88,7 +109,6 @@ export async function api<T>(path: string, opts: RequestOpts = {}): Promise<T> {
     return fetch(`${BASE}${path}`, {
       method,
       headers,
-      credentials: "include",
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
     });

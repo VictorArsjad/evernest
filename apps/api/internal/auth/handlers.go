@@ -1,10 +1,30 @@
 // Package auth implements user registration, login, refresh, logout and the
-// /me endpoint. The refresh token lives in an httpOnly cookie; the access
-// token is returned in the JSON body so the client can put it in memory.
+// /me endpoint.
+//
+// Both access and refresh tokens are returned in the JSON body. The access
+// token is short-lived (memory only on the client); the refresh token is
+// long-lived and the client persists it itself (e.g. localStorage on web).
+//
+// For backwards compatibility with clients written when the refresh token
+// lived in an httpOnly cookie, every /register, /login, and /refresh response
+// also sets the legacy `evernest_refresh` cookie, and /refresh + /logout
+// fall back to the cookie when no refresh_token is present in the body.
+// Both the cookie code and the fallback are slated for removal once the
+// front-end has fully migrated (see docs/api.openapi.yaml).
+//
+// Why we moved off the cookie: when the FE and API live on different
+// registrable domains (FE on github.io, API on a Tailscale ts.net host),
+// Safari's ITP treats the refresh cookie as third-party and refuses to send
+// it on /v1/auth/refresh subresource requests — silently logging the user
+// out every time the 15-minute access token expires. Body + JS-managed
+// storage sidesteps that entirely; the refresh-token rotation chain in
+// sessions.go is what makes this safe (a re-used revoked token returns 401,
+// so a stolen refresh token is bounded to the next legitimate refresh).
 package auth
 
 import (
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -55,9 +75,20 @@ type loginReq struct {
 }
 
 type tokenResp struct {
-	AccessToken string    `json:"access_token"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	User        User      `json:"user"`
+	AccessToken      string    `json:"access_token"`
+	ExpiresAt        time.Time `json:"expires_at"`
+	RefreshToken     string    `json:"refresh_token"`
+	RefreshExpiresAt time.Time `json:"refresh_expires_at"`
+	User             User      `json:"user"`
+}
+
+// refreshReq is the optional JSON body for /v1/auth/{refresh,logout}. When
+// omitted (or when refresh_token is empty) the handler falls back to the
+// httpOnly cookie for backwards compatibility with clients that haven't yet
+// migrated. New clients SHOULD send the body and ignore the cookie entirely
+// — see the package doc above.
+type refreshReq struct {
+	RefreshToken string `json:"refresh_token"`
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
@@ -123,12 +154,16 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie(refreshCookieName)
+	token, err := readRefreshToken(r)
 	if err != nil {
-		httpx.WriteError(w, http.StatusUnauthorized, "no_refresh_cookie", "no refresh cookie")
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	rec, err := LookupRefreshToken(r.Context(), h.store, cookie.Value)
+	if token == "" {
+		httpx.WriteError(w, http.StatusUnauthorized, "no_refresh_token", "no refresh token")
+		return
+	}
+	rec, err := LookupRefreshToken(r.Context(), h.store, token)
 	if errors.Is(err, ErrRefreshTokenInvalid) {
 		http.SetCookie(w, expiredRefreshCookie(h.cfg))
 		httpx.WriteError(w, http.StatusUnauthorized, "invalid_refresh", "refresh token invalid")
@@ -150,11 +185,38 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie(refreshCookieName); err == nil {
-		_ = RevokeRefreshToken(r.Context(), h.store, cookie.Value)
+	token, err := readRefreshToken(r)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if token != "" {
+		_ = RevokeRefreshToken(r.Context(), h.store, token)
 	}
 	http.SetCookie(w, expiredRefreshCookie(h.cfg))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// readRefreshToken returns the refresh token from either the JSON request
+// body (preferred) or the legacy httpOnly cookie (fallback for unmigrated
+// clients). An empty string return value means "no token presented" — the
+// caller decides whether that's an error (refresh) or a no-op (logout).
+//
+// A non-nil error here means the request body was syntactically broken
+// (malformed JSON, unknown fields), which is a 400, not a 401 — different
+// from "no token presented".
+func readRefreshToken(r *http.Request) (string, error) {
+	var body refreshReq
+	if err := httpx.DecodeJSON(r, &body); err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	if body.RefreshToken != "" {
+		return body.RefreshToken, nil
+	}
+	if cookie, err := r.Cookie(refreshCookieName); err == nil {
+		return cookie.Value, nil
+	}
+	return "", nil
 }
 
 // Me handles GET /v1/me. Mount it under a router with RequireUser.
@@ -168,9 +230,10 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, u)
 }
 
-// issueAndRespond issues an access token + a rotated refresh cookie and writes
-// the token response. parentRefreshID, if non-nil, is the prior refresh token
-// being rotated (used by /refresh).
+// issueAndRespond issues a fresh access token + a rotated refresh token and
+// writes both to the JSON body. It also still sets the legacy refresh cookie
+// for backwards compatibility (see package doc). parentRefreshID, if
+// non-nil, is the prior refresh token being rotated (used by /refresh).
 func (h *Handler) issueAndRespond(w http.ResponseWriter, r *http.Request, user User, parentRefreshID *uuid.UUID, status int) {
 	access, accessExp, err := IssueAccessToken(h.cfg.JWTSecret, user.ID, h.cfg.AccessTokenTTL)
 	if err != nil {
@@ -199,9 +262,11 @@ func (h *Handler) issueAndRespond(w http.ResponseWriter, r *http.Request, user U
 	})
 
 	httpx.WriteJSON(w, status, tokenResp{
-		AccessToken: access,
-		ExpiresAt:   accessExp,
-		User:        user,
+		AccessToken:      access,
+		ExpiresAt:        accessExp,
+		RefreshToken:     refresh,
+		RefreshExpiresAt: refreshExp,
+		User:             user,
 	})
 }
 
