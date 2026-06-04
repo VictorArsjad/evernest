@@ -7,8 +7,13 @@ info:
     identifier: MIT
   description: |
     Baby tracking backend. All requests/responses are JSON. All authenticated
-    endpoints require `Authorization: Bearer <access_token>`; the refresh
-    token lives in an `httpOnly` cookie scoped to `/v1/auth`.
+    endpoints require `Authorization: Bearer <access_token>`. The refresh
+    token is returned in the JSON body of `/v1/auth/{register,login,refresh}`
+    and the client persists it itself (e.g. `localStorage`); it is passed
+    back in the body of `/v1/auth/{refresh,logout}`. The legacy
+    `evernest_refresh` `httpOnly` cookie is still set and still accepted as
+    a fallback during a migration window — see the `RefreshRequest` and
+    `refreshCookie` schemas — but new clients should ignore the cookie.
 
     ## Idempotency
 
@@ -125,9 +130,10 @@ paths:
       operationId: registerUser
       summary: Register a new user
       description: |
-        Creates a user, seeds their `user_preferences` row, issues an access
-        token in the JSON body, and sets a refresh cookie scoped to
-        `/v1/auth`.
+        Creates a user, seeds their `user_preferences` row, and issues both
+        access and refresh tokens in the JSON body. Also sets the legacy
+        `evernest_refresh` cookie scoped to `/v1/auth` for backwards
+        compatibility (slated for removal — see API description).
       security: []
       requestBody:
         required: true
@@ -137,7 +143,7 @@ paths:
               $ref: "#/components/schemas/RegisterRequest"
       responses:
         "201":
-          description: User created. Access token in body, refresh cookie set.
+          description: User created. Access and refresh tokens in body; legacy refresh cookie also set.
           headers:
             Set-Cookie:
               $ref: "#/components/headers/RefreshCookie"
@@ -176,7 +182,7 @@ paths:
               $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
-          description: Authenticated. Access token in body, refresh cookie set.
+          description: Authenticated. Access and refresh tokens in body; legacy refresh cookie also set.
           headers:
             Set-Cookie:
               $ref: "#/components/headers/RefreshCookie"
@@ -207,15 +213,22 @@ paths:
       operationId: refreshToken
       summary: Rotate the refresh token and issue a new access token
       description: |
-        Reads the `evernest_refresh` cookie, rotates it (the previous token is
-        marked replaced), and issues a fresh access token. If the refresh
-        cookie is missing or invalid the server clears the cookie and
-        responds with `401`.
+        Reads the refresh token from the request body (preferred) or, for
+        backwards compatibility, the legacy `evernest_refresh` cookie.
+        Rotates it (the previous token is marked replaced) and issues a
+        fresh access token. If the refresh token is missing or invalid the
+        server clears the legacy cookie and responds with `401`.
       security:
         - refreshCookie: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
       responses:
         "200":
-          description: Refreshed. New access token in body, rotated refresh cookie set.
+          description: Refreshed. New access and refresh tokens in body; legacy refresh cookie also rotated.
           headers:
             Set-Cookie:
               $ref: "#/components/headers/RefreshCookie"
@@ -223,21 +236,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
-          description: No refresh cookie or the cookie's token is invalid/expired/revoked.
+          description: No refresh token presented (neither body nor cookie) or the token is invalid/expired/revoked.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               examples:
-                noCookie:
-                  summary: Missing refresh cookie
+                noToken:
+                  summary: Missing refresh token (no body, no cookie)
                   value:
                     error:
-                      code: no_refresh_cookie
-                      message: no refresh cookie
+                      code: no_refresh_token
+                      message: no refresh token
                 invalid:
-                  summary: Cookie present but token is invalid/expired/revoked
+                  summary: Token present but invalid/expired/revoked
                   value:
                     error:
                       code: invalid_refresh
@@ -251,14 +266,23 @@ paths:
       operationId: logout
       summary: Log out (revoke refresh token, clear cookie)
       description: |
-        Revokes the refresh token referenced by the cookie (best-effort; no
-        error if the cookie is missing or the token is already revoked) and
-        clears the cookie. Always responds `204`.
+        Revokes the refresh token from the request body (preferred) or the
+        legacy cookie (best-effort; no error if neither is present or the
+        token is already revoked) and clears the legacy cookie. Always
+        responds `204`.
       security:
         - refreshCookie: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
       responses:
         "204":
           description: Logged out.
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   /v1/me:
     get:
@@ -1208,9 +1232,15 @@ components:
       in: cookie
       name: evernest_refresh
       description: |
+        DEPRECATED — accepted as a fallback during a migration window so
+        clients that pre-date the body-based refresh-token rollout keep
+        working. New clients should ignore this cookie and use the
+        `refresh_token` field in `TokenResponse` + `RefreshRequest`
+        instead.
+
         `httpOnly`, opaque (random) refresh token. Set by
-        `/v1/auth/{register,login,refresh}` and consumed by
-        `/v1/auth/{refresh,logout}`. Cookie path is `/v1/auth`.
+        `/v1/auth/{register,login,refresh}` and consumed (as a fallback)
+        by `/v1/auth/{refresh,logout}`. Cookie path is `/v1/auth`.
 
   headers:
     RefreshCookie:
@@ -1394,7 +1424,7 @@ components:
 
     TokenResponse:
       type: object
-      required: [access_token, expires_at, user]
+      required: [access_token, expires_at, refresh_token, refresh_expires_at, user]
       properties:
         access_token:
           type: string
@@ -1405,8 +1435,34 @@ components:
           format: date-time
           description: Access token expiry (RFC3339).
           example: "2026-05-26T11:34:56Z"
+        refresh_token:
+          type: string
+          description: |
+            Opaque refresh token. The client should persist it (e.g.
+            localStorage) and pass it back in the body of
+            `/v1/auth/refresh` and `/v1/auth/logout`. Rotated on every
+            refresh: re-using a previously-rotated token returns `401`.
+          example: 3hH7yXQ-W9o8u2OqYV7Pjd1z7n8Yk0lJ2Fb9JfXqXqI
+        refresh_expires_at:
+          type: string
+          format: date-time
+          description: Refresh token expiry (RFC3339). Defaults to 30 days.
+          example: "2026-06-25T11:34:56Z"
         user:
           $ref: "#/components/schemas/User"
+
+    RefreshRequest:
+      type: object
+      description: |
+        Request body for `/v1/auth/refresh` and `/v1/auth/logout`. The body
+        is optional during the cookie-deprecation period: if `refresh_token`
+        is omitted, the server falls back to the legacy `evernest_refresh`
+        cookie. New clients SHOULD always send the body.
+      properties:
+        refresh_token:
+          type: string
+          description: Opaque refresh token previously issued by the server.
+          example: 3hH7yXQ-W9o8u2OqYV7Pjd1z7n8Yk0lJ2Fb9JfXqXqI
 
     Household:
       type: object

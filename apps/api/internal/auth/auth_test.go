@@ -133,9 +133,11 @@ func (te *testEnv) doWithBearer(t *testing.T, method, path, token string, body a
 }
 
 type tokenResp struct {
-	AccessToken string    `json:"access_token"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	User        struct {
+	AccessToken      string    `json:"access_token"`
+	ExpiresAt        time.Time `json:"expires_at"`
+	RefreshToken     string    `json:"refresh_token"`
+	RefreshExpiresAt time.Time `json:"refresh_expires_at"`
+	User             struct {
 		ID          uuid.UUID `json:"id"`
 		Email       string    `json:"email"`
 		DisplayName string    `json:"display_name"`
@@ -173,12 +175,21 @@ func TestRegisterLoginMeRefreshLogout(t *testing.T) {
 	if registered.AccessToken == "" {
 		t.Fatal("register: empty access token")
 	}
+	if registered.RefreshToken == "" {
+		t.Fatal("register: empty refresh token in body")
+	}
+	if registered.RefreshExpiresAt.IsZero() {
+		t.Fatal("register: empty refresh_expires_at in body")
+	}
 	if registered.User.Email != email {
 		t.Fatalf("register: user.email = %q, want %q", registered.User.Email, email)
 	}
 	refreshCookieAfterRegister := cookieValueFor(te, "/v1/auth", "evernest_refresh")
 	if refreshCookieAfterRegister == "" {
-		t.Fatal("register: missing refresh cookie")
+		t.Fatal("register: missing refresh cookie (legacy compat)")
+	}
+	if refreshCookieAfterRegister != registered.RefreshToken {
+		t.Fatal("register: cookie value should match body refresh_token")
 	}
 
 	// --- /me with the access token ---
@@ -271,6 +282,162 @@ func TestRegisterLoginMeRefreshLogout(t *testing.T) {
 	})
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("refresh after logout: want 401, got %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+}
+
+// TestRefreshAndLogoutViaBody exercises the body-based refresh/logout path
+// (the path used by the new FE). The jar is disabled so the legacy cookie
+// fallback cannot rescue a request — anything that depends on body+token
+// must work standalone.
+func TestRefreshAndLogoutViaBody(t *testing.T) {
+	te := newTestEnv(t)
+	email := uniqueEmail()
+	password := "correct horse battery staple"
+
+	resp := te.do(t, "POST", "/v1/auth/register", map[string]any{
+		"email":        email,
+		"password":     password,
+		"display_name": "Body Test User",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register: want 201, got %d: %s", resp.StatusCode, readBody(resp))
+	}
+	var registered tokenResp
+	decodeJSON(t, resp, &registered)
+	if registered.RefreshToken == "" {
+		t.Fatal("register: missing refresh token in body")
+	}
+
+	// --- refresh via body, no cookie jar ---
+	resp = te.request(t, "POST", "/v1/auth/refresh",
+		map[string]any{"refresh_token": registered.RefreshToken},
+		reqOpts{disableJar: true},
+	)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("refresh via body: want 200, got %d: %s", resp.StatusCode, readBody(resp))
+	}
+	var refreshed tokenResp
+	decodeJSON(t, resp, &refreshed)
+	if refreshed.RefreshToken == "" {
+		t.Fatal("refresh via body: response missing rotated refresh token")
+	}
+	if refreshed.RefreshToken == registered.RefreshToken {
+		t.Fatal("refresh via body: refresh token must rotate")
+	}
+
+	// --- reusing the original (now revoked) refresh token via body -> 401 ---
+	resp = te.request(t, "POST", "/v1/auth/refresh",
+		map[string]any{"refresh_token": registered.RefreshToken},
+		reqOpts{disableJar: true},
+	)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("refresh with revoked body token: want 401, got %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	// --- logout via body revokes the rotated token ---
+	resp = te.request(t, "POST", "/v1/auth/logout",
+		map[string]any{"refresh_token": refreshed.RefreshToken},
+		reqOpts{disableJar: true},
+	)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("logout via body: want 204, got %d: %s", resp.StatusCode, readBody(resp))
+	}
+	_ = resp.Body.Close()
+
+	// --- using the post-logout token again -> 401 ---
+	resp = te.request(t, "POST", "/v1/auth/refresh",
+		map[string]any{"refresh_token": refreshed.RefreshToken},
+		reqOpts{disableJar: true},
+	)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("refresh after logout via body: want 401, got %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+}
+
+// TestRefreshNoTokenReturns401 confirms the "no body, no cookie" path is a
+// 401 with the new error code, not a 500 from JSON decode trouble.
+func TestRefreshNoTokenReturns401(t *testing.T) {
+	te := newTestEnv(t)
+	// Empty body, no cookie jar contents (fresh env).
+	resp := te.request(t, "POST", "/v1/auth/refresh", nil, reqOpts{disableJar: true})
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("refresh no token: want 401, got %d: %s", resp.StatusCode, readBody(resp))
+	}
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	decodeJSON(t, resp, &env)
+	if env.Error.Code != "no_refresh_token" {
+		t.Fatalf("refresh no token: want code no_refresh_token, got %q", env.Error.Code)
+	}
+}
+
+// TestRefreshBodyTakesPrecedenceOverCookie pins down which token gets
+// revoked when both sources are present. The body wins — that's what lets
+// a migrated FE reliably rotate even if a stale legacy cookie is still in
+// the browser's jar.
+func TestRefreshBodyTakesPrecedenceOverCookie(t *testing.T) {
+	te := newTestEnv(t)
+	email := uniqueEmail()
+
+	resp := te.do(t, "POST", "/v1/auth/register", map[string]any{
+		"email":        email,
+		"password":     "correct horse battery staple",
+		"display_name": "Precedence Test",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register: want 201, got %d: %s", resp.StatusCode, readBody(resp))
+	}
+	var first tokenResp
+	decodeJSON(t, resp, &first)
+
+	// Mint a second token by logging in again; the jar now holds the
+	// SECOND cookie, but we'll send the FIRST token in the body.
+	resp = te.do(t, "POST", "/v1/auth/login", map[string]any{
+		"email":    email,
+		"password": "correct horse battery staple",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login: want 200, got %d", resp.StatusCode)
+	}
+	var second tokenResp
+	decodeJSON(t, resp, &second)
+	if second.RefreshToken == first.RefreshToken {
+		t.Fatal("login should mint a distinct refresh token from register")
+	}
+
+	// Send body=first, cookie=second. Body should win → first gets revoked.
+	resp = te.do(t, "POST", "/v1/auth/refresh", map[string]any{
+		"refresh_token": first.RefreshToken,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("refresh body+cookie: want 200, got %d: %s", resp.StatusCode, readBody(resp))
+	}
+	_ = resp.Body.Close()
+
+	// Replaying the FIRST token via body -> 401 (revoked by the call above).
+	resp = te.request(t, "POST", "/v1/auth/refresh",
+		map[string]any{"refresh_token": first.RefreshToken},
+		reqOpts{disableJar: true},
+	)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("replaying first token: want 401, got %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	// The SECOND token (cookie source) should still be valid because the
+	// previous refresh consumed the BODY token, not the cookie.
+	resp = te.request(t, "POST", "/v1/auth/refresh",
+		map[string]any{"refresh_token": second.RefreshToken},
+		reqOpts{disableJar: true},
+	)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("second token still valid: want 200, got %d: %s", resp.StatusCode, readBody(resp))
 	}
 	_ = resp.Body.Close()
 }
