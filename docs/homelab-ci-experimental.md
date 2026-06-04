@@ -137,7 +137,8 @@ Minimal secret set per app: `PORTAINER_STACK_ID` (+ shared Portainer URL/key/end
 | Git pull fails in redeploy | Set `PORTAINER_GIT_TOKEN` secret; enable auth in Portainer stack |
 | Image not updating | Stack env must use `:latest` (or bump tag in Portainer); redeploy sends `repullImageAndRedeploy: true` |
 | Runner cannot reach Portainer | Expose Portainer on tailnet (MagicDNS); verify `PORTAINER_URL` |
-| Env vars wiped after redeploy | Never send partial `env` in the API body — this workflow omits `env` entirely so Portainer keeps UI-configured vars |
+| `failed to load the compose file : required variable X is missing a value` | Some Portainer versions deploy git stacks with an empty env if the redeploy body omits `env`. This workflow GETs the stack's current `Env` and echoes it back in the PUT to dodge that — verify with `curl .../api/stacks/{id} \| jq '.Env'` that the values are set in the UI |
+| Env vars wiped after redeploy | We pass `env` through verbatim from the stack's current state, so UI changes persist across redeploys. Don't add an arbitrary `env: []` anywhere upstream of the curl |
 | `curl: (60) SSL certificate problem` | Portainer's default cert is self-signed. The workflow uses `curl -k` since the runner is already on the tailnet; if you front Portainer with Tailscale serve (real cert), you can drop `-k` |
 
 ## Reference
