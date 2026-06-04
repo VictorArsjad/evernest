@@ -114,29 +114,58 @@ jobs:
             fi
           done
 
-          if [ -n "${PORTAINER_GIT_TOKEN:-}" ]; then
-            BODY=$(jq -n \
-              --arg user "${{ github.repository_owner }}" \
-              --arg pass "$PORTAINER_GIT_TOKEN" \
-              '{
-                repullImageAndRedeploy: true,
-                repositoryAuthentication: true,
-                repositoryUsername: $user,
-                repositoryPassword: $pass
-              }')
-          else
-            BODY='{"repullImageAndRedeploy": true, "repositoryAuthentication": false}'
-          fi
-
           # -k: Portainer ships with a self-signed TLS cert by default. We're
           # already on the tailnet (ephemeral runner joined above) so the
           # transport is encrypted end-to-end; skip CA validation rather than
           # stand up cert-fronting just for this one PUT. Revisit if/when
           # Portainer gets a real cert (e.g. Tailscale serve in front).
-          curl -fsSLk -X PUT \
+
+          # Fetch the stack's current Env array so we can echo it back to the
+          # redeploy. Some Portainer versions deploy git stacks with an empty
+          # env if you don't, which interpolates compose vars to "" and trips
+          # the `${POSTGRES_PASSWORD:?...}` style guards. Echoing through keeps
+          # Portainer's UI as the secret source of truth — CI never stores
+          # these values, just round-trips them.
+          ENV_JSON=$(curl -fsSLk \
+            "${PORTAINER_URL%/}/api/stacks/${PORTAINER_STACK_ID}" \
+            -H "X-API-Key: ${PORTAINER_API_KEY}" | jq '.Env // []')
+
+          if [ -n "${PORTAINER_GIT_TOKEN:-}" ]; then
+            BODY=$(jq -n \
+              --arg user "${{ github.repository_owner }}" \
+              --arg pass "$PORTAINER_GIT_TOKEN" \
+              --argjson env "$ENV_JSON" \
+              '{
+                repullImageAndRedeploy: true,
+                repositoryAuthentication: true,
+                repositoryUsername: $user,
+                repositoryPassword: $pass,
+                env: $env
+              }')
+          else
+            BODY=$(jq -n --argjson env "$ENV_JSON" \
+              '{
+                repullImageAndRedeploy: true,
+                repositoryAuthentication: false,
+                env: $env
+              }')
+          fi
+
+          # Don't use curl -f: we want the body on HTTP errors so future
+          # 4xx/5xx from Portainer surface in CI logs (this is how we learned
+          # about the missing-env-interp issue the first time).
+          STATUS=$(curl -sSLk -o /tmp/portainer-response -w "%{http_code}" -X PUT \
             "${PORTAINER_URL%/}/api/stacks/${PORTAINER_STACK_ID}/git/redeploy?endpointId=${PORTAINER_ENDPOINT_ID}" \
             -H "X-API-Key: ${PORTAINER_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "$BODY"
+            -d "$BODY")
 
-          echo "Portainer redeploy triggered for image tag ${DEPLOYED_SHA} (:latest on stack)"
+          if [ "$STATUS" -ge 400 ]; then
+            echo "::error::Portainer redeploy returned HTTP $STATUS"
+            echo "Response body:"
+            cat /tmp/portainer-response
+            echo
+            exit 1
+          fi
+
+          echo "Portainer redeploy triggered (HTTP $STATUS) for image tag ${DEPLOYED_SHA} (:latest on stack)"
