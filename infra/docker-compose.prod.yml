@@ -73,7 +73,8 @@ services:
       TS_USERSPACE: "false"
       TS_EXTRA_ARGS: --accept-dns=false
     healthcheck:
-      test: ["CMD", "tailscale", "status", "--peers=false"]
+      # See homeserver compose comment — image's socket lives at /tmp.
+      test: ["CMD", "tailscale", "--socket=/tmp/tailscaled.sock", "status", "--peers=false"]
       interval: 30s
       timeout: 5s
       retries: 5
