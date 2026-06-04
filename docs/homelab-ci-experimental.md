@@ -134,6 +134,7 @@ Minimal secret set per app: `PORTAINER_STACK_ID` (+ shared Portainer URL/key/end
 | Image not updating | Stack env must use `:latest` (or bump tag in Portainer); redeploy sends `repullImageAndRedeploy: true` |
 | Runner cannot reach Portainer | Expose Portainer on tailnet (MagicDNS); verify `PORTAINER_URL` |
 | Env vars wiped after redeploy | Never send partial `env` in the API body — this workflow omits `env` entirely so Portainer keeps UI-configured vars |
+| `curl: (60) SSL certificate problem` | Portainer's default cert is self-signed. The workflow uses `curl -k` since the runner is already on the tailnet; if you front Portainer with Tailscale serve (real cert), you can drop `-k` |
 
 ## Reference
 

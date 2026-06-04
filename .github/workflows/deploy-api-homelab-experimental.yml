@@ -125,7 +125,12 @@ jobs:
             BODY='{"repullImageAndRedeploy": true, "repositoryAuthentication": false}'
           fi
 
-          curl -fsSL -X PUT \
+          # -k: Portainer ships with a self-signed TLS cert by default. We're
+          # already on the tailnet (ephemeral runner joined above) so the
+          # transport is encrypted end-to-end; skip CA validation rather than
+          # stand up cert-fronting just for this one PUT. Revisit if/when
+          # Portainer gets a real cert (e.g. Tailscale serve in front).
+          curl -fsSLk -X PUT \
             "${PORTAINER_URL%/}/api/stacks/${PORTAINER_STACK_ID}/git/redeploy?endpointId=${PORTAINER_ENDPOINT_ID}" \
             -H "X-API-Key: ${PORTAINER_API_KEY}" \
             -H "Content-Type: application/json" \
