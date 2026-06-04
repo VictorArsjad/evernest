@@ -78,6 +78,17 @@ function removeFromList<T extends { id: string }>(
   });
 }
 
+// Multi-device sync cadence. Same account on N devices => caregivers
+// want a recent edit to show up across phones without manual reload.
+// We poll the per-baby lists at LIVE_LIST_REFETCH_MS, the open-nursing
+// single-row endpoint a touch faster (it drives a live "in progress"
+// chip), and lower-urgency / heavier payloads at HEAVY_REFETCH_MS.
+// `refetchIntervalInBackground: false` (set in main.tsx) ensures none
+// of these poll while the tab is hidden.
+const LIVE_LIST_REFETCH_MS = 15_000;
+const OPEN_NURSING_REFETCH_MS = 10_000;
+const HEAVY_REFETCH_MS = 5 * 60_000;
+
 export const qk = {
   me: ["me"] as const,
   households: ["households"] as const,
@@ -271,6 +282,7 @@ export function useBottleFeeds(babyId: string | null, from?: string, to?: string
   return useQuery({
     queryKey: babyId ? qk.bottleFeeds(babyId, from, to) : ["babies", "none", "bottle-feeds"],
     enabled: !!babyId,
+    refetchInterval: LIVE_LIST_REFETCH_MS,
     queryFn: () => {
       const params = new URLSearchParams();
       if (from) params.set("from", from);
@@ -405,6 +417,7 @@ export function useDiapers(babyId: string | null, from?: string, to?: string) {
   return useQuery({
     queryKey: babyId ? qk.diapers(babyId, from, to) : ["babies", "none", "diapers"],
     enabled: !!babyId,
+    refetchInterval: LIVE_LIST_REFETCH_MS,
     queryFn: () => {
       const params = new URLSearchParams();
       if (from) params.set("from", from);
@@ -523,6 +536,7 @@ export function usePumpings(babyId: string | null, from?: string, to?: string) {
   return useQuery({
     queryKey: babyId ? qk.pumpings(babyId, from, to) : ["babies", "none", "pumpings"],
     enabled: !!babyId,
+    refetchInterval: LIVE_LIST_REFETCH_MS,
     queryFn: () => {
       const params = new URLSearchParams();
       if (from) params.set("from", from);
@@ -648,6 +662,7 @@ export function useNursings(babyId: string | null, from?: string, to?: string) {
   return useQuery({
     queryKey: babyId ? qk.nursings(babyId, from, to) : ["babies", "none", "nursing-sessions"],
     enabled: !!babyId,
+    refetchInterval: LIVE_LIST_REFETCH_MS,
     queryFn: () => {
       const params = new URLSearchParams();
       if (from) params.set("from", from);
@@ -726,6 +741,9 @@ export function useOpenNursing(babyId: string | null) {
   return useQuery({
     queryKey: babyId ? qk.openNursing(babyId) : ["babies", "none", "nursing-sessions", "open"],
     enabled: !!babyId,
+    // Kept faster than the list refetch so a partner ending the
+    // session on another device clears the in-progress tile quickly.
+    refetchInterval: OPEN_NURSING_REFETCH_MS,
     queryFn: async () => {
       const data = await api<Nursing | undefined>(`/babies/${babyId}/nursing-sessions/open`);
       return data ?? null;
@@ -890,6 +908,7 @@ export function useGrowths(babyId: string | null, from?: string, to?: string) {
   return useQuery({
     queryKey: babyId ? qk.growths(babyId, from, to) : ["babies", "none", "growths"],
     enabled: !!babyId,
+    refetchInterval: HEAVY_REFETCH_MS,
     queryFn: () => {
       const params = new URLSearchParams();
       if (from) params.set("from", from);
@@ -1113,6 +1132,7 @@ export function useDailyCharts(
       ? qk.chartsDaily(babyId as string, from as string, to as string, tz)
       : ["babies", "none", "charts", "daily"],
     enabled,
+    refetchInterval: HEAVY_REFETCH_MS,
     queryFn: () => {
       const params = new URLSearchParams({
         from: from as string,

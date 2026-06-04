@@ -17,7 +17,16 @@ const queryClient = new QueryClient({
         if (status === 401 || status === 403) return false;
         return count < 1;
       },
-      refetchOnWindowFocus: false,
+      // Multi-device sync: when the user comes back to the PWA on
+      // device B after logging on device A, refetch so the list shows
+      // the new entry without manual reload. The schema is idempotent
+      // (client-generated UUIDs + ON CONFLICT DO NOTHING) so a refetch
+      // racing an in-flight write is safe.
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
+      // Per-query `refetchInterval`s (see queries.ts) only fire while
+      // the tab is visible — no battery/network spend on hidden tabs.
+      refetchIntervalInBackground: false,
       staleTime: 30_000,
     },
     mutations: { retry: 0 },
