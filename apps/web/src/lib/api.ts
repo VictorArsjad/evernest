@@ -61,6 +61,22 @@ const BASE = `${API_ROOT}/v1`;
 
 let refreshInflight: Promise<TokenResponse | null> | null = null;
 
+// ensureFreshToken refreshes the access token preemptively when it's
+// within EXPIRY_BUFFER_MS of expiring. Eliminates the 401 burst when
+// the warm PWA is refocused after >15 min idle and refetchOnWindowFocus
+// fires the whole query set at once with a stale JWT. Uses the same
+// single-flight as tryRefresh() so N concurrent callers cause exactly
+// one refresh round-trip.
+const EXPIRY_BUFFER_MS = 60_000;
+
+async function ensureFreshToken(): Promise<void> {
+  const { accessToken, expiresAt, refreshToken } = useAuthStore.getState();
+  if (!accessToken || !refreshToken || !expiresAt) return;
+  const msUntil = new Date(expiresAt).getTime() - Date.now();
+  if (msUntil > EXPIRY_BUFFER_MS) return;
+  await tryRefresh();
+}
+
 async function tryRefresh(): Promise<TokenResponse | null> {
   if (!refreshInflight) {
     refreshInflight = (async () => {
@@ -113,6 +129,10 @@ export async function api<T>(path: string, opts: RequestOpts = {}): Promise<T> {
       signal,
     });
   };
+
+  if (!skipAuth && !path.startsWith("/auth/")) {
+    await ensureFreshToken();
+  }
 
   let res = await doFetch(skipAuth ? null : useAuthStore.getState().accessToken);
 
