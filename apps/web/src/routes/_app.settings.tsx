@@ -13,6 +13,14 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useAuthStore } from "../lib/authStore";
 import {
+  FEATURE_KEYS,
+  FEATURE_LABELS,
+  isFeatureVisible,
+  setFeatureVisibility,
+  type FeatureKey,
+  type FeatureVisibilityMap,
+} from "../lib/featureVisibility";
+import {
   PRESET_LABELS,
   PRESET_NAMES,
   PRESETS,
@@ -117,6 +125,19 @@ function SettingsPage() {
           </p>
         ) : (
           <TodayBannerFields prefs={me.data} disabled={!me.data} />
+        )}
+      </section>
+
+      <section className="card flex flex-col gap-4 p-5">
+        <header>
+          <h2 className="text-base font-semibold">Visible features</h2>
+        </header>
+        {me.isError ? (
+          <p className="text-sm text-red-400">
+            {me.error?.message ?? "Could not load your preferences."}
+          </p>
+        ) : (
+          <FeatureVisibilityFields prefs={me.data} disabled={!me.data} />
         )}
       </section>
 
@@ -487,6 +508,7 @@ function UserTimeFields({
         locale: prefs.locale,
         show_recommended_targets: prefs.show_recommended_targets,
         chart_palette: prefs.chart_palette,
+        feature_visibility: prefs.feature_visibility,
       },
       { onSuccess: () => setSavedTick((t) => t + 1) },
     );
@@ -547,6 +569,7 @@ function TodayBannerFields({
         locale: prefs.locale,
         show_recommended_targets: next,
         chart_palette: prefs.chart_palette,
+        feature_visibility: prefs.feature_visibility,
       },
       { onSuccess: () => setSavedTick((t) => t + 1) },
     );
@@ -578,6 +601,177 @@ function TodayBannerFields({
         pending={update.isPending}
         error={update.error?.message ?? null}
       />
+    </div>
+  );
+}
+
+// --- feature visibility toggles ---
+
+// FeatureVisibilityFields surfaces the per-user "Visible features" card:
+// one toggle per event kind (bottle / nursing / pumping / diaper / growth)
+// that controls whether the kind's BannerStat cell, action Tile, and
+// /charts ChartCard render.
+//
+// Toggle ON saves immediately (silent — same affordance as the other
+// settings on this page). Toggle OFF stages the change and opens a
+// confirm modal that reassures the user no data is destroyed; only on
+// confirm do we call useUpdateMyPreferences. This matches the user's
+// explicit ask: "when turned off, show a popup to confirm action; mention
+// data will not be lost (only UI changes)".
+//
+// Storage is sparse — visible features are stripped from the map so a
+// fully-default user always serializes back to {}. See
+// lib/featureVisibility.ts.
+function FeatureVisibilityFields({
+  prefs,
+  disabled,
+}: {
+  prefs: UserPreferences | undefined;
+  disabled: boolean;
+}) {
+  const update = useUpdateMyPreferences();
+  const [savedTick, setSavedTick] = useState(0);
+  const [showSaved, setShowSaved] = useState(false);
+  useEffect(() => {
+    if (savedTick === 0) return;
+    setShowSaved(true);
+    const id = window.setTimeout(() => setShowSaved(false), 1800);
+    return () => window.clearTimeout(id);
+  }, [savedTick]);
+
+  // Pending hide is the staged "user clicked the toggle off" state. We
+  // don't save until the user confirms — clicking Cancel returns the
+  // checkbox to its prior state without a network round trip.
+  const [pendingHide, setPendingHide] = useState<FeatureKey | null>(null);
+
+  const visibility = prefs?.feature_visibility ?? {};
+
+  const save = (next: FeatureVisibilityMap) => {
+    if (!prefs) return;
+    update.mutate(
+      {
+        time_format: prefs.time_format,
+        timezone: prefs.timezone,
+        locale: prefs.locale,
+        show_recommended_targets: prefs.show_recommended_targets,
+        chart_palette: prefs.chart_palette,
+        feature_visibility: next,
+      },
+      { onSuccess: () => setSavedTick((t) => t + 1) },
+    );
+  };
+
+  const onChange = (key: FeatureKey, nextVisible: boolean) => {
+    if (!prefs) return;
+    if (nextVisible) {
+      // Re-enabling is non-destructive — save without a confirm step.
+      save(setFeatureVisibility(visibility, key, true));
+    } else {
+      setPendingHide(key);
+    }
+  };
+
+  const onConfirmHide = () => {
+    if (!pendingHide) return;
+    save(setFeatureVisibility(visibility, pendingHide, false));
+    setPendingHide(null);
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <ul className="flex flex-col gap-2">
+        {FEATURE_KEYS.map((key) => {
+          const visible = isFeatureVisible(visibility, key);
+          return (
+            <li
+              key={key}
+              className="flex items-center justify-between gap-3 rounded-xl bg-bg-subtle px-3 py-2"
+            >
+              <span className="text-sm font-medium">{FEATURE_LABELS[key]}</span>
+              <input
+                type="checkbox"
+                aria-label={`Show ${FEATURE_LABELS[key]}`}
+                disabled={disabled || update.isPending}
+                checked={visible}
+                onChange={(e) => onChange(key, e.target.checked)}
+                className="h-5 w-5 shrink-0 cursor-pointer rounded border-white/20 bg-bg-surface text-accent accent-accent focus:ring-2 focus:ring-accent disabled:opacity-50"
+              />
+            </li>
+          );
+        })}
+      </ul>
+      <p className="text-[11px] text-white/40">
+        Hiding a feature only changes what you see — past entries and totals
+        are kept.
+      </p>
+      <SaveAffordance
+        show={showSaved}
+        pending={update.isPending}
+        error={update.error?.message ?? null}
+      />
+      {pendingHide && (
+        <ConfirmHideModal
+          featureKey={pendingHide}
+          pending={update.isPending}
+          onCancel={() => setPendingHide(null)}
+          onConfirm={onConfirmHide}
+        />
+      )}
+    </div>
+  );
+}
+
+// ConfirmHideModal mirrors the EndNursingModal layout used elsewhere in
+// the app: full-screen dim backdrop on phones, centered card on `sm:`,
+// safe-area-aware bottom padding so the action row clears the iOS home
+// indicator. Copy is intentionally brief — the help text under the
+// toggle list already explains the semantics; this dialog is the
+// confirmation gesture, not the explanation.
+function ConfirmHideModal({
+  featureKey,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  featureKey: FeatureKey;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const label = FEATURE_LABELS[featureKey];
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:items-center">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-hide-title"
+        className="w-full max-w-sm rounded-2xl border border-white/10 bg-bg-surface p-5 shadow-xl"
+      >
+        <h2 id="confirm-hide-title" className="text-lg font-semibold">
+          Hide {label}?
+        </h2>
+        <p className="mt-2 text-sm text-white/70">
+          Your data is kept — this only hides the UI.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={pending}
+            className="rounded-lg border border-white/10 px-4 py-2 text-sm text-white/80 hover:bg-white/5 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={pending}
+            className="rounded-lg bg-red-500/20 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-500/30 disabled:opacity-50"
+          >
+            {pending ? "Hiding…" : "Hide"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -630,6 +824,7 @@ function ChartColorsFields({
         locale: prefs.locale,
         show_recommended_targets: prefs.show_recommended_targets,
         chart_palette: next,
+        feature_visibility: prefs.feature_visibility,
       },
       { onSuccess: () => setSavedTick((t) => t + 1) },
     );

@@ -1,6 +1,7 @@
 // Server response types. We mirror the Go structs by hand here; later we
 // may generate from the OpenAPI spec.
 
+import type { FeatureVisibilityMap } from "./featureVisibility";
 import type { ChartPalette } from "./palette";
 
 export interface User {
@@ -167,6 +168,14 @@ export interface UserPreferences {
   // hard-coded fills — see lib/palette.ts for the resolve() helper that
   // flattens (preset, overrides) into a concrete color per series.
   chart_palette: ChartPalette;
+  // feature_visibility lets the user hide event kinds (bottle / nursing /
+  // pumping / diaper / growth) from the Today banner stats, the action
+  // tile grid, and the /charts cards. Stored sparsely as JSONB on
+  // user_preferences (migration 000009): a key only appears when
+  // explicitly hidden, e.g. {"bottle": false}. Missing key ⇒ visible.
+  // See lib/featureVisibility.ts for the helper used at every render
+  // surface.
+  feature_visibility: FeatureVisibilityMap;
   updated_at: string;
 }
 

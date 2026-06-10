@@ -169,13 +169,14 @@ type chartPalette struct {
 }
 
 type prefsResp struct {
-	UserID                 uuid.UUID    `json:"user_id"`
-	TimeFormat             string       `json:"time_format"`
-	Timezone               string       `json:"timezone"`
-	Locale                 string       `json:"locale"`
-	ShowRecommendedTargets bool         `json:"show_recommended_targets"`
-	ChartPalette           chartPalette `json:"chart_palette"`
-	UpdatedAt              time.Time    `json:"updated_at"`
+	UserID                 uuid.UUID       `json:"user_id"`
+	TimeFormat             string          `json:"time_format"`
+	Timezone               string          `json:"timezone"`
+	Locale                 string          `json:"locale"`
+	ShowRecommendedTargets bool            `json:"show_recommended_targets"`
+	ChartPalette           chartPalette    `json:"chart_palette"`
+	FeatureVisibility      map[string]bool `json:"feature_visibility"`
+	UpdatedAt              time.Time       `json:"updated_at"`
 }
 
 // defaultPalettePayload is the value the FE round-trips on a PUT when the
@@ -186,6 +187,12 @@ func defaultPalettePayload() map[string]any {
 		"preset":    "default",
 		"overrides": map[string]any{},
 	}
+}
+
+// defaultFeatureVisibilityPayload is the value the FE round-trips on a PUT
+// when the user hasn't hidden any features yet. Empty object = all visible.
+func defaultFeatureVisibilityPayload() map[string]any {
+	return map[string]any{}
 }
 
 func TestUserPreferences_GetReturnsDefaults(t *testing.T) {
@@ -212,16 +219,25 @@ func TestUserPreferences_GetReturnsDefaults(t *testing.T) {
 	if len(got.ChartPalette.Overrides) != 0 {
 		t.Fatalf("chart_palette overrides should be empty by default, got %+v", got.ChartPalette.Overrides)
 	}
+	// New users land with no features hidden — the column default is
+	// '{}' so every feature renders until the user explicitly hides one.
+	if got.FeatureVisibility == nil {
+		t.Fatalf("feature_visibility should be a non-nil empty map by default")
+	}
+	if len(got.FeatureVisibility) != 0 {
+		t.Fatalf("feature_visibility should be empty by default, got %+v", got.FeatureVisibility)
+	}
 }
 
 func TestUserPreferences_PutPersists(t *testing.T) {
 	te := newTestEnv(t)
 	// PUT to a non-default value, then GET back.
 	res := te.do(t, "PUT", "/v1/me/preferences", map[string]any{
-		"time_format":   "12h",
-		"timezone":      "Asia/Jakarta",
-		"locale":        "id",
-		"chart_palette": defaultPalettePayload(),
+		"time_format":        "12h",
+		"timezone":           "Asia/Jakarta",
+		"locale":             "id",
+		"chart_palette":      defaultPalettePayload(),
+		"feature_visibility": defaultFeatureVisibilityPayload(),
 	}, te.token)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("put prefs: %d %s", res.StatusCode, readBody(res))
@@ -263,6 +279,7 @@ func TestUserPreferences_PutShowTargets(t *testing.T) {
 		"locale":                   "en",
 		"show_recommended_targets": false,
 		"chart_palette":            defaultPalettePayload(),
+		"feature_visibility":       defaultFeatureVisibilityPayload(),
 	}, te.token)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("put prefs (off): %d %s", res.StatusCode, readBody(res))
@@ -277,10 +294,11 @@ func TestUserPreferences_PutShowTargets(t *testing.T) {
 	// server preserves the false we just set rather than resetting to
 	// the default.
 	res = te.do(t, "PUT", "/v1/me/preferences", map[string]any{
-		"time_format":   "12h",
-		"timezone":      "UTC",
-		"locale":        "en",
-		"chart_palette": defaultPalettePayload(),
+		"time_format":        "12h",
+		"timezone":           "UTC",
+		"locale":             "en",
+		"chart_palette":      defaultPalettePayload(),
+		"feature_visibility": defaultFeatureVisibilityPayload(),
 	}, te.token)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("put prefs (omit): %d %s", res.StatusCode, readBody(res))
@@ -333,6 +351,7 @@ func TestUserPreferences_ChartPaletteRoundTrip(t *testing.T) {
 				"bottle_breast": "#ff8800",
 			},
 		},
+		"feature_visibility": defaultFeatureVisibilityPayload(),
 	}, te.token)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("put prefs: %d %s", res.StatusCode, readBody(res))
@@ -372,9 +391,10 @@ func TestUserPreferences_ChartPaletteRejectsBadInput(t *testing.T) {
 	te := newTestEnv(t)
 	base := func() map[string]any {
 		return map[string]any{
-			"time_format": "24h",
-			"timezone":    "UTC",
-			"locale":      "en",
+			"time_format":        "24h",
+			"timezone":           "UTC",
+			"locale":             "en",
+			"feature_visibility": defaultFeatureVisibilityPayload(),
 		}
 	}
 	cases := []struct {
@@ -423,6 +443,107 @@ func TestUserPreferences_ChartPaletteRejectsBadInput(t *testing.T) {
 			res := te.do(t, "PUT", "/v1/me/preferences", body, te.token)
 			if res.StatusCode != http.StatusUnprocessableEntity {
 				t.Fatalf("want 422, got %d: %s", res.StatusCode, readBody(res))
+			}
+			_ = res.Body.Close()
+		})
+	}
+}
+
+// TestUserPreferences_FeatureVisibilityRoundTrip is the happy path for the
+// new visibility map: PUT with one feature explicitly hidden, GET it back,
+// confirm the value survived the DB round-trip. Mirrors
+// TestUserPreferences_ChartPaletteRoundTrip in shape so future readers see
+// the parallel.
+func TestUserPreferences_FeatureVisibilityRoundTrip(t *testing.T) {
+	te := newTestEnv(t)
+	res := te.do(t, "PUT", "/v1/me/preferences", map[string]any{
+		"time_format":   "24h",
+		"timezone":      "UTC",
+		"locale":        "en",
+		"chart_palette": defaultPalettePayload(),
+		"feature_visibility": map[string]any{
+			"bottle": false,
+		},
+	}, te.token)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("put prefs: %d %s", res.StatusCode, readBody(res))
+	}
+	var got prefsResp
+	decodeJSON(t, res, &got)
+	if v, ok := got.FeatureVisibility["bottle"]; !ok || v {
+		t.Fatalf("expected feature_visibility.bottle=false, got %+v", got.FeatureVisibility)
+	}
+	if len(got.FeatureVisibility) != 1 {
+		t.Fatalf("expected exactly one feature_visibility entry, got %+v", got.FeatureVisibility)
+	}
+
+	// Re-fetch to confirm the value survived the DB round-trip.
+	res = te.do(t, "GET", "/v1/me/preferences", nil, te.token)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("get prefs: %d %s", res.StatusCode, readBody(res))
+	}
+	var refetched prefsResp
+	decodeJSON(t, res, &refetched)
+	if v, ok := refetched.FeatureVisibility["bottle"]; !ok || v {
+		t.Fatalf("refetched feature_visibility mismatch: %+v", refetched.FeatureVisibility)
+	}
+
+	// Re-enable bottle by sending an empty map back, simulating the
+	// settings-screen toggle-on path.
+	res = te.do(t, "PUT", "/v1/me/preferences", map[string]any{
+		"time_format":        "24h",
+		"timezone":           "UTC",
+		"locale":             "en",
+		"chart_palette":      defaultPalettePayload(),
+		"feature_visibility": defaultFeatureVisibilityPayload(),
+	}, te.token)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("put prefs (re-enable): %d %s", res.StatusCode, readBody(res))
+	}
+	var cleared prefsResp
+	decodeJSON(t, res, &cleared)
+	if len(cleared.FeatureVisibility) != 0 {
+		t.Fatalf("feature_visibility should be empty after re-enable, got %+v", cleared.FeatureVisibility)
+	}
+}
+
+// TestUserPreferences_FeatureVisibilityRejectsBadInput covers the two ways
+// a malformed feature_visibility map can fail validation:
+//   - unknown feature key (allowlist enforcement, post-validator)
+//   - non-bool value (caught by the JSON decoder before validator runs)
+func TestUserPreferences_FeatureVisibilityRejectsBadInput(t *testing.T) {
+	te := newTestEnv(t)
+	base := func() map[string]any {
+		return map[string]any{
+			"time_format":   "24h",
+			"timezone":      "UTC",
+			"locale":        "en",
+			"chart_palette": defaultPalettePayload(),
+		}
+	}
+	cases := []struct {
+		name       string
+		visibility any
+	}{
+		{
+			name:       "unknown feature key",
+			visibility: map[string]any{"sleep": false},
+		},
+		{
+			name:       "non-bool value",
+			visibility: map[string]any{"bottle": "no"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := base()
+			body["feature_visibility"] = tc.visibility
+			res := te.do(t, "PUT", "/v1/me/preferences", body, te.token)
+			// Either 400 (json decode for non-bool) or 422 (validator
+			// for unknown key) is acceptable; both reject the payload
+			// before it touches the DB.
+			if res.StatusCode != http.StatusUnprocessableEntity && res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("want 400 or 422, got %d: %s", res.StatusCode, readBody(res))
 			}
 			_ = res.Body.Close()
 		})

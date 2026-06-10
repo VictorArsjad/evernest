@@ -67,7 +67,14 @@ type UserPreferences struct {
 	// ({preset:"default", overrides:{}}) keeps legacy rows visually
 	// identical to today.
 	ChartPalette ChartPalette `json:"chart_palette"`
-	UpdatedAt    time.Time    `json:"updated_at"`
+	// FeatureVisibility lets the user hide event kinds (bottle / nursing /
+	// pumping / diaper / growth) from the Today banner stats, the action
+	// tile grid, and the /charts cards WITHOUT touching the underlying data.
+	// Stored sparsely on a jsonb column (migration 000009): a key only
+	// appears when explicitly hidden, e.g. {"bottle": false}. Missing key ⇒
+	// visible. Default '{}' keeps every existing user fully unchanged.
+	FeatureVisibility map[string]bool `json:"feature_visibility"`
+	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
 // allowedSeriesKeys is the closed allowlist for ChartPalette.Overrides keys.
@@ -101,6 +108,30 @@ func validateChartPalette(p ChartPalette) string {
 		}
 		if !hexColorRe.MatchString(color) {
 			return "chart_palette.overrides[" + key + "]: must be #rrggbb"
+		}
+	}
+	return ""
+}
+
+// allowedFeatureKeys is the closed allowlist for FeatureVisibility map keys.
+// Any key outside this set is rejected with 422. The set matches the FE's
+// FeatureKey union — adding a new event kind is a coordinated FE+BE change,
+// not something a malformed PUT can sneak in.
+var allowedFeatureKeys = map[string]struct{}{
+	"bottle":  {},
+	"nursing": {},
+	"pumping": {},
+	"diaper":  {},
+	"growth":  {},
+}
+
+// validateFeatureVisibility runs the post-validator key check. Values are
+// already constrained to bool by the JSON decoder (non-bool inputs fail
+// httpx.DecodeJSON with a 400), so we only need to guard the key set here.
+func validateFeatureVisibility(m map[string]bool) string {
+	for key := range m {
+		if _, ok := allowedFeatureKeys[key]; !ok {
+			return "feature_visibility: unknown feature key " + key
 		}
 	}
 	return ""
@@ -150,12 +181,18 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 // is" signal. The struct's inner `oneof` on Preset enforces the preset
 // enum, and the post-validator pass in put() enforces the overrides
 // shape.
+//
+// FeatureVisibility follows the same "FE always round-trips" rule —
+// `validate:"required"` on a map enforces non-nil (empty `{}` is the
+// default and passes). The key allowlist is enforced post-validator in
+// validateFeatureVisibility.
 type putReq struct {
-	TimeFormat             string       `json:"time_format" validate:"required,oneof=24h 12h"`
-	Timezone               string       `json:"timezone" validate:"required,min=1,max=64"`
-	Locale                 string       `json:"locale" validate:"required,min=2,max=16"`
-	ShowRecommendedTargets *bool        `json:"show_recommended_targets,omitempty"`
-	ChartPalette           ChartPalette `json:"chart_palette" validate:"required"`
+	TimeFormat             string          `json:"time_format" validate:"required,oneof=24h 12h"`
+	Timezone               string          `json:"timezone" validate:"required,min=1,max=64"`
+	Locale                 string          `json:"locale" validate:"required,min=2,max=16"`
+	ShowRecommendedTargets *bool           `json:"show_recommended_targets,omitempty"`
+	ChartPalette           ChartPalette    `json:"chart_palette" validate:"required"`
+	FeatureVisibility      map[string]bool `json:"feature_visibility" validate:"required"`
 }
 
 func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
@@ -182,6 +219,10 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", msg)
 		return
 	}
+	if msg := validateFeatureVisibility(req.FeatureVisibility); msg != "" {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", msg)
+		return
+	}
 
 	// pgx accepts a []byte for a jsonb parameter and writes it as raw
 	// JSON. Marshalling here (rather than relying on pgx's reflection
@@ -197,6 +238,12 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not encode chart_palette")
 		return
 	}
+	featureJSON, err := featureVisibilityToJSON(req.FeatureVisibility)
+	if err != nil {
+		h.logger.Error("marshal feature_visibility", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not encode feature_visibility")
+		return
+	}
 
 	// When the client omits show_recommended_targets (older FE builds) we
 	// preserve whatever's already on the row. COALESCE on the conflict
@@ -209,32 +256,35 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 	var prefs UserPreferences
 	prefs.UserID = uid
 	var paletteRaw []byte
+	var featureRaw []byte
 	if req.ShowRecommendedTargets != nil {
 		err = h.store.Pool.QueryRow(r.Context(), `
-			INSERT INTO user_preferences (user_id, time_format, timezone, locale, show_recommended_targets, chart_palette)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			INSERT INTO user_preferences (user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (user_id) DO UPDATE
 			   SET time_format              = EXCLUDED.time_format,
 			       timezone                 = EXCLUDED.timezone,
 			       locale                   = EXCLUDED.locale,
 			       show_recommended_targets = EXCLUDED.show_recommended_targets,
-			       chart_palette            = EXCLUDED.chart_palette
-			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, updated_at
-		`, uid, req.TimeFormat, req.Timezone, req.Locale, *req.ShowRecommendedTargets, paletteJSON).Scan(
-			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &prefs.UpdatedAt,
+			       chart_palette            = EXCLUDED.chart_palette,
+			       feature_visibility       = EXCLUDED.feature_visibility
+			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, updated_at
+		`, uid, req.TimeFormat, req.Timezone, req.Locale, *req.ShowRecommendedTargets, paletteJSON, featureJSON).Scan(
+			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &featureRaw, &prefs.UpdatedAt,
 		)
 	} else {
 		err = h.store.Pool.QueryRow(r.Context(), `
-			INSERT INTO user_preferences (user_id, time_format, timezone, locale, chart_palette)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO user_preferences (user_id, time_format, timezone, locale, chart_palette, feature_visibility)
+			VALUES ($1, $2, $3, $4, $5, $6)
 			ON CONFLICT (user_id) DO UPDATE
-			   SET time_format   = EXCLUDED.time_format,
-			       timezone      = EXCLUDED.timezone,
-			       locale        = EXCLUDED.locale,
-			       chart_palette = EXCLUDED.chart_palette
-			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, updated_at
-		`, uid, req.TimeFormat, req.Timezone, req.Locale, paletteJSON).Scan(
-			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &prefs.UpdatedAt,
+			   SET time_format        = EXCLUDED.time_format,
+			       timezone           = EXCLUDED.timezone,
+			       locale             = EXCLUDED.locale,
+			       chart_palette      = EXCLUDED.chart_palette,
+			       feature_visibility = EXCLUDED.feature_visibility
+			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, updated_at
+		`, uid, req.TimeFormat, req.Timezone, req.Locale, paletteJSON, featureJSON).Scan(
+			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &featureRaw, &prefs.UpdatedAt,
 		)
 	}
 	if err != nil {
@@ -248,6 +298,12 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not decode chart_palette")
 		return
 	}
+	prefs.FeatureVisibility, err = featureVisibilityFromJSON(featureRaw)
+	if err != nil {
+		h.logger.Error("decode feature_visibility", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not decode feature_visibility")
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, prefs)
 }
 
@@ -258,12 +314,17 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 func loadOrSeed(ctx context.Context, st *store.Store, uid uuid.UUID) (UserPreferences, error) {
 	var prefs UserPreferences
 	var paletteRaw []byte
+	var featureRaw []byte
 	err := st.Pool.QueryRow(ctx, `
-		SELECT user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, updated_at
+		SELECT user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, updated_at
 		FROM user_preferences WHERE user_id = $1
-	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &prefs.UpdatedAt)
+	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &featureRaw, &prefs.UpdatedAt)
 	if err == nil {
 		prefs.ChartPalette, err = chartPaletteFromJSON(paletteRaw)
+		if err != nil {
+			return prefs, err
+		}
+		prefs.FeatureVisibility, err = featureVisibilityFromJSON(featureRaw)
 		return prefs, err
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -272,12 +333,16 @@ func loadOrSeed(ctx context.Context, st *store.Store, uid uuid.UUID) (UserPrefer
 	err = st.Pool.QueryRow(ctx, `
 		INSERT INTO user_preferences (user_id) VALUES ($1)
 		ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
-		RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, updated_at
-	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &prefs.UpdatedAt)
+		RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, updated_at
+	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &featureRaw, &prefs.UpdatedAt)
 	if err != nil {
 		return prefs, err
 	}
 	prefs.ChartPalette, err = chartPaletteFromJSON(paletteRaw)
+	if err != nil {
+		return prefs, err
+	}
+	prefs.FeatureVisibility, err = featureVisibilityFromJSON(featureRaw)
 	return prefs, err
 }
 
@@ -307,4 +372,31 @@ func chartPaletteFromJSON(raw []byte) (ChartPalette, error) {
 		p.Overrides = map[string]string{}
 	}
 	return p, nil
+}
+
+// featureVisibilityToJSON normalizes a nil map to an empty object so the
+// value persisted on disk always matches the column-default shape ('{}').
+// Mirrors chartPaletteToJSON.
+func featureVisibilityToJSON(m map[string]bool) ([]byte, error) {
+	if m == nil {
+		m = map[string]bool{}
+	}
+	return json.Marshal(m)
+}
+
+// featureVisibilityFromJSON unmarshals the raw jsonb bytes and ensures the
+// returned map is non-nil so downstream consumers (and the JSON encoder
+// for the response body) don't have to nil-guard on read.
+func featureVisibilityFromJSON(raw []byte) (map[string]bool, error) {
+	if len(raw) == 0 {
+		return map[string]bool{}, nil
+	}
+	var m map[string]bool
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	if m == nil {
+		m = map[string]bool{}
+	}
+	return m, nil
 }

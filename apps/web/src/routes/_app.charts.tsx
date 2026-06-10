@@ -19,6 +19,7 @@ import {
   type LinePoint,
   type SparkBar,
 } from "../lib/charts";
+import { isFeatureVisible } from "../lib/featureVisibility";
 import { DEFAULT_PALETTE, resolve } from "../lib/palette";
 import {
   useBabies,
@@ -319,8 +320,26 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
 
   const volLabel = volumeUnitLabel(prefs.unit_volume);
   const wLabel = weightUnitLabel(prefs.unit_weight);
+  // Per-feature visibility gates each ChartCard. Hidden cards drop out of
+  // the grid entirely; the `grid-cols-2` layout reflows naturally. The
+  // Weight card keeps its `wide` column-span when visible, so a 3-card
+  // layout (e.g. Bottle/Nursing visible, Weight visible) renders as
+  // two-up + full-width below rather than leaving a gap.
+  const showBottle = isFeatureVisible(prefs.feature_visibility, "bottle");
+  const showNursing = isFeatureVisible(prefs.feature_visibility, "nursing");
+  const showPumping = isFeatureVisible(prefs.feature_visibility, "pumping");
+  const showDiaper = isFeatureVisible(prefs.feature_visibility, "diaper");
+  const showGrowth = isFeatureVisible(prefs.feature_visibility, "growth");
+  if (!showBottle && !showNursing && !showPumping && !showDiaper && !showGrowth) {
+    return (
+      <p className="rounded-xl bg-bg-surface p-4 text-sm text-white/50">
+        All charts are hidden. Re-enable a feature in Settings to see its chart.
+      </p>
+    );
+  }
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {showBottle && (
       <ChartCard
         title="Bottle"
         unit={`${volLabel}/day`}
@@ -359,7 +378,9 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
           formulaColor={colors.bottle_formula}
         />
       </ChartCard>
+      )}
 
+      {showNursing && (
       <ChartCard
         title="Nursing"
         unit="min/day"
@@ -381,7 +402,9 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         />
         <Axis days={days} />
       </ChartCard>
+      )}
 
+      {showPumping && (
       <ChartCard
         title="Pumping"
         unit={`${volLabel}/day`}
@@ -403,7 +426,9 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         />
         <Axis days={days} />
       </ChartCard>
+      )}
 
+      {showDiaper && (
       <ChartCard
         title="Diapers"
         unit="count/day"
@@ -444,7 +469,9 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         <Axis days={days} />
         <DiaperLegend colors={diaperColors} />
       </ChartCard>
+      )}
 
+      {showGrowth && (
       <ChartCard
         title="Weight"
         unit={wLabel}
@@ -483,6 +510,7 @@ function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPrefere
         )}
         <Axis days={days} />
       </ChartCard>
+      )}
     </div>
   );
 }

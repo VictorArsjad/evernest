@@ -13,6 +13,7 @@ import { InstallPromptBanner } from "../components/InstallPromptBanner";
 import { SyncStatusBadge } from "../components/SyncStatusBadge";
 import { useAuthStore } from "../lib/authStore";
 import { dailyWindowEndingToday } from "../lib/charts";
+import { isFeatureVisible } from "../lib/featureVisibility";
 import { formatElapsedHHMM } from "../lib/nursingTimer";
 import {
   useBabies,
@@ -228,19 +229,28 @@ function TodayPage() {
       />
 
       <section className="grid grid-cols-3 gap-3">
-        <Tile to="/log/bottle" babyId={baby.id} icon="🍼" label="Bottle" accent="peach" />
-        {openNursing.data ? (
-          <NursingInProgressTile
-            session={openNursing.data}
-            babyId={baby.id}
-            prefs={prefs}
-          />
-        ) : (
-          <Tile to="/log/nursing" babyId={baby.id} icon="👶" label="Nursing" accent="mint" />
+        {isFeatureVisible(prefs.feature_visibility, "bottle") && (
+          <Tile to="/log/bottle" babyId={baby.id} icon="🍼" label="Bottle" accent="peach" />
         )}
-        <Tile to="/log/pumping" babyId={baby.id} icon="💧" label="Pumping" accent="sky" />
-        <Tile to="/log/diaper" babyId={baby.id} icon="🧷" label="Diaper" accent="lemon" />
-        <Tile to="/log/growth" babyId={baby.id} icon="📏" label="Growth" accent="lilac" />
+        {isFeatureVisible(prefs.feature_visibility, "nursing") &&
+          (openNursing.data ? (
+            <NursingInProgressTile
+              session={openNursing.data}
+              babyId={baby.id}
+              prefs={prefs}
+            />
+          ) : (
+            <Tile to="/log/nursing" babyId={baby.id} icon="👶" label="Nursing" accent="mint" />
+          ))}
+        {isFeatureVisible(prefs.feature_visibility, "pumping") && (
+          <Tile to="/log/pumping" babyId={baby.id} icon="💧" label="Pumping" accent="sky" />
+        )}
+        {isFeatureVisible(prefs.feature_visibility, "diaper") && (
+          <Tile to="/log/diaper" babyId={baby.id} icon="🧷" label="Diaper" accent="lemon" />
+        )}
+        {isFeatureVisible(prefs.feature_visibility, "growth") && (
+          <Tile to="/log/growth" babyId={baby.id} icon="📏" label="Growth" accent="lilac" />
+        )}
       </section>
 
       <section className="flex flex-col gap-2">
@@ -581,45 +591,114 @@ function TodayBanner({
         <Sparkline values={sparkline} />
       </div>
 
-      <div className="mt-3 border-t border-white/10 pt-3">
-        <div className="grid grid-cols-5 gap-2">
-          <BannerStat
-            icon="🍼"
-            rendered={formatVolume(totalMl, prefs.unit_volume)}
-            barFill={targets ? totalMl / targets.bottle_ml : null}
-            barClass="bg-orange-300/70"
-          />
-          <BannerStat
-            icon="👶"
-            valueLabel={String(nursingMin)}
-            unitLabel="min"
-            barFill={targets ? nursingMin / targets.nursing_min : null}
-            barClass="bg-emerald-300/70"
-          />
-          <BannerStat
-            icon="💧"
-            rendered={formatVolume(pumpedMl, prefs.unit_volume)}
-            barFill={targets ? pumpedMl / targets.pumping_ml : null}
-            barClass="bg-sky-300/70"
-          />
-          <BannerStat
-            icon="🧷"
-            valueLabel={String(diaperCount)}
-            barFill={targets ? diaperCount / targets.diapers : null}
-            barClass="bg-yellow-300/70"
-          />
-          <BannerStat
-            icon="📏"
-            rendered={
-              latestWeightG != null ? formatWeight(latestWeightG, prefs.unit_weight) : "—"
-            }
-            // Growth doesn't have a daily total → no bar, ever.
-            barFill={null}
-            barClass=""
-          />
-        </div>
-      </div>
+      <BannerStatRow
+        prefs={prefs}
+        totalMl={totalMl}
+        nursingMin={nursingMin}
+        pumpedMl={pumpedMl}
+        diaperCount={diaperCount}
+        latestWeightG={latestWeightG}
+        targets={targets}
+      />
     </section>
+  );
+}
+
+// BannerStatRow renders the row of inline stats below the banner headline.
+// Each cell is gated by feature_visibility; the grid template is computed
+// from the visible-cell count so 3 visible features fill the row at 1/3
+// each rather than leaving empty grid tracks. When zero features are
+// visible the whole row collapses (separator included) so the banner
+// shrinks to just the "Last fed" headline + sparkline.
+function BannerStatRow({
+  prefs,
+  totalMl,
+  nursingMin,
+  pumpedMl,
+  diaperCount,
+  latestWeightG,
+  targets,
+}: {
+  prefs: CombinedPreferences;
+  totalMl: number;
+  nursingMin: number;
+  pumpedMl: number;
+  diaperCount: number;
+  latestWeightG: number | null;
+  targets: DailyTargets | null;
+}) {
+  const cells: React.ReactNode[] = [];
+  if (isFeatureVisible(prefs.feature_visibility, "bottle")) {
+    cells.push(
+      <BannerStat
+        key="bottle"
+        icon="🍼"
+        rendered={formatVolume(totalMl, prefs.unit_volume)}
+        barFill={targets ? totalMl / targets.bottle_ml : null}
+        barClass="bg-orange-300/70"
+      />,
+    );
+  }
+  if (isFeatureVisible(prefs.feature_visibility, "nursing")) {
+    cells.push(
+      <BannerStat
+        key="nursing"
+        icon="👶"
+        valueLabel={String(nursingMin)}
+        unitLabel="min"
+        barFill={targets ? nursingMin / targets.nursing_min : null}
+        barClass="bg-emerald-300/70"
+      />,
+    );
+  }
+  if (isFeatureVisible(prefs.feature_visibility, "pumping")) {
+    cells.push(
+      <BannerStat
+        key="pumping"
+        icon="💧"
+        rendered={formatVolume(pumpedMl, prefs.unit_volume)}
+        barFill={targets ? pumpedMl / targets.pumping_ml : null}
+        barClass="bg-sky-300/70"
+      />,
+    );
+  }
+  if (isFeatureVisible(prefs.feature_visibility, "diaper")) {
+    cells.push(
+      <BannerStat
+        key="diaper"
+        icon="🧷"
+        valueLabel={String(diaperCount)}
+        barFill={targets ? diaperCount / targets.diapers : null}
+        barClass="bg-yellow-300/70"
+      />,
+    );
+  }
+  if (isFeatureVisible(prefs.feature_visibility, "growth")) {
+    cells.push(
+      <BannerStat
+        key="growth"
+        icon="📏"
+        rendered={
+          latestWeightG != null ? formatWeight(latestWeightG, prefs.unit_weight) : "—"
+        }
+        // Growth doesn't have a daily total → no bar, ever.
+        barFill={null}
+        barClass=""
+      />,
+    );
+  }
+  if (cells.length === 0) return null;
+  return (
+    <div className="mt-3 border-t border-white/10 pt-3">
+      <div
+        className="grid gap-2"
+        style={{
+          gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))`,
+        }}
+      >
+        {cells}
+      </div>
+    </div>
   );
 }
 
