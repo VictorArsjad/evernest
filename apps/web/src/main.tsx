@@ -55,22 +55,32 @@ declare module "@tanstack/react-router" {
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("missing #root element");
 
-// Try to silently refresh the session before first render. Falls through to
-// the anonymous state if the refresh cookie is missing/expired. We don't
-// gate rendering on this — the route guards read the auth store and handle
-// the redirect when state lands.
-bootstrapAuth().finally(() => {
-  createRoot(rootEl).render(
-    <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>
-    </StrictMode>,
-  );
-  // CP6b: kick a single drain attempt of the offline mutation outbox
-  // once the auth bootstrap settled. Records pending from a previous
-  // session (the user closed the tab while offline; refresh just now)
-  // get re-sent here. Failure (still offline) is silent — useOutbox
-  // will retry on `window.online` and on subsequent mutations.
+// Render immediately. The auth store starts in "initializing" state;
+// <AuthGate> in __root.tsx renders a splash until bootstrapAuth() resolves
+// to "authenticated" or "anonymous". Route guards (_app.tsx / _auth.tsx)
+// already tolerate the "initializing" status, so nothing flashes a
+// redirect before the splash gets out of the way. Critically, this means
+// the user sees the styled splash on cold load instead of a blank dark
+// shell while the silent refresh round-trip is in flight (slow tailnet).
+createRoot(rootEl).render(
+  <StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  </StrictMode>,
+);
+
+// Silent refresh runs in parallel with the first paint. On success the
+// auth store flips to "authenticated" and <AuthGate> reveals the routed
+// content; on failure it flips to "anonymous" and the _app guard
+// redirects to /login. Either way the user has been looking at a
+// styled splash rather than a void.
+//
+// CP6b: chain a single drain attempt of the offline mutation outbox off
+// the bootstrap's `.finally()`. Records pending from a previous session
+// (the user closed the tab while offline; refresh just now) get re-sent
+// here. Failure (still offline) is silent — useOutbox will retry on
+// `window.online` and on subsequent mutations.
+void bootstrapAuth().finally(() => {
   void syncOutbox();
 });

@@ -1,6 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { Outlet, createRootRouteWithContext } from "@tanstack/react-router";
 
+import { AuthGate } from "../components/AuthGate";
+
 export interface RouterContext {
   queryClient: QueryClient;
 }
@@ -19,7 +21,9 @@ function RootLayout() {
   // only the inner content is inset.
   return (
     <div className="mx-auto flex min-h-full max-w-md flex-col bg-bg-base pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
-      <Outlet />
+      <AuthGate>
+        <Outlet />
+      </AuthGate>
     </div>
   );
 }
