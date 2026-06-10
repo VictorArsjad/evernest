@@ -10,11 +10,13 @@ import { z } from "zod";
 
 import {
   useBabies,
+  useBottleFeeds,
   useCreateBottleFeed,
   useDeleteBottleFeed,
   useHouseholds,
   useUpdateBottleFeed,
 } from "../lib/queries";
+import { suggestBottleAmountMl, DEFAULT_WINDOW_DAYS } from "../lib/bottleDefault";
 import type { BottleFeed } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import {
@@ -89,8 +91,39 @@ function LogBottlePage() {
   const create = useCreateBottleFeed();
   const update = useUpdateBottleFeed();
   const del = useDeleteBottleFeed();
-  const { prefs } = usePreferences(babyId);
+  const { prefs, isLoading: prefsLoading } = usePreferences(babyId);
   const volLabel = volumeUnitLabel(prefs.unit_volume);
+
+  // Recent feeds power the create-mode amount suggestion. Memoize the
+  // lookback window once on mount so the query key stays stable across
+  // re-renders (a fresh `now` each render would thrash the cache). The
+  // GET is cheap and usually already warm from the Today screen.
+  const recentWindow = useMemo(() => {
+    const to = new Date();
+    const from = new Date(to.getTime() - DEFAULT_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    return { from: from.toISOString(), to: to.toISOString() };
+  }, []);
+  // Only the create flow needs the suggestion; skip the fetch entirely in
+  // edit mode (where the form prefills from the existing row instead).
+  const recentFeeds = useBottleFeeds(
+    isEditMode ? null : babyId,
+    recentWindow.from,
+    recentWindow.to,
+  );
+
+  // suggestedDisplay is the autofill candidate already converted to the
+  // baby's display unit (null when there's no usable history or autofill
+  // is off). autofillApplied drives the "tap to clear" hint and is reset
+  // the moment the user edits the field, so the hint only shows while the
+  // value is still the untouched suggestion.
+  const [autofillApplied, setAutofillApplied] = useState(false);
+  const autofilledRef = useRef(false);
+  const suggestedDisplay = useMemo(() => {
+    if (!prefs.autofill_bottle_amount) return null;
+    const ml = suggestBottleAmountMl(recentFeeds.data ?? [], new Date());
+    if (ml == null) return null;
+    return mlToDisplayVolume(ml, prefs.unit_volume);
+  }, [prefs.autofill_bottle_amount, prefs.unit_volume, recentFeeds.data]);
 
   // Prefill once when the row arrives. Ref-guarded so a later cache
   // update (e.g. the user's own optimistic upsert after submit) doesn't
@@ -114,6 +147,19 @@ function LogBottlePage() {
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [isEditMode]);
+
+  // Create-mode amount prefill: once preferences + recent feeds have
+  // settled, seed the empty Amount field with the suggested value. Ref-
+  // guarded so it fires at most once and never clobbers in-progress typing
+  // (the guard also means clicking "Clear" sticks instead of re-filling).
+  useEffect(() => {
+    if (isEditMode || autofilledRef.current) return;
+    if (prefsLoading || recentFeeds.isLoading) return;
+    if (suggestedDisplay == null || amount !== "") return;
+    setAmount(String(suggestedDisplay));
+    setAutofillApplied(true);
+    autofilledRef.current = true;
+  }, [isEditMode, prefsLoading, recentFeeds.isLoading, suggestedDisplay, amount]);
 
   // Display-unit bounds: 2000 ml ≈ 67.6 oz. Same physical ceiling
   // either way; the canonical-ml clamp on submit re-applies the API
@@ -188,11 +234,29 @@ function LogBottlePage() {
               step={prefs.unit_volume === "oz" ? 0.1 : 1}
               placeholder={prefs.unit_volume === "oz" ? "2" : "60"}
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => {
+                setAmount(e.target.value);
+                if (autofillApplied) setAutofillApplied(false);
+              }}
               className="w-full rounded-xl bg-bg-subtle px-4 py-4 text-4xl font-semibold tabular-nums outline-none focus:ring-2 focus:ring-accent"
             />
             <span className="text-xl text-white/60">{volLabel}</span>
           </div>
+          {autofillApplied && (
+            <div className="mt-1.5 flex items-center gap-2 text-xs text-white/40">
+              <span>Suggested from recent feeds</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setAmount("");
+                  setAutofillApplied(false);
+                }}
+                className="text-accent/80 hover:text-accent"
+              >
+                Clear
+              </button>
+            </div>
+          )}
         </div>
 
         <div>

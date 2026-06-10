@@ -30,6 +30,10 @@ export interface CombinedPreferences {
   // {} (no features hidden). Read with isFeatureVisible() at every
   // render surface — a missing key always means visible.
   feature_visibility: FeatureVisibilityMap;
+  // autofill_bottle_amount toggles the bottle-feed form's prefill-from-
+  // recent-feeds behavior. Default true. Lives on user_preferences
+  // server-side.
+  autofill_bottle_amount: boolean;
 }
 
 export const DEFAULT_PREFERENCES: CombinedPreferences = {
@@ -40,6 +44,7 @@ export const DEFAULT_PREFERENCES: CombinedPreferences = {
   show_recommended_targets: true,
   chart_palette: DEFAULT_PALETTE,
   feature_visibility: {},
+  autofill_bottle_amount: true,
 };
 
 // usePreferences accepts a nullable babyId so callers don't need to gate
@@ -62,6 +67,8 @@ export function usePreferences(babyId: string | null): {
     chart_palette: me.data?.chart_palette ?? DEFAULT_PREFERENCES.chart_palette,
     feature_visibility:
       me.data?.feature_visibility ?? DEFAULT_PREFERENCES.feature_visibility,
+    autofill_bottle_amount:
+      me.data?.autofill_bottle_amount ?? DEFAULT_PREFERENCES.autofill_bottle_amount,
   };
 
   // isLoading is true only on first paint; subsequent baby changes use
