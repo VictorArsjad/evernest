@@ -10,7 +10,11 @@ import type { RecentEvent } from "../lib/recentEvents";
 import { formatLength, formatTime, formatVolume, formatWeight } from "../lib/units";
 import type { CombinedPreferences } from "../lib/usePreferences";
 
-export function growthSummary(
+// Internal helper — not exported because nothing outside this file uses
+// it. Keeping it un-exported also satisfies `react-refresh/only-export-
+// components`, which would otherwise force the dev server into a full
+// page reload (instead of a hot module swap) whenever this file changes.
+function growthSummary(
   g: {
     weight_g?: number | null;
     height_cm?: number | null;
