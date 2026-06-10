@@ -90,6 +90,19 @@ const LIVE_LIST_REFETCH_MS = 15_000;
 const OPEN_NURSING_REFETCH_MS = 10_000;
 const HEAVY_REFETCH_MS = 5 * 60_000;
 
+// Per-kind list hooks (useBottleFeeds / useDiapers / usePumpings /
+// useNursings / useGrowths) accept an optional fourth `opts` arg so
+// the History view can request `{ limit: 1000, refetchInterval: false }`
+// without spawning a parallel query key per consumer. The default 200
+// row cap on the BE would silently truncate a 30-day window for an
+// active baby, and polling past data buys nothing — it doesn't change.
+// Today / Charts continue to call the hooks with three args and inherit
+// the live-poll defaults unchanged.
+export interface ListHookOpts {
+  limit?: number;
+  refetchInterval?: number | false;
+}
+
 export const qk = {
   me: ["me"] as const,
   households: ["households"] as const,
@@ -279,15 +292,21 @@ export function useAcceptInvite() {
 
 // --- bottle feeds ---
 
-export function useBottleFeeds(babyId: string | null, from?: string, to?: string) {
+export function useBottleFeeds(
+  babyId: string | null,
+  from?: string,
+  to?: string,
+  opts?: ListHookOpts,
+) {
   return useQuery({
     queryKey: babyId ? qk.bottleFeeds(babyId, from, to) : ["babies", "none", "bottle-feeds"],
     enabled: !!babyId,
-    refetchInterval: LIVE_LIST_REFETCH_MS,
+    refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
     queryFn: () => {
       const params = new URLSearchParams();
       if (from) params.set("from", from);
       if (to) params.set("to", to);
+      if (opts?.limit != null) params.set("limit", String(opts.limit));
       const qs = params.toString();
       return api<BottleFeed[]>(`/babies/${babyId}/bottle-feeds${qs ? `?${qs}` : ""}`);
     },
@@ -414,15 +433,21 @@ export function useUpdateBottleFeed() {
 
 // --- diapers ---
 
-export function useDiapers(babyId: string | null, from?: string, to?: string) {
+export function useDiapers(
+  babyId: string | null,
+  from?: string,
+  to?: string,
+  opts?: ListHookOpts,
+) {
   return useQuery({
     queryKey: babyId ? qk.diapers(babyId, from, to) : ["babies", "none", "diapers"],
     enabled: !!babyId,
-    refetchInterval: LIVE_LIST_REFETCH_MS,
+    refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
     queryFn: () => {
       const params = new URLSearchParams();
       if (from) params.set("from", from);
       if (to) params.set("to", to);
+      if (opts?.limit != null) params.set("limit", String(opts.limit));
       const qs = params.toString();
       return api<Diaper[]>(`/babies/${babyId}/diapers${qs ? `?${qs}` : ""}`);
     },
@@ -533,15 +558,21 @@ export function useUpdateDiaper() {
 
 // --- pumpings ---
 
-export function usePumpings(babyId: string | null, from?: string, to?: string) {
+export function usePumpings(
+  babyId: string | null,
+  from?: string,
+  to?: string,
+  opts?: ListHookOpts,
+) {
   return useQuery({
     queryKey: babyId ? qk.pumpings(babyId, from, to) : ["babies", "none", "pumpings"],
     enabled: !!babyId,
-    refetchInterval: LIVE_LIST_REFETCH_MS,
+    refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
     queryFn: () => {
       const params = new URLSearchParams();
       if (from) params.set("from", from);
       if (to) params.set("to", to);
+      if (opts?.limit != null) params.set("limit", String(opts.limit));
       const qs = params.toString();
       return api<Pumping[]>(`/babies/${babyId}/pumpings${qs ? `?${qs}` : ""}`);
     },
@@ -659,15 +690,21 @@ export function useUpdatePumping() {
 
 // --- nursing sessions ---
 
-export function useNursings(babyId: string | null, from?: string, to?: string) {
+export function useNursings(
+  babyId: string | null,
+  from?: string,
+  to?: string,
+  opts?: ListHookOpts,
+) {
   return useQuery({
     queryKey: babyId ? qk.nursings(babyId, from, to) : ["babies", "none", "nursing-sessions"],
     enabled: !!babyId,
-    refetchInterval: LIVE_LIST_REFETCH_MS,
+    refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
     queryFn: () => {
       const params = new URLSearchParams();
       if (from) params.set("from", from);
       if (to) params.set("to", to);
+      if (opts?.limit != null) params.set("limit", String(opts.limit));
       const qs = params.toString();
       return api<Nursing[]>(`/babies/${babyId}/nursing-sessions${qs ? `?${qs}` : ""}`);
     },
@@ -905,15 +942,21 @@ export function useUpdateNursing() {
 
 // --- growths ---
 
-export function useGrowths(babyId: string | null, from?: string, to?: string) {
+export function useGrowths(
+  babyId: string | null,
+  from?: string,
+  to?: string,
+  opts?: ListHookOpts,
+) {
   return useQuery({
     queryKey: babyId ? qk.growths(babyId, from, to) : ["babies", "none", "growths"],
     enabled: !!babyId,
-    refetchInterval: HEAVY_REFETCH_MS,
+    refetchInterval: opts?.refetchInterval ?? HEAVY_REFETCH_MS,
     queryFn: () => {
       const params = new URLSearchParams();
       if (from) params.set("from", from);
       if (to) params.set("to", to);
+      if (opts?.limit != null) params.set("limit", String(opts.limit));
       const qs = params.toString();
       return api<Growth[]>(`/babies/${babyId}/growths${qs ? `?${qs}` : ""}`);
     },
