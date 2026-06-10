@@ -2,6 +2,7 @@
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiQueued } from "./api";
 import { useAuthStore } from "./authStore";
+import type { FeatureVisibilityMap } from "./featureVisibility";
 import { kickAfterReauth } from "./outbox";
 import type { ChartPalette } from "./palette";
 import type {
@@ -1076,6 +1077,11 @@ export function useUpdateMyPreferences() {
       // (via useMyPreferences) and round-trip it on every save, even
       // when the field they're toggling is unrelated.
       chart_palette: ChartPalette;
+      // feature_visibility follows the same "always round-trip" rule as
+      // chart_palette: required by the BE, sparse on the wire (an empty
+      // {} means no features hidden). Callers read the current value
+      // from useMyPreferences and pass it back on every save.
+      feature_visibility: FeatureVisibilityMap;
     }) => api<UserPreferences>("/me/preferences", { method: "PUT", body: vars }),
     onSuccess: (data) => qc.setQueryData(qk.myPreferences, data),
   });

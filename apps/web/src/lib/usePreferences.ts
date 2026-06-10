@@ -9,6 +9,7 @@
 // views can render with placeholder values rather than blocking on the
 // preference fetch — a brief flash of canonical units is far better than
 // a brief flash of "Loading…" on the most visited screen in the app.
+import type { FeatureVisibilityMap } from "./featureVisibility";
 import { DEFAULT_PALETTE, type ChartPalette } from "./palette";
 import { useBabySettings, useMyPreferences } from "./queries";
 
@@ -25,6 +26,10 @@ export interface CombinedPreferences {
   // series. Falls back to DEFAULT_PALETTE during loading and against an
   // older BE that doesn't return the field yet.
   chart_palette: ChartPalette;
+  // feature_visibility is the sparse map of "feature → hidden". Default
+  // {} (no features hidden). Read with isFeatureVisible() at every
+  // render surface — a missing key always means visible.
+  feature_visibility: FeatureVisibilityMap;
 }
 
 export const DEFAULT_PREFERENCES: CombinedPreferences = {
@@ -34,6 +39,7 @@ export const DEFAULT_PREFERENCES: CombinedPreferences = {
   unit_weight: "kg",
   show_recommended_targets: true,
   chart_palette: DEFAULT_PALETTE,
+  feature_visibility: {},
 };
 
 // usePreferences accepts a nullable babyId so callers don't need to gate
@@ -54,6 +60,8 @@ export function usePreferences(babyId: string | null): {
     show_recommended_targets:
       me.data?.show_recommended_targets ?? DEFAULT_PREFERENCES.show_recommended_targets,
     chart_palette: me.data?.chart_palette ?? DEFAULT_PREFERENCES.chart_palette,
+    feature_visibility:
+      me.data?.feature_visibility ?? DEFAULT_PREFERENCES.feature_visibility,
   };
 
   // isLoading is true only on first paint; subsequent baby changes use
