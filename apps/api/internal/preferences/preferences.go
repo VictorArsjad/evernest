@@ -74,7 +74,13 @@ type UserPreferences struct {
 	// appears when explicitly hidden, e.g. {"bottle": false}. Missing key ⇒
 	// visible. Default '{}' keeps every existing user fully unchanged.
 	FeatureVisibility map[string]bool `json:"feature_visibility"`
-	UpdatedAt         time.Time       `json:"updated_at"`
+	// AutofillBottleAmount gates the FE bottle-feed log form's
+	// prefill-the-Amount-field-from-recent-feeds behavior. Defaults to true
+	// server-side (boolean column added in migration 000010); users opt out
+	// via the settings screen. Mirrors the ShowRecommendedTargets
+	// preserve-on-omit precedent on PUT.
+	AutofillBottleAmount bool      `json:"autofill_bottle_amount"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 // allowedSeriesKeys is the closed allowlist for ChartPalette.Overrides keys.
@@ -186,6 +192,11 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 // `validate:"required"` on a map enforces non-nil (empty `{}` is the
 // default and passes). The key allowlist is enforced post-validator in
 // validateFeatureVisibility.
+//
+// AutofillBottleAmount is a pointer for the same "omitted vs explicit
+// false" reason as ShowRecommendedTargets: a `validate:"required"` tag on
+// a bool can't distinguish them (false is the zero value), so we preserve
+// the existing row value on omit via COALESCE rather than flipping it.
 type putReq struct {
 	TimeFormat             string          `json:"time_format" validate:"required,oneof=24h 12h"`
 	Timezone               string          `json:"timezone" validate:"required,min=1,max=64"`
@@ -193,6 +204,7 @@ type putReq struct {
 	ShowRecommendedTargets *bool           `json:"show_recommended_targets,omitempty"`
 	ChartPalette           ChartPalette    `json:"chart_palette" validate:"required"`
 	FeatureVisibility      map[string]bool `json:"feature_visibility" validate:"required"`
+	AutofillBottleAmount   *bool           `json:"autofill_bottle_amount,omitempty"`
 }
 
 func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
@@ -257,34 +269,43 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 	prefs.UserID = uid
 	var paletteRaw []byte
 	var featureRaw []byte
+	// autofill_bottle_amount uses the same preserve-on-omit semantics as
+	// show_recommended_targets but via COALESCE rather than a second SQL
+	// branch (two independent optional bools would otherwise be four
+	// branches). On INSERT a NULL param falls back to the column default
+	// (TRUE); on UPDATE it falls back to the existing row value — so we
+	// reference the table column directly, NOT EXCLUDED, on the conflict
+	// path.
 	if req.ShowRecommendedTargets != nil {
 		err = h.store.Pool.QueryRow(r.Context(), `
-			INSERT INTO user_preferences (user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			INSERT INTO user_preferences (user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, autofill_bottle_amount)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, TRUE))
 			ON CONFLICT (user_id) DO UPDATE
 			   SET time_format              = EXCLUDED.time_format,
 			       timezone                 = EXCLUDED.timezone,
 			       locale                   = EXCLUDED.locale,
 			       show_recommended_targets = EXCLUDED.show_recommended_targets,
 			       chart_palette            = EXCLUDED.chart_palette,
-			       feature_visibility       = EXCLUDED.feature_visibility
-			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, updated_at
-		`, uid, req.TimeFormat, req.Timezone, req.Locale, *req.ShowRecommendedTargets, paletteJSON, featureJSON).Scan(
-			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &featureRaw, &prefs.UpdatedAt,
+			       feature_visibility       = EXCLUDED.feature_visibility,
+			       autofill_bottle_amount   = COALESCE($8, user_preferences.autofill_bottle_amount)
+			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, autofill_bottle_amount, updated_at
+		`, uid, req.TimeFormat, req.Timezone, req.Locale, *req.ShowRecommendedTargets, paletteJSON, featureJSON, req.AutofillBottleAmount).Scan(
+			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &featureRaw, &prefs.AutofillBottleAmount, &prefs.UpdatedAt,
 		)
 	} else {
 		err = h.store.Pool.QueryRow(r.Context(), `
-			INSERT INTO user_preferences (user_id, time_format, timezone, locale, chart_palette, feature_visibility)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			INSERT INTO user_preferences (user_id, time_format, timezone, locale, chart_palette, feature_visibility, autofill_bottle_amount)
+			VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, TRUE))
 			ON CONFLICT (user_id) DO UPDATE
-			   SET time_format        = EXCLUDED.time_format,
-			       timezone           = EXCLUDED.timezone,
-			       locale             = EXCLUDED.locale,
-			       chart_palette      = EXCLUDED.chart_palette,
-			       feature_visibility = EXCLUDED.feature_visibility
-			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, updated_at
-		`, uid, req.TimeFormat, req.Timezone, req.Locale, paletteJSON, featureJSON).Scan(
-			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &featureRaw, &prefs.UpdatedAt,
+			   SET time_format            = EXCLUDED.time_format,
+			       timezone               = EXCLUDED.timezone,
+			       locale                 = EXCLUDED.locale,
+			       chart_palette          = EXCLUDED.chart_palette,
+			       feature_visibility     = EXCLUDED.feature_visibility,
+			       autofill_bottle_amount = COALESCE($7, user_preferences.autofill_bottle_amount)
+			RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, autofill_bottle_amount, updated_at
+		`, uid, req.TimeFormat, req.Timezone, req.Locale, paletteJSON, featureJSON, req.AutofillBottleAmount).Scan(
+			&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &featureRaw, &prefs.AutofillBottleAmount, &prefs.UpdatedAt,
 		)
 	}
 	if err != nil {
@@ -316,9 +337,9 @@ func loadOrSeed(ctx context.Context, st *store.Store, uid uuid.UUID) (UserPrefer
 	var paletteRaw []byte
 	var featureRaw []byte
 	err := st.Pool.QueryRow(ctx, `
-		SELECT user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, updated_at
+		SELECT user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, autofill_bottle_amount, updated_at
 		FROM user_preferences WHERE user_id = $1
-	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &featureRaw, &prefs.UpdatedAt)
+	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &featureRaw, &prefs.AutofillBottleAmount, &prefs.UpdatedAt)
 	if err == nil {
 		prefs.ChartPalette, err = chartPaletteFromJSON(paletteRaw)
 		if err != nil {
@@ -333,8 +354,8 @@ func loadOrSeed(ctx context.Context, st *store.Store, uid uuid.UUID) (UserPrefer
 	err = st.Pool.QueryRow(ctx, `
 		INSERT INTO user_preferences (user_id) VALUES ($1)
 		ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
-		RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, updated_at
-	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &featureRaw, &prefs.UpdatedAt)
+		RETURNING user_id, time_format, timezone, locale, show_recommended_targets, chart_palette, feature_visibility, autofill_bottle_amount, updated_at
+	`, uid).Scan(&prefs.UserID, &prefs.TimeFormat, &prefs.Timezone, &prefs.Locale, &prefs.ShowRecommendedTargets, &paletteRaw, &featureRaw, &prefs.AutofillBottleAmount, &prefs.UpdatedAt)
 	if err != nil {
 		return prefs, err
 	}

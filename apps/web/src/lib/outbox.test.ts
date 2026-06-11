@@ -36,6 +36,11 @@ const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 // Helper: poll the queue until the predicate holds or we time out.
 // Used in retry-loop tests where we don't know exactly when the next
 // drain tick lands but we do know the eventual end state.
+//
+// timeoutMs defaults to 2s because GH-hosted runners under load can
+// easily blow past tighter bounds even though the same drain finishes
+// in <100ms locally. Bailing on the first true predicate keeps the
+// happy path fast; the timeout is just the upper bound.
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   { timeoutMs = 2000, intervalMs = 5 }: { timeoutMs?: number; intervalMs?: number } = {},
@@ -169,7 +174,7 @@ describe("transient (5xx / network) retries", () => {
     });
     // Drain happens via the backoff timer chain in the background.
     // Poll until the queue is empty (eventual success on the 3rd try).
-    await waitFor(async () => (await peekQueue()).length === 0, { timeoutMs: 500 });
+    await waitFor(async () => (await peekQueue()).length === 0);
     expect(dispatcher).toHaveBeenCalledTimes(3);
   });
 
@@ -181,7 +186,7 @@ describe("transient (5xx / network) retries", () => {
       message: "down",
     }));
     await enqueueMutation({ method: "POST", path: "/x", idempotencyKey: "k" });
-    await waitFor(async () => (await getDead()).length === 1, { timeoutMs: 500 });
+    await waitFor(async () => (await getDead()).length === 1);
     const dead = await getDead();
     expect(dead[0].attempts).toBe(3);
     expect(dead[0].status).toBe("dead");
@@ -238,7 +243,7 @@ describe("auth errors (401)", () => {
 
     serverHas401 = false;
     await kickAfterReauth();
-    await waitFor(async () => (await peekQueue()).length === 0, { timeoutMs: 500 });
+    await waitFor(async () => (await peekQueue()).length === 0);
   });
 });
 
@@ -255,12 +260,12 @@ describe("manual interventions", () => {
       return { kind: "ok", status: 200, data: {} };
     });
     await enqueueMutation({ method: "POST", path: "/x", idempotencyKey: "k" });
-    await waitFor(async () => (await getDead()).length === 1, { timeoutMs: 500 });
+    await waitFor(async () => (await getDead()).length === 1);
 
     await retryDead();
     // After retryDead, the record is pending again with attempts=0;
     // the next dispatch (3rd overall) returns ok and drains.
-    await waitFor(async () => (await peekQueue()).length === 0, { timeoutMs: 500 });
+    await waitFor(async () => (await peekQueue()).length === 0);
     expect(failingCalls).toBe(3);
   });
 
@@ -331,7 +336,7 @@ describe("integration: badge state via dispatcher transitions", () => {
       body: { amount_ml: 60 },
       idempotencyKey: "k",
     });
-    await waitFor(async () => (await peekQueue()).length === 0, { timeoutMs: 500 });
+    await waitFor(async () => (await peekQueue()).length === 0);
     expect(callCount).toBe(2);
   });
 });

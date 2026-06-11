@@ -1,7 +1,7 @@
 // Integration tests for the diaper endpoints. Mirrors nursing_test.go and
 // auth_test.go: hits the real chi router against a live Postgres, spins up
 // a fresh user/household/baby per test so concurrent reruns don't collide.
-// Coverage focuses on the photo attach feature added by migration 000010 —
+// Coverage focuses on the photo attach feature added by migration 000011 —
 // the legacy CRUD shape is already exercised in chart_integration_test.go
 // and friends via the importer.
 package diaper_test

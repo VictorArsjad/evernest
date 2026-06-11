@@ -52,7 +52,7 @@ export function RecentRow({
   syncing?: boolean;
 }) {
   const at = parseISO(ev.at);
-  // Diaper rows can carry an optional photo (migration 000010). The
+  // Diaper rows can carry an optional photo (migration 000011). The
   // badge is only rendered when has_photo is true; tapping it lazily
   // mounts the photo URL hook so we don't pre-fetch every diaper image
   // on the Today / History screens.

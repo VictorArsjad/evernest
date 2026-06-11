@@ -1,6 +1,6 @@
 // Quick-log form for diapers. Three giant tap targets (wet / soiled / mixed),
 // a "When" datetime defaulting to now, an optional notes field, and an
-// optional photo picker (added with migration 000010). Same shape as the
+// optional photo picker (added with migration 000011). Same shape as the
 // bottle log so the muscle memory carries over. In edit mode
 // (`?edit=<uuid>`) the form patches an existing row and exposes a Delete
 // button for accidental double-logs.

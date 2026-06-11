@@ -4,7 +4,7 @@
 // notes. PATCH is partial (omitted fields stay untouched) and preserves
 // id / source / created_at / created_by_user_id server-side.
 //
-// Optional photo (added in migration 000010): the FE can attach a single
+// Optional photo (added in migration 000011): the FE can attach a single
 // compressed JPEG/PNG/WebP image to a diaper. To keep the offline outbox
 // path JSON-only, the image rides the same create/update body as a
 // base64 string in `photo` + an explicit `photo_mime`. The list endpoint
@@ -47,7 +47,7 @@ const (
 )
 
 // allowedPhotoMimes mirrors the diapers_photo_mime_chk constraint added in
-// migration 000010. Keep in sync if you ever loosen / tighten that list.
+// migration 000011. Keep in sync if you ever loosen / tighten that list.
 var allowedPhotoMimes = map[string]struct{}{
 	"image/jpeg": {},
 	"image/png":  {},

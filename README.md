@@ -19,11 +19,15 @@ A baby tracking app — feedings, pumping, diapers, growth, and charts — desig
 - Log a growth measurement (any combination of weight in grams, height in cm, head circumference in cm; at least one required).
 - See a "Today" hub: a wide banner infographic across the top with a glanceable "Fed Xh Ym ago" headline (or "Nursing now — 12m" while a session is open), "Last diaper Xh ago" subline, and a 7-day bottle-intake sparkline in the corner; below it, a tile for each event kind plus five inline stat cells (bottle / nursing / pumping / diaper / growth) with thin progress bars against age-based daily targets sourced from public AAP/WHO midpoints (not medical advice — toggle off in Settings if you find them prescriptive). Below the grid: a unified Recent list across all kinds, newest first.
 - See a "Charts" view: 7 / 14 / 30 day sparklines for every metric (bottle, nursing, pumping, diaper stack, weight) on a single screen. Every card has hover/tap tooltips that surface the active day's value (mouse hover on desktop, tap-to-toggle on mobile). The bottle chart is a stacked bar that splits expressed-breastmilk vs formula per day.
+- Browse a "History" view: 7 / 14 / 30 day windows of every event grouped by local day (Today / Yesterday / weekday), each day prefixed with a one-line roll-up (e.g. "120 ml · 18 min nursing · 3 diapers"). Sibling of Charts — Charts shows daily *totals*, History shows the individual events that made them up.
+- Edit or delete any past entry from any of the five log forms. Tap a row in the Today or History list to reopen the same form in edit mode (`/log/<kind>?edit=<id>`) with a Delete button for accidental double-logs.
 - Configure display units on the Settings screen — volume (ml/oz), length (cm/in), weight (kg/lb), and clock (24h/12h). Conversion happens entirely on the FE; historical rows always stay in canonical ml/cm/g.
 - Customize chart appearance from Settings → "Chart colors": pick one of five named presets (default, warm, pastel, high contrast, colorblind) and optionally override individual series colors via a native color picker. The "Today banner" card on the same screen lets you hide the recommended-target progress bars if you'd rather not see them.
+- Hide event kinds you don't track from the UI (Settings → "Visible features"): each toggle removes the matching Today banner stat, action tile, and Charts card without touching the underlying data — past entries stay in their tables and are still reachable from History.
+- Have the bottle-feed form prefill the Amount field with your most common recent bottle (the mode over the last ~14 days, so a one-off top-up never wins). Toggle off via Settings → "Bottle feeding" if you'd rather always start from a blank field.
 - Invite co-caregivers via single-use link (Settings → Household → Generate link). The link is `https://<your-origin>/invite/<token>`; recipients who tap the link sign in (or register), and are automatically added to the household with the role you picked (`owner` or `caregiver`). No email is sent in v1 — copy + share the link yourself.
 - Track multiple babies in a single household. The Today hub renders a baby switcher in the header when more than one exists, and remembers your selection per-household in localStorage so each device keeps its own active baby.
-- Stay signed in across hard-reloads (auto-refresh via httpOnly cookie).
+- Stay signed in across hard-reloads (auto-refresh via a `localStorage`-stored refresh token — not an `httpOnly` cookie, because iOS Safari ITP blocks the cross-site cookie between `github.io` and the ts.net API; see `apps/web/src/lib/authStore.ts` for the trade-off).
 - Sign out.
 - Install as a real app on iOS (Safari → Share → Add to Home Screen) or Android (Chrome's install prompt is surfaced via an in-app banner on the Today hub). Runs standalone with a proper app icon, dark status bar, and offline-capable shell via a Workbox-generated service worker.
 - Log feeds, diapers, pumpings, nursing sessions, and growth measurements while offline. The mutation lands in the Today list immediately with a small "syncing…" hint, and an IndexedDB-backed outbox replays it the next time the network returns. The Today header shows a compact `↑ N` badge whenever the queue has items, and `⚠ N` if any mutation hit a permanent error (4xx); tap the badge to retry or discard individually.
@@ -77,9 +81,12 @@ apps/
   api/      Go backend (chi router, pgx, migrations under apps/api/migrations)
   web/      Vite + React + TS PWA
 infra/
-  docker-compose.yml + Dockerfiles + Caddyfile
+  docker-compose.yml            dev (db only by default; `--profile dev` adds api)
+  docker-compose.prod.yml       prod overlay used by deploy-api.yml
+  docker-compose.homeserver.yml self-contained home-server stack (api + db + tailscale sidecar)
+  docker/                       api.Dockerfile, api-entrypoint.sh, tailscale-serve.json
 docs/
-  api.openapi.yaml, schema.md
+  api.openapi.yaml, schema.md, deploy.md
 Makefile    common dev/CI entrypoints
 ```
 
