@@ -58,8 +58,9 @@ has no volume, so this is why we don't try to fuse them at the DB layer).
 Display preferences live in two tables on purpose:
 
 - `user_preferences` (one row per user) — `time_format`, `timezone`, `locale`,
-  `show_recommended_targets`, plus two **JSONB** columns (`chart_palette`,
-  `feature_visibility`) that the FE always round-trips on every save.
+  `show_recommended_targets`, `autofill_bottle_amount`, plus two **JSONB**
+  columns (`chart_palette`, `feature_visibility`) that the FE always
+  round-trips on every save.
 - `baby_settings` (one row per baby) — `unit_volume`, `unit_length`,
   `unit_weight`. Units are per-baby because siblings can be tracked in
   different systems (e.g. metric vs imperial during a transition).
@@ -80,6 +81,13 @@ touching the underlying data. Past entries remain in their tables; this
 column only gates UI surfaces. The closed allowlist is enforced
 post-validator in `apps/api/internal/preferences/preferences.go` so a
 malformed PUT can't sneak a new key in.
+
+`autofill_bottle_amount` (boolean, added in migration 000010, `DEFAULT true`)
+gates the bottle-feed log form's "prefill the Amount field from recent feeds"
+convenience — bottle amounts are usually constant, so the FE suggests the most
+common amount from the last ~14 days. Like `show_recommended_targets` it's a
+preserve-on-omit field on PUT (a pointer in the handler, resolved via
+`COALESCE` so an older FE build that omits it doesn't reset the user's choice).
 
 ## `source` column on every event table
 

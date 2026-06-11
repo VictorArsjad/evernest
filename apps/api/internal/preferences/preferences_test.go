@@ -176,6 +176,7 @@ type prefsResp struct {
 	ShowRecommendedTargets bool            `json:"show_recommended_targets"`
 	ChartPalette           chartPalette    `json:"chart_palette"`
 	FeatureVisibility      map[string]bool `json:"feature_visibility"`
+	AutofillBottleAmount   bool            `json:"autofill_bottle_amount"`
 	UpdatedAt              time.Time       `json:"updated_at"`
 }
 
@@ -226,6 +227,11 @@ func TestUserPreferences_GetReturnsDefaults(t *testing.T) {
 	}
 	if len(got.FeatureVisibility) != 0 {
 		t.Fatalf("feature_visibility should be empty by default, got %+v", got.FeatureVisibility)
+	}
+	// Newly-created users should get the bottle-amount prefill convenience
+	// by default; users opt out via the settings screen.
+	if !got.AutofillBottleAmount {
+		t.Fatalf("autofill_bottle_amount default should be true: %+v", got)
 	}
 }
 
@@ -310,6 +316,70 @@ func TestUserPreferences_PutShowTargets(t *testing.T) {
 	}
 	if preserved.TimeFormat != "12h" {
 		t.Fatalf("other fields should still update: %+v", preserved)
+	}
+}
+
+// TestUserPreferences_PutAutofillBottleAmount mirrors the show_targets
+// test: flipping autofill_bottle_amount off should persist, and a later
+// PUT that omits the field (older FE build) must NOT silently flip it
+// back to the default true.
+func TestUserPreferences_PutAutofillBottleAmount(t *testing.T) {
+	te := newTestEnv(t)
+
+	// Flip the toggle off.
+	res := te.do(t, "PUT", "/v1/me/preferences", map[string]any{
+		"time_format":            "24h",
+		"timezone":               "UTC",
+		"locale":                 "en",
+		"autofill_bottle_amount": false,
+		"chart_palette":          defaultPalettePayload(),
+		"feature_visibility":     defaultFeatureVisibilityPayload(),
+	}, te.token)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("put prefs (off): %d %s", res.StatusCode, readBody(res))
+	}
+	var got prefsResp
+	decodeJSON(t, res, &got)
+	if got.AutofillBottleAmount {
+		t.Fatalf("autofill_bottle_amount should be false: %+v", got)
+	}
+
+	// PUT without the field — old FE build path — and verify the server
+	// preserves the false we just set rather than resetting to default.
+	res = te.do(t, "PUT", "/v1/me/preferences", map[string]any{
+		"time_format":        "12h",
+		"timezone":           "UTC",
+		"locale":             "en",
+		"chart_palette":      defaultPalettePayload(),
+		"feature_visibility": defaultFeatureVisibilityPayload(),
+	}, te.token)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("put prefs (omit): %d %s", res.StatusCode, readBody(res))
+	}
+	var preserved prefsResp
+	decodeJSON(t, res, &preserved)
+	if preserved.AutofillBottleAmount {
+		t.Fatalf("autofill_bottle_amount should be preserved as false when omitted: %+v", preserved)
+	}
+
+	// Re-enable explicitly and confirm it survives a GET round-trip.
+	res = te.do(t, "PUT", "/v1/me/preferences", map[string]any{
+		"time_format":            "12h",
+		"timezone":               "UTC",
+		"locale":                 "en",
+		"autofill_bottle_amount": true,
+		"chart_palette":          defaultPalettePayload(),
+		"feature_visibility":     defaultFeatureVisibilityPayload(),
+	}, te.token)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("put prefs (on): %d %s", res.StatusCode, readBody(res))
+	}
+	_ = res.Body.Close()
+	res = te.do(t, "GET", "/v1/me/preferences", nil, te.token)
+	var refetched prefsResp
+	decodeJSON(t, res, &refetched)
+	if !refetched.AutofillBottleAmount {
+		t.Fatalf("autofill_bottle_amount should be true after re-enable: %+v", refetched)
 	}
 }
 

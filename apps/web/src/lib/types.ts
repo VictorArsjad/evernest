@@ -176,6 +176,13 @@ export interface UserPreferences {
   // See lib/featureVisibility.ts for the helper used at every render
   // surface.
   feature_visibility: FeatureVisibilityMap;
+  // autofill_bottle_amount gates the bottle-feed log form's "prefill the
+  // Amount field from recent feeds" convenience. Bottle amounts are
+  // usually constant, so the form suggests the most common amount from the
+  // last ~14 days. Stored as a boolean column on user_preferences
+  // (migration 000010). Default true; user can opt out from the settings
+  // screen.
+  autofill_bottle_amount: boolean;
   updated_at: string;
 }
 

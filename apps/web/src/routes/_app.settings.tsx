@@ -130,6 +130,19 @@ function SettingsPage() {
 
       <section className="card flex flex-col gap-4 p-5">
         <header>
+          <h2 className="text-base font-semibold">Bottle feeding</h2>
+        </header>
+        {me.isError ? (
+          <p className="text-sm text-red-400">
+            {me.error?.message ?? "Could not load your preferences."}
+          </p>
+        ) : (
+          <BottleFeedingFields prefs={me.data} disabled={!me.data} />
+        )}
+      </section>
+
+      <section className="card flex flex-col gap-4 p-5">
+        <header>
           <h2 className="text-base font-semibold">Visible features</h2>
         </header>
         {me.isError ? (
@@ -509,6 +522,7 @@ function UserTimeFields({
         show_recommended_targets: prefs.show_recommended_targets,
         chart_palette: prefs.chart_palette,
         feature_visibility: prefs.feature_visibility,
+        autofill_bottle_amount: prefs.autofill_bottle_amount,
       },
       { onSuccess: () => setSavedTick((t) => t + 1) },
     );
@@ -570,6 +584,7 @@ function TodayBannerFields({
         show_recommended_targets: next,
         chart_palette: prefs.chart_palette,
         feature_visibility: prefs.feature_visibility,
+        autofill_bottle_amount: prefs.autofill_bottle_amount,
       },
       { onSuccess: () => setSavedTick((t) => t + 1) },
     );
@@ -593,6 +608,78 @@ function TodayBannerFields({
             Compare today's totals against typical ranges for your baby's
             age. These are general guidelines, not medical advice — turn
             this off if you'd rather not see comparisons.
+          </span>
+        </span>
+      </label>
+      <SaveAffordance
+        show={showSaved}
+        pending={update.isPending}
+        error={update.error?.message ?? null}
+      />
+    </div>
+  );
+}
+
+// --- bottle-feeding autofill toggle ---
+
+// BottleFeedingFields surfaces the per-user "auto-fill amount from recent
+// feeds" toggle. When on, the bottle-feed log form prefills the Amount
+// field with the most common amount logged over the last ~14 days (bottle
+// amounts are usually constant, so this saves a tap on the app's most
+// frequent action). Same single-boolean optimistic-checkbox pattern as
+// TodayBannerFields; rides the same full-replace useUpdateMyPreferences.
+function BottleFeedingFields({
+  prefs,
+  disabled,
+}: {
+  prefs: UserPreferences | undefined;
+  disabled: boolean;
+}) {
+  const update = useUpdateMyPreferences();
+  const [savedTick, setSavedTick] = useState(0);
+  const [showSaved, setShowSaved] = useState(false);
+  useEffect(() => {
+    if (savedTick === 0) return;
+    setShowSaved(true);
+    const id = window.setTimeout(() => setShowSaved(false), 1800);
+    return () => window.clearTimeout(id);
+  }, [savedTick]);
+
+  const onToggle = (next: boolean) => {
+    if (!prefs) return;
+    update.mutate(
+      {
+        time_format: prefs.time_format,
+        timezone: prefs.timezone,
+        locale: prefs.locale,
+        show_recommended_targets: prefs.show_recommended_targets,
+        chart_palette: prefs.chart_palette,
+        feature_visibility: prefs.feature_visibility,
+        autofill_bottle_amount: next,
+      },
+      { onSuccess: () => setSavedTick((t) => t + 1) },
+    );
+  };
+
+  const checked = prefs?.autofill_bottle_amount ?? true;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <label className="flex cursor-pointer items-start gap-3">
+        <input
+          type="checkbox"
+          disabled={disabled}
+          checked={checked}
+          onChange={(e) => onToggle(e.target.checked)}
+          className="mt-1 h-5 w-5 shrink-0 cursor-pointer rounded border-white/20 bg-bg-subtle text-accent accent-accent focus:ring-2 focus:ring-accent disabled:opacity-50"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium">Auto-fill amount from recent feeds</span>
+          <span className="text-[11px] text-white/40">
+            Prefill the bottle Amount with your most common recent amount so
+            logging is one tap faster. It's always editable, and adapts as
+            your baby's usual feed changes. Turn this off to start from an
+            empty field.
           </span>
         </span>
       </label>
@@ -656,6 +743,7 @@ function FeatureVisibilityFields({
         show_recommended_targets: prefs.show_recommended_targets,
         chart_palette: prefs.chart_palette,
         feature_visibility: next,
+        autofill_bottle_amount: prefs.autofill_bottle_amount,
       },
       { onSuccess: () => setSavedTick((t) => t + 1) },
     );
@@ -825,6 +913,7 @@ function ChartColorsFields({
         show_recommended_targets: prefs.show_recommended_targets,
         chart_palette: next,
         feature_visibility: prefs.feature_visibility,
+        autofill_bottle_amount: prefs.autofill_bottle_amount,
       },
       { onSuccess: () => setSavedTick((t) => t + 1) },
     );

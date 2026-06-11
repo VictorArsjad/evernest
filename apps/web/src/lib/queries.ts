@@ -1125,6 +1125,11 @@ export function useUpdateMyPreferences() {
       // {} means no features hidden). Callers read the current value
       // from useMyPreferences and pass it back on every save.
       feature_visibility: FeatureVisibilityMap;
+      // autofill_bottle_amount toggles the bottle-form prefill. The BE
+      // preserves-on-omit, but the FE always round-trips the current value
+      // (read from useMyPreferences) so an unrelated settings change never
+      // depends on that fallback.
+      autofill_bottle_amount: boolean;
     }) => api<UserPreferences>("/me/preferences", { method: "PUT", body: vars }),
     onSuccess: (data) => qc.setQueryData(qk.myPreferences, data),
   });
