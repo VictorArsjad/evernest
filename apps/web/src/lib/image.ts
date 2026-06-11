@@ -175,10 +175,13 @@ export async function compressForUpload(
 
   // Decode first so we know the natural dimensions; the bitmap is
   // closed inside drawToCanvas to release the underlying buffer.
-  // createImageBitmap accepts any Blob the browser knows how to
-  // decode (HEIC/HEIF on iOS, all the usual web formats elsewhere) —
-  // so the user can pick a HEIC straight off an iPhone and we
-  // transcode to JPEG on the way out.
+  // createImageBitmap accepts whatever the browser natively decodes:
+  //   - Safari/WebKit: also HEIC/HEIF (the iOS-native format)
+  //   - Chrome/Firefox/Edge (incl. Chrome on Android): NOT HEIC
+  // Callers are expected to pre-filter HEIC inputs and surface a
+  // friendly error — see onPickPhoto in _app.log.diaper.tsx. If a
+  // HEIC slips through, this will throw a DOMException that we
+  // translate to "could not process photo".
   const tempBitmap = await createImageBitmap(file);
   const { width, height } = fitInside(tempBitmap.width, tempBitmap.height, maxEdge);
   tempBitmap.close?.();

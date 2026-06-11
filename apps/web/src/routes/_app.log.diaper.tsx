@@ -32,6 +32,19 @@ export const Route = createFileRoute("/_app/log/diaper")({
   component: LogDiaperPage,
 });
 
+// isHeicFile decides whether a picked file is HEIC/HEIF. We check the
+// MIME type first (set by every browser whose picker knows about HEIC)
+// and fall back to the extension for old iOS / share-sheet sources
+// that leave Blob.type empty.
+function isHeicFile(file: File): boolean {
+  const mime = file.type.toLowerCase();
+  if (mime === "image/heic" || mime === "image/heif" || mime === "image/heic-sequence") {
+    return true;
+  }
+  const name = file.name.toLowerCase();
+  return name.endsWith(".heic") || name.endsWith(".heif");
+}
+
 // base64ToBlob round-trips the compressed payload back into a Blob so
 // we can build a preview URL. Cheaper than holding onto the original
 // File / source bitmap, and lets the preview reflect the exact bytes
@@ -162,6 +175,28 @@ function LogDiaperPage() {
     e.target.value = "";
     if (!file) return;
     setPhotoError(null);
+    // Bail out on HEIC/HEIF up front. iPhone Photos exports HEIC by
+    // default unless the user has flipped Settings → Camera → Formats
+    // → Most Compatible; non-Safari browsers (Chrome/Firefox/Edge,
+    // *and* Chrome on Android) cannot decode HEIC via
+    // createImageBitmap. Without this sniff the compressor throws a
+    // generic DOMException that we surface as "could not process
+    // photo" — opaque and unactionable. Detection is belt + braces:
+    // most pickers populate file.type ("image/heic" or "image/heif"),
+    // but some (older iOS, share sheets) leave it empty, so we also
+    // glance at the extension. Anything image/* that's clearly NOT
+    // HEIC falls through to compressForUpload where the bitmap
+    // decoder is the ultimate gatekeeper.
+    if (isHeicFile(file)) {
+      console.warn(
+        "[diaper-photo] rejecting HEIC input",
+        { name: file.name, type: file.type, size: file.size },
+      );
+      setPhotoError(
+        "iPhone HEIC photos aren't supported here. Retake the photo, or change Settings → Camera → Formats → Most Compatible and try again.",
+      );
+      return;
+    }
     setPhotoBusy(true);
     try {
       const compressed = await compressForUpload(file);
@@ -185,6 +220,13 @@ function LogDiaperPage() {
       });
       setExistingCleared(false);
     } catch (err) {
+      // First and so far only piece of console logging in apps/web/src.
+      // We accept the noise on prod because the alternative is
+      // "user reports a vague error and we have nothing to go on".
+      console.warn(
+        "[diaper-photo] compressForUpload failed",
+        { name: file.name, type: file.type, size: file.size, err },
+      );
       setPhotoError((err as Error)?.message ?? "could not process photo");
     } finally {
       setPhotoBusy(false);
