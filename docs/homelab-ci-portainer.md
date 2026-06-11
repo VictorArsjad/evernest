@@ -1,25 +1,26 @@
-# Homelab CI via Portainer API (experimental)
+# Homelab CI via Portainer API
 
-Reusable pattern for deploying containerized apps to a home server **without
-SSH or manual Portainer clicks after bootstrap**. This repo ships an experimental
-workflow; copy the idea to other homelab projects.
+How Evernest deploys the API container to the home server, and a reusable
+pattern for any other homelab project: build + push the image from CI,
+then ask Portainer's API to redeploy the stack — **no SSH, no `git pull`
+on the host, no manual Portainer clicks** after the one-time bootstrap.
 
-**Default prod path is unchanged:** `deploy-api.yml` still SSHs into the server.
-This experimental workflow is opt-in and disabled until you flip
-`HOMELAB_DEPLOY_ENABLED=true`.
+(This was the experimental "Option B" path; promoted to the default
+deploy in June 2026 after the SSH-based `deploy-api.yml` proved brittle
+against a Portainer-managed stack.)
 
 ## How it works
 
 ```
-push master → ci green → deploy-api-homelab-experimental
-                              ├── build + push ghcr.io/.../evernest-api:{sha,latest}
-                              └── tailscale join → PUT Portainer /stacks/{id}/git/redeploy
-                                                      ├── git pull latest compose
-                                                      └── repullImageAndRedeploy (:latest)
+push master → ci green → deploy-api
+                          ├── build + push ghcr.io/.../evernest-api:{sha,latest}
+                          └── tailscale join → PUT Portainer /stacks/{id}/git/redeploy
+                                                  ├── git pull latest compose
+                                                  └── repullImageAndRedeploy (:latest)
 ```
 
-Portainer remains the source of truth for the running stack. CI never SSHs and
-never runs `docker compose` on the host.
+Portainer remains the source of truth for the running stack. CI never SSHes
+and never runs `docker compose` on the host.
 
 ## One-time Portainer bootstrap (~10 min)
 
@@ -84,7 +85,6 @@ API key (and optional git PAT) live in `secrets`; the URL and IDs live in
 
 | Name | Value |
 |---|---|
-| `HOMELAB_DEPLOY_ENABLED` | `true` when ready (leave unset/`false` while testing) |
 | `PORTAINER_URL` | Base URL, tailnet-reachable (e.g. `https://ubuntu.<tail>.ts.net:9443`) |
 | `PORTAINER_STACK_ID` | Numeric stack id |
 | `PORTAINER_ENDPOINT_ID` | Numeric endpoint id (usually `1`) |
@@ -93,41 +93,29 @@ API key (and optional git PAT) live in `secrets`; the URL and IDs live in
 
 | Name | Purpose |
 |---|---|
-| `TS_OAUTH_CLIENT_ID` / `TS_OAUTH_SECRET` | Same as prod — runner joins tailnet to reach Portainer |
+| `TS_OAUTH_CLIENT_ID` / `TS_OAUTH_SECRET` | Runner joins tailnet to reach Portainer |
 | `PORTAINER_API_KEY` | Access token (`ptr_...`) |
 | `PORTAINER_GIT_TOKEN` | Optional — GitHub PAT if Portainer stack pulls a private repo |
-
-**Important:** while experimenting, keep `HOMELAB_DEPLOY_ENABLED` false (or
-unset) so you do not double-deploy alongside `deploy-api.yml` SSH on every push.
 
 ### 4. Smoke-test
 
 ```bash
-# Manual trigger first — Actions → deploy-api-homelab-experimental → Run workflow
+# Manual trigger first — Actions → deploy-api → Run workflow
 ```
 
 Check Portainer stack logs and `curl .../healthz`.
 
 ## Copying to another homelab repo
 
-1. Copy `.github/workflows/deploy-api-homelab-experimental.yml`.
+1. Copy `.github/workflows/deploy-api.yml`.
 2. Adjust `file:` in the build step to your Dockerfile path and image name.
-3. Point the Portainer Git stack at that repo’s compose file.
+3. Point the Portainer Git stack at that repo's compose file.
 4. Set `EVERNEST_API_IMAGE` equivalent to `ghcr.io/<owner>/<app>:latest` in
    Portainer env.
 5. Reuse the same GitHub secrets if Portainer/Tailscale live on one homelab;
    use per-app `PORTAINER_STACK_ID` values.
 
 Minimal secret set per app: `PORTAINER_STACK_ID` (+ shared Portainer URL/key/endpoint).
-
-## Portainer API vs SSH (prod)
-
-| | SSH (`deploy-api.yml`) | Portainer API (this doc) |
-|---|---|---|
-| Runner reachability | Tailscale → SSH | Tailscale → Portainer HTTPS |
-| Host needs git clone | Yes (`~/evernest`) | No — Portainer clones |
-| Ongoing homelab ops | `git pull` + compose | Portainer `git/redeploy` |
-| Portainer UI | Optional | One-time stack create |
 
 ## Troubleshooting
 
@@ -144,5 +132,5 @@ Minimal secret set per app: `PORTAINER_STACK_ID` (+ shared Portainer URL/key/end
 ## Reference
 
 - Portainer git redeploy: `PUT /api/stacks/{id}/git/redeploy?endpointId={id}`
-- Workflow: `.github/workflows/deploy-api-homelab-experimental.yml`
+- Workflow: `.github/workflows/deploy-api.yml`
 - Compose file: `infra/docker-compose.homeserver.yml`
