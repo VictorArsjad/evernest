@@ -90,12 +90,21 @@ export interface BottleFeed {
 
 export type DiaperType = "wet" | "soiled" | "mixed";
 
+export type DiaperPhotoMime = "image/jpeg" | "image/png" | "image/webp";
+
 export interface Diaper {
   id: string;
   baby_id: string;
   occurred_at: string;
   type: DiaperType;
   notes?: string | null;
+  // has_photo is the canary the list endpoint emits in place of the raw
+  // bytes. The actual image is fetched on demand via
+  // GET /v1/diapers/{id}/photo (see useDiaperPhotoUrl). photo_mime is
+  // populated when has_photo is true so consumers know the Content-Type
+  // they're about to render.
+  has_photo: boolean;
+  photo_mime?: DiaperPhotoMime | null;
   source: string;
   created_at: string;
 }

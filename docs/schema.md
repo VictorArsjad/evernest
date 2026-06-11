@@ -89,6 +89,29 @@ common amount from the last ~14 days. Like `show_recommended_targets` it's a
 preserve-on-omit field on PUT (a pointer in the handler, resolved via
 `COALESCE` so an older FE build that omits it doesn't reset the user's choice).
 
+## Diaper photo attachment (migration 000011)
+
+`diapers` has two optional photo columns:
+
+- `photo bytea` — raw image bytes.
+- `photo_mime text` — one of `image/jpeg`, `image/png`, `image/webp`.
+
+Paired `CHECK` constraints (`diapers_photo_pair_chk`, `diapers_photo_mime_chk`)
+keep both columns NULL together or both populated with an allowlisted MIME.
+The FE compresses every pick to a JPEG ≤1024 px on the long edge (~150–400 KB)
+before sending; the API caps the raw decoded image at 2 MB and the wire body
+at 3 MB.
+
+Transport is base64-in-JSON so the photo rides the same offline outbox path
+as the rest of the diaper row — no multipart, no second round-trip, no Blob
+in IndexedDB. To keep the list endpoint fast even on dialup, the SQL projects
+`(photo IS NOT NULL) AS has_photo` and never selects the blob; clients fetch
+the bytes on demand via the dedicated `GET /v1/diapers/{id}/photo` route,
+which streams the raw image with a 5-minute private cache header. Postgres
+TOAST handles out-of-line storage automatically, so list scans only read the
+main heap row's TOAST pointer — adding photos does not regress the existing
+`diapers_baby_occurred_idx`-driven plan.
+
 ## `source` column on every event table
 
 Every event table has a `source text not null default 'manual'` column. Values

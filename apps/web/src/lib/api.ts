@@ -168,6 +168,52 @@ export async function api<T>(path: string, opts: RequestOpts = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+// apiBlob is the read-only sibling of api() for endpoints that stream
+// raw bytes (e.g. GET /v1/diapers/{id}/photo). Mirrors the same
+// access-token + 401→refresh→retry dance so callers don't have to
+// re-invent it for media routes. Always uses GET; non-2xx still throws
+// ApiError, but a 204 resolves to `null` so the caller can distinguish
+// "no photo attached" from "no row".
+export async function apiBlob(
+  path: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<Blob | null> {
+  const doFetch = async (token: string | null) => {
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return fetch(`${BASE}${path}`, { method: "GET", headers, signal: opts.signal });
+  };
+
+  let res = await doFetch(useAuthStore.getState().accessToken);
+  if (res.status === 401 && !path.startsWith("/auth/")) {
+    const refreshed = await tryRefresh();
+    if (refreshed) {
+      res = await doFetch(refreshed.access_token);
+    } else {
+      useAuthStore.getState().clear();
+    }
+  }
+
+  if (res.status === 204) return null;
+  if (!res.ok) {
+    let code = "unknown";
+    let message = res.statusText || `request failed (${res.status})`;
+    try {
+      const errBody = (await res.json()) as {
+        error?: { code: string; message: string };
+      };
+      if (errBody.error) {
+        code = errBody.error.code;
+        message = errBody.error.message;
+      }
+    } catch {
+      // body was empty or non-JSON; keep defaults
+    }
+    throw new ApiError(res.status, code, message);
+  }
+  return await res.blob();
+}
+
 // Convenience: bootstrap the auth store by attempting a silent refresh.
 // Returns true if we ended up authenticated, false otherwise.
 export async function bootstrapAuth(): Promise<boolean> {
