@@ -19,10 +19,16 @@ flip plan) live alongside the rest of the engineering plans; this file is the
                                                    ├── docker build + push
                                                    │     ghcr.io/<owner>/evernest-api:{sha,latest}
                                                    └── tailscale up (ephemeral, tag:ci)
-                                                       └── ssh victor@<DEPLOY_HOST>
-                                                           └── git pull + compose pull/up
-                                                                  on the home server
+                                                       └── PUT Portainer /api/stacks/{id}/git/redeploy
+                                                           ├── Portainer git-pulls latest compose
+                                                           └── repullImageAndRedeploy (:latest)
 ```
+
+The home server is a Portainer-managed Git stack (compose project at
+`/data/compose/<id>/...` on the host). Portainer owns the stack's
+filesystem and `docker compose` lifecycle; CI just builds the image and
+tells Portainer to redeploy. Bootstrap details: see
+[homelab-ci-portainer.md](./homelab-ci-portainer.md).
 
 On the home server, the prod compose stack is:
 
@@ -44,45 +50,31 @@ The frontend is **not** in compose anymore; GitHub Pages serves it.
 - **Settings → Variables → Actions** (`vars`):
   - `VITE_API_BASE_URL` = `https://<TS_HOSTNAME>.<tail>.ts.net` (no trailing
     slash).
+  - `PORTAINER_URL` / `PORTAINER_STACK_ID` / `PORTAINER_ENDPOINT_ID` — see
+    [homelab-ci-portainer.md](./homelab-ci-portainer.md) §3.
 - **Settings → Secrets → Actions**:
   - `TS_OAUTH_CLIENT_ID` / `TS_OAUTH_SECRET` — Tailscale admin → Settings →
     OAuth clients. Scope `auth_keys`, tag `tag:ci`.
-  - `DEPLOY_HOST` — MagicDNS name of the home server (e.g. `evernest`).
-  - `DEPLOY_SSH_KEY` — ed25519 private key whose pub is in
-    `victor@<DEPLOY_HOST>:~/.ssh/authorized_keys`.
+  - `PORTAINER_API_KEY` — Portainer access token (`ptr_…`).
+  - `PORTAINER_GIT_TOKEN` — optional GitHub PAT if Portainer is pulling this
+    repo as a private source.
 - **Settings → Actions → General → Workflow permissions**: "Read and write
   permissions" (so `GITHUB_TOKEN` can push to GHCR).
 
 ### 2. Home-server bootstrap
 
-On the Ubuntu home server (`victor@<DEPLOY_HOST>`):
+Use Portainer's UI for a one-time stack create — see
+[homelab-ci-portainer.md](./homelab-ci-portainer.md) §1 for the Git stack
+fields and environment variables Portainer needs.
+
+Compose file the stack points at:
+`infra/docker-compose.homeserver.yml`.
+
+After Portainer pulls and starts the stack once, smoke-check from any
+tailnet device:
 
 ```bash
-git clone git@github.com:<owner>/evernest.git /home/victor/evernest
-cd /home/victor/evernest
-
-cp .env.example .env
-# Edit .env — at minimum:
-#   GHCR_OWNER=<owner-lowercase>
-#   TS_AUTHKEY=tskey-auth-...           # reusable, ephemeral=false, tag:server
-#   TS_HOSTNAME=evernest
-#   POSTGRES_PASSWORD=<strong>
-#   JWT_SECRET=<openssl rand -hex 32>
-#   CORS_ALLOW_ORIGIN=https://<owner>.github.io
-#   PUBLIC_WEB_ORIGIN=https://<owner>.github.io
-#   COOKIE_SAMESITE=none
-chmod 600 .env
-
-# read:packages PAT for GHCR pull (one-time per server).
-echo "$GHCR_PAT" | docker login ghcr.io -u <gh-user> --password-stdin
-
-# Bring the stack up. The first run blocks on tailscale logging in with
-# TS_AUTHKEY; subsequent runs reuse the persisted state in the ts-state volume.
-docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml --profile prod up -d
-
-# Smoke-check from any tailnet device:
-docker exec evernest-tailscale tailscale status
-docker exec evernest-tailscale tailscale serve status
+ssh victor@<homelab-lan-ip> 'docker exec evernest-tailscale tailscale status'
 curl https://<TS_HOSTNAME>.<tail>.ts.net/healthz   # → 200
 ```
 
@@ -93,10 +85,11 @@ Push a no-op commit to `master`. You should see:
 1. `ci` workflow runs → green.
 2. `deploy-web` triggers via `workflow_run` → publishes to GH Pages.
 3. `deploy-api` triggers in parallel → builds + pushes to GHCR, then
-   ssh-deploys.
+   PUTs Portainer's git/redeploy endpoint.
 
-The GH Pages URL is shown on the `deploy` job summary; `docker compose ps`
-on the home server should show the new image SHA in `IMAGE`.
+The GH Pages URL is shown on the `deploy` job summary; the deploy job's
+log includes the new image's `:<sha>` tag, and Portainer's stack page
+shows the redeploy timestamp.
 
 ## Public-access flip
 
@@ -134,14 +127,9 @@ echo "$GHCR_PAT" | docker login ghcr.io -u <gh-user> --password-stdin
 docker compose -f infra/docker-compose.homeserver.yml --env-file .env up -d
 ```
 
-The merged prod overlay (`docker-compose.yml` + `docker-compose.prod.yml`) remains
-what CI uses on deploy; set `EVERNEST_API_IMAGE` in `.env` to pin a SHA instead of
-`:latest`.
-
-### Experimental: Portainer API homelab CI
-
-Opt-in alternative that redeploys via Portainer’s API (no SSH, no git clone on
-the host). Disabled by default — see [homelab-ci-experimental.md](./homelab-ci-experimental.md).
+CI uses `infra/docker-compose.homeserver.yml` as the source of truth (it's
+what Portainer pulls). Set `EVERNEST_API_IMAGE` in the Portainer stack's UI
+to pin a `:<sha>` tag instead of `:latest` if you want belt-and-suspenders.
 
 ## What CI cannot verify
 
@@ -151,12 +139,15 @@ These only work after a real push to `master`:
 - The GHCR image actually pushes (requires the `packages: write` permission to
   be enabled at the repo level).
 - The Tailscale OAuth client successfully joins the runner to the tailnet.
-- The SSH-into-tailnet host step actually reaches `<DEPLOY_HOST>`.
-- The home server has docker, the right ssh key, and a populated `.env`.
+- The Portainer API responds at `PORTAINER_URL` from the tailnet.
+- Portainer can pull the GHCR image and git-pull the repo (if private,
+  `PORTAINER_GIT_TOKEN` is set).
 
-If any of those break, the `deploy-api.yml` job will fail with a clear log;
-the failure is contained (no half-deploy state because compose `up -d` is
-atomic per service).
+If any of those break, the `deploy-api.yml` job will fail with a clear log
+(it dumps Portainer's HTTP response body on any 4xx/5xx, see
+[homelab-ci-portainer.md](./homelab-ci-portainer.md) §Troubleshooting).
+The failure is contained: Portainer only flips the running stack once the
+redeploy succeeds end-to-end.
 
 ## Reference
 

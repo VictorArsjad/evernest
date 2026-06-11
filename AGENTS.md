@@ -27,7 +27,7 @@ multiple caregivers log activity for the same baby. Design notes live in
   - `evernest-db-1` — Postgres 16, internal-only (no published port).
   - `evernest-tailscale` — owns the netns; terminates TLS for the API.
 - **Image** — `ghcr.io/victorarsjad/evernest-api:<sha>` (pin in `.env`'s `EVERNEST_API_IMAGE`).
-- **Deploy** — push to `master` → `.github/workflows/ci.yml` → green → `deploy-web.yml` (GH Pages) + `deploy-api.yml` (GHCR build/push, then Tailscale-OAuth join + ssh-action over the tailnet).
+- **Deploy** — push to `master` → `.github/workflows/ci.yml` → green → `deploy-web.yml` (GH Pages) + `deploy-api.yml` (GHCR build/push, then Tailscale-OAuth join + Portainer `git/redeploy` API call over the tailnet). Portainer pulls `infra/docker-compose.homeserver.yml` from this repo and re-pulls `:latest` of the API image. See `docs/homelab-ci-portainer.md` for the bootstrap.
 
 ## How to run admin / one-shot tasks on prod
 
