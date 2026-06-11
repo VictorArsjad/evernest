@@ -54,6 +54,11 @@ function HistoryPage() {
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
   const [range, setRange] = useState<WindowDays>(7);
+  // Per-day expand overrides. Absence of a key means "fall through to the
+  // default", which is `idx === 0` (the newest group is open). Storing
+  // overrides instead of an explicit expanded set lets switching range
+  // (7d/14d/30d) preserve toggles without a reseed effect.
+  const [expandOverrides, setExpandOverrides] = useState<Record<string, boolean>>({});
 
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
@@ -121,9 +126,20 @@ function HistoryPage() {
         </p>
       ) : (
         <div className="flex flex-col gap-5">
-          {groups.map((g) => (
-            <DaySection key={g.dayKey} group={g} prefs={prefs} />
-          ))}
+          {groups.map((g, idx) => {
+            const isExpanded = expandOverrides[g.dayKey] ?? idx === 0;
+            return (
+              <DaySection
+                key={g.dayKey}
+                group={g}
+                prefs={prefs}
+                isExpanded={isExpanded}
+                onToggle={() =>
+                  setExpandOverrides((prev) => ({ ...prev, [g.dayKey]: !isExpanded }))
+                }
+              />
+            );
+          })}
         </div>
       )}
     </PageShell>
@@ -133,9 +149,13 @@ function HistoryPage() {
 function DaySection({
   group,
   prefs,
+  isExpanded,
+  onToggle,
 }: {
   group: DayGroup;
   prefs: CombinedPreferences;
+  isExpanded: boolean;
+  onToggle: () => void;
 }) {
   const heading = isToday(group.date)
     ? "Today"
@@ -143,25 +163,57 @@ function DaySection({
       ? "Yesterday"
       : format(group.date, "EEE, MMM d");
   const summary = formatDaySummary(group.events, prefs);
+  const contentId = `history-day-${group.dayKey}`;
   return (
     <section className="flex flex-col gap-2">
-      <header className="flex items-baseline justify-between gap-3">
-        <h2 className="text-sm font-medium text-white/70">{heading}</h2>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={isExpanded}
+        aria-controls={contentId}
+        className="-mx-1 flex w-full items-baseline justify-between gap-3 rounded-md px-1 py-0.5 text-left transition hover:bg-white/5 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/30"
+      >
+        <span className="flex items-baseline gap-2">
+          <Chevron expanded={isExpanded} />
+          <span className="text-sm font-medium text-white/70">{heading}</span>
+        </span>
         {summary && (
           <span className="truncate text-xs text-white/50">{summary}</span>
         )}
-      </header>
-      <ul className="flex flex-col gap-2">
-        {group.events.map((ev) => (
-          <RecentRow
-            key={`${ev.kind}-${ev.data.id}`}
-            ev={ev}
-            prefs={prefs}
-            syncing={false}
-          />
-        ))}
-      </ul>
+      </button>
+      {isExpanded && (
+        <ul id={contentId} className="flex flex-col gap-2">
+          {group.events.map((ev) => (
+            <RecentRow
+              key={`${ev.kind}-${ev.data.id}`}
+              ev={ev}
+              prefs={prefs}
+              syncing={false}
+            />
+          ))}
+        </ul>
+      )}
     </section>
+  );
+}
+
+function Chevron({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 12 12"
+      className={
+        "h-3 w-3 shrink-0 self-center text-white/50 transition-transform duration-150 " +
+        (expanded ? "rotate-90" : "")
+      }
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 2.5 L8 6 L4 9.5" />
+    </svg>
   );
 }
 
