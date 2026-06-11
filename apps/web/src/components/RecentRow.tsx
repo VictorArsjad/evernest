@@ -5,7 +5,9 @@
 // `false` because past events aren't being mutated on that screen.
 import { Link } from "@tanstack/react-router";
 import { format, isToday, parseISO } from "date-fns";
+import { useState } from "react";
 
+import { useDiaperPhotoUrl } from "../lib/queries";
 import type { RecentEvent } from "../lib/recentEvents";
 import { formatLength, formatTime, formatVolume, formatWeight } from "../lib/units";
 import type { CombinedPreferences } from "../lib/usePreferences";
@@ -50,6 +52,16 @@ export function RecentRow({
   syncing?: boolean;
 }) {
   const at = parseISO(ev.at);
+  // Diaper rows can carry an optional photo (migration 000010). The
+  // badge is only rendered when has_photo is true; tapping it lazily
+  // mounts the photo URL hook so we don't pre-fetch every diaper image
+  // on the Today / History screens.
+  const isDiaperWithPhoto = ev.kind === "diaper" && !!ev.data.has_photo;
+  const [photoExpanded, setPhotoExpanded] = useState(false);
+  const diaperPhotoUrl = useDiaperPhotoUrl(
+    isDiaperWithPhoto ? ev.data.id : null,
+    isDiaperWithPhoto && photoExpanded,
+  );
   const icon =
     ev.kind === "bottle"
       ? "🍼"
@@ -133,32 +145,69 @@ export function RecentRow({
     </>
   );
   return (
-    <li className="card flex items-center gap-3 p-3">
-      <div className="flex shrink-0 items-center gap-2">
-        <span className="text-2xl leading-none">{icon}</span>
-        <span className="text-sm tabular-nums text-white/60 w-16">
-          {formatTime(ev.at, prefs.time_format)}
-        </span>
-        {syncing && (
-          <span
-            title="Waiting for network sync"
-            aria-label="Waiting for network sync"
-            className="rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] text-white/50"
-          >
-            ⏳ syncing
+    <li className="card flex flex-col gap-2 p-3">
+      <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-2xl leading-none">{icon}</span>
+          <span className="text-sm tabular-nums text-white/60 w-16">
+            {formatTime(ev.at, prefs.time_format)}
           </span>
+          {syncing && (
+            <span
+              title="Waiting for network sync"
+              aria-label="Waiting for network sync"
+              className="rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] text-white/50"
+            >
+              ⏳ syncing
+            </span>
+          )}
+          {isDiaperWithPhoto && (
+            <button
+              type="button"
+              onClick={(e) => {
+                // The row body is wrapped in a <Link>, but this button
+                // lives in the metadata cluster outside it. Stop
+                // propagation defensively in case a future refactor
+                // nests these.
+                e.stopPropagation();
+                e.preventDefault();
+                setPhotoExpanded((v) => !v);
+              }}
+              aria-label={photoExpanded ? "Hide photo" : "Show photo"}
+              aria-expanded={photoExpanded}
+              className="rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] text-white/70 hover:bg-white/10"
+            >
+              📷
+            </button>
+          )}
+        </div>
+        {editable ? (
+          <Link
+            to={`/log/${ev.kind}`}
+            search={{ babyId: ev.data.baby_id, edit: ev.data.id }}
+            className="-my-3 -mr-3 flex min-w-0 flex-1 flex-col justify-center py-3 pr-3 transition active:opacity-70"
+          >
+            {body}
+          </Link>
+        ) : (
+          <div className="min-w-0 flex-1">{body}</div>
         )}
       </div>
-      {editable ? (
-        <Link
-          to={`/log/${ev.kind}`}
-          search={{ babyId: ev.data.baby_id, edit: ev.data.id }}
-          className="-my-3 -mr-3 flex min-w-0 flex-1 flex-col justify-center py-3 pr-3 transition active:opacity-70"
-        >
-          {body}
-        </Link>
-      ) : (
-        <div className="min-w-0 flex-1">{body}</div>
+      {isDiaperWithPhoto && photoExpanded && (
+        // Indent so the thumbnail lines up under the row body, past the
+        // icon (≈2 rem) + gap + time chip (4 rem) + gap. Tweak this
+        // alongside the metadata cluster widths above.
+        <div className="pl-[calc(2rem+0.5rem+4rem+0.5rem)]">
+          {diaperPhotoUrl ? (
+            <img
+              src={diaperPhotoUrl}
+              alt="Diaper photo"
+              className="max-h-48 rounded-xl border border-white/10 object-contain"
+            />
+          ) : (
+            <div className="h-24 w-24 animate-pulse rounded-xl bg-white/5" />
+          )}
+        </div>
       )}
     </li>
   );

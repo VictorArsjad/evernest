@@ -761,7 +761,10 @@ paths:
       operationId: updateDiaper
       summary: Update a diaper change
       description: |
-        Partial update. Same contract as `PATCH /v1/bottle-feeds/{id}`.
+        Partial update. Same contract as `PATCH /v1/bottle-feeds/{id}`. The
+        `photo` field follows the same "send empty string to clear" rule as
+        `notes`: omit to leave it alone, `""` to clear, or send a fresh
+        base64 payload + `photo_mime` to replace.
       requestBody:
         required: true
         content:
@@ -783,6 +786,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          description: Photo exceeds the size limit (2 MB raw / 3 MB body).
         "422":
           $ref: "#/components/responses/ValidationError"
         "500":
@@ -801,6 +806,57 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/diapers/{id}/photo:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    get:
+      tags: [Diapers]
+      operationId: getDiaperPhoto
+      summary: Fetch the photo bytes attached to a diaper
+      description: |
+        Streams the raw image (JPEG / PNG / WebP) suitable for use as an
+        `<img src>`. Authorization is the same household-membership gate
+        used everywhere else. The response sets `Cache-Control: private,
+        max-age=300` so consecutive views inside a 5-minute window are
+        served from the browser cache.
+      responses:
+        "200":
+          description: Image bytes; `Content-Type` matches the stored `photo_mime`.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Always `private, max-age=300`.
+            Content-Type:
+              schema:
+                type: string
+                enum: [image/jpeg, image/png, image/webp]
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "204":
+          description: The diaper exists but has no photo attached.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1718,7 +1774,7 @@ components:
 
     Diaper:
       type: object
-      required: [id, baby_id, occurred_at, type, source, created_at]
+      required: [id, baby_id, occurred_at, type, has_photo, source, created_at]
       properties:
         id:
           type: string
@@ -1739,6 +1795,18 @@ components:
         notes:
           type: string
           example: "blowout"
+        has_photo:
+          type: boolean
+          description: |
+            True when the row has an attached photo. The bytes are fetched
+            on demand via `GET /v1/diapers/{id}/photo` — the list endpoint
+            never inlines the blob.
+          example: false
+        photo_mime:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+          description: MIME of the attached photo. Omitted when `has_photo` is false.
+          example: image/jpeg
         source:
           type: string
           example: manual
@@ -1767,12 +1835,25 @@ components:
         notes:
           type: string
           example: "blowout"
+        photo:
+          type: string
+          format: byte
+          description: |
+            Optional photo bytes, base64-encoded (no `data:` prefix). When
+            present, `photo_mime` is required. Decoded raw bytes must not
+            exceed 2 MB; the wire body is additionally capped at 3 MB to
+            keep base64 + JSON envelope inflation in budget.
+        photo_mime:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+          description: Required when `photo` is set.
 
     UpdateDiaperRequest:
       type: object
       description: |
         All fields optional. Omitted fields are left unchanged. Send an
-        empty string for `notes` to clear it.
+        empty string for `notes` or `photo` to clear it; send fresh
+        `photo` + `photo_mime` to replace.
       properties:
         occurred_at:
           type: string
@@ -1785,6 +1866,17 @@ components:
         notes:
           type: string
           example: "blowout"
+        photo:
+          type: string
+          format: byte
+          description: |
+            Base64-encoded image bytes. Empty string (`""`) clears the
+            stored photo. Same 2 MB raw / 3 MB body caps as the create
+            endpoint.
+        photo_mime:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+          description: Required when `photo` is set to a non-empty string.
 
     Pumping:
       type: object

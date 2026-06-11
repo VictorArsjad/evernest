@@ -25,6 +25,7 @@ function diaper(id: string, occurredAt: string, createdAt = occurredAt): Diaper 
     occurred_at: occurredAt,
     type: "wet",
     notes: null,
+    has_photo: false,
     source: "manual",
     created_at: createdAt,
   };
