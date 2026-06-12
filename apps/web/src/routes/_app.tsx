@@ -1,8 +1,24 @@
-// Pathless layout for authenticated screens. Redirects to /login if the
-// auth bootstrap landed anonymous; lets initializing pass through so we don't
-// flash a redirect during the first paint.
-import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+// Pathless layout for authenticated screens. Two-layer auth gate:
+//
+//   1. `beforeLoad` (synchronous, runs once at navigation time): if the
+//      store is already known anonymous, redirect to /login immediately
+//      so we never even mount the route.
+//
+//   2. `useEffect` (reactive, runs whenever auth status changes): if
+//      the store flips to anonymous *after* mount — the most common
+//      case being a hard refresh of `/` where the store starts at
+//      "initializing", the guard waves the user through, and then
+//      bootstrapAuth() resolves with no valid refresh token — bounce
+//      to /login. Without this second layer, queries on the mounted
+//      page silently 401 and the user gets stranded on the Today
+//      page's "Setting up…" fallback forever. iPad first-visit and
+//      Chrome incognito both tripped this before; devices with a
+//      stored refresh token hid the bug because bootstrap completed
+//      before the page tried to render data.
+import { Outlet, createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { useAuthStore } from "../lib/authStore";
+import { authedSurfaceRedirect } from "../lib/authRedirect";
 
 export const Route = createFileRoute("/_app")({
   beforeLoad: () => {
@@ -15,5 +31,11 @@ export const Route = createFileRoute("/_app")({
 });
 
 function AppLayout() {
+  const nav = useNavigate();
+  const status = useAuthStore((s) => s.status);
+  useEffect(() => {
+    const target = authedSurfaceRedirect(status);
+    if (target) void nav({ to: target, replace: true });
+  }, [status, nav]);
   return <Outlet />;
 }

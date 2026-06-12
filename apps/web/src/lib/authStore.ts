@@ -52,12 +52,18 @@ export function readStoredRefreshToken(): string | null {
   return safeStorage.get(REFRESH_TOKEN_STORAGE_KEY);
 }
 
+// "initializing" is the boot-time placeholder before bootstrapAuth()
+// resolves. The AuthGate splash covers this state; route layouts use
+// the authRedirect helpers (lib/authRedirect.ts) to react when this
+// transitions to "anonymous" / "authenticated" post-mount.
+export type AuthStatus = "initializing" | "anonymous" | "authenticated";
+
 interface AuthState {
   accessToken: string | null;
   expiresAt: string | null;
   refreshToken: string | null;
   user: User | null;
-  status: "initializing" | "anonymous" | "authenticated";
+  status: AuthStatus;
   setSession: (t: {
     access_token: string;
     expires_at: string;
