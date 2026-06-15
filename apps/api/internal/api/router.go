@@ -27,6 +27,7 @@ import (
 	"github.com/varsjad/evernest/apps/api/internal/nursing"
 	"github.com/varsjad/evernest/apps/api/internal/preferences"
 	"github.com/varsjad/evernest/apps/api/internal/pumping"
+	"github.com/varsjad/evernest/apps/api/internal/spa"
 	"github.com/varsjad/evernest/apps/api/internal/store"
 )
 
@@ -65,6 +66,13 @@ func NewRouter(cfg *config.Config, st *store.Store, logger *slog.Logger) http.Ha
 	r.Route("/v1", func(r chi.Router) {
 		mountV1(r, cfg, st, logger)
 	})
+
+	// When built with `-tags embedspa` (the Docker image), serve the web
+	// bundle from this same origin so the refresh cookie is first-party.
+	// Tag-free builds leave spa.Enabled false and this is a no-op.
+	if spa.Enabled {
+		r.NotFound(spa.Handler().ServeHTTP)
+	}
 
 	return r
 }

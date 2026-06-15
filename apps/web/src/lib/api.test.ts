@@ -264,6 +264,10 @@ describe("api — proactive token refresh near expiry", () => {
       const url = String(input);
       if (url.endsWith("/auth/refresh")) {
         calls.push("refresh");
+        // Cookie-based refresh: credentials are included and no token
+        // rides in the body (the first-party cookie is the source of truth).
+        expect(init?.credentials).toBe("include");
+        expect(init?.body == null).toBe(true);
         return new Response(JSON.stringify(newTokenResponse()), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -346,7 +350,7 @@ describe("api — proactive token refresh near expiry", () => {
     }) as typeof fetch;
     globalThis.fetch = fetchMock;
 
-    await api<unknown>("/auth/refresh", { method: "POST", body: { refresh_token: "rt" } });
+    await api<unknown>("/auth/refresh", { method: "POST", credentials: "include" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

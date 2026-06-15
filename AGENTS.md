@@ -19,15 +19,14 @@ multiple caregivers log activity for the same baby. Design notes live in
 
 ## Production topology
 
-- **FE** — GitHub Pages: <https://victorarsjad.github.io/evernest/>
-- **API** — `https://evernest.taila60dd0.ts.net` (tailnet only; `/healthz` reachable from any tailnet device).
+- **FE + API** — both at `https://evernest.taila60dd0.ts.net` (tailnet only; `/healthz` reachable from any tailnet device). The API binary serves the built SPA from the same origin (embedded via `apps/api/internal/spa`, built with `-tags embedspa`), so the refresh token can ride a first-party `httpOnly` cookie that iOS WebKit won't evict. GitHub Pages is retired.
 - **Home server** — Ubuntu host, hostname `ubuntu`, LAN `192.168.1.125`, tailnet `evernest` (`100.102.144.43`). Owner reaches it via `ssh victor@192.168.1.125`.
 - **Stack on the host** — `infra/docker-compose.homeserver.yml`, compose project name `evernest`. Containers:
   - `evernest-api-1` — Go API, `network_mode: service:tailscale` (no direct port; reached only through the tailscale sidecar's serve config).
   - `evernest-db-1` — Postgres 16, internal-only (no published port).
   - `evernest-tailscale` — owns the netns; terminates TLS for the API.
 - **Image** — `ghcr.io/victorarsjad/evernest-api:<sha>` (pin in `.env`'s `EVERNEST_API_IMAGE`).
-- **Deploy** — push to `master` → `.github/workflows/ci.yml` → green → `deploy-web.yml` (GH Pages) + `deploy-api.yml` (GHCR build/push, then Tailscale-OAuth join + Portainer `git/redeploy` API call over the tailnet). Portainer pulls `infra/docker-compose.homeserver.yml` from this repo and re-pulls `:latest` of the API image. See `docs/homelab-ci-portainer.md` for the bootstrap.
+- **Deploy** — push to `master` → `.github/workflows/ci.yml` → green → `deploy-api.yml` (GHCR build/push — the image bundles the SPA via a node stage in `api.Dockerfile`, then Tailscale-OAuth join + Portainer `git/redeploy` API call over the tailnet). Portainer pulls `infra/docker-compose.homeserver.yml` from this repo and re-pulls `:latest` of the API image. There is no separate FE deploy — shipping the API image ships the web app. See `docs/homelab-ci-portainer.md` for the bootstrap.
 
 ## How to run admin / one-shot tasks on prod
 
@@ -81,7 +80,7 @@ docs/
   api.openapi.yaml          authoritative HTTP contract
   schema.md                 DB schema reference
   deploy.md                 deploy runbook
-.github/workflows/          ci.yml + deploy-web.yml + deploy-api.yml (+ experimental homelab path)
+.github/workflows/          ci.yml + deploy-api.yml (deploy-api ships the SPA-embedded image)
 ```
 
 ## House style + non-obvious invariants

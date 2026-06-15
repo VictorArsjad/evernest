@@ -73,16 +73,21 @@ dispatcher via `setDispatcher` (wired at the bottom of `api.ts`); don't import
 
 ## Auth state
 
-`lib/authStore.ts` (Zustand) holds the in-memory access token and persists the
-refresh token in `localStorage` (NOT a cookie — iOS Safari ITP blocks the
-cross-site github.io↔ts.net cookie). `bootstrapAuth()` runs on mount. On
-login success, call `kickAfterReauth()` so outbox records parked on a
-401 backoff drain immediately.
+`lib/authStore.ts` (Zustand) holds the in-memory access token only. The
+refresh token is NOT stored by JS — the FE and API share an origin (the API
+binary embeds the SPA, see `apps/api/internal/spa/`), so the BE keeps the
+refresh token in a first-party `httpOnly` cookie. `bootstrapAuth()` runs on
+mount and POSTs `/v1/auth/refresh` with `credentials: 'include'`; the browser
+supplies the cookie. A first-party cookie survives iOS WebKit ITP eviction,
+which `localStorage` did not. On login success, call `kickAfterReauth()` so
+outbox records parked on a 401 backoff drain immediately.
 
 ## API base URL
 
-`VITE_API_BASE_URL` selects same-origin (dev/Vite proxy, leave unset) vs
-absolute (GH Pages → ts.net API). `api.ts` appends `/v1`.
+`VITE_API_BASE_URL` is left empty in every deploy now — the SPA is served
+same-origin (dev via the Vite proxy, prod via the API binary), so requests
+hit a relative `/v1`. `api.ts` appends `/v1`. (Set it to an absolute origin
+only if you ever split the FE back onto a different host.)
 
 ## Checks before done
 
