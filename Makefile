@@ -130,7 +130,7 @@ build: ## Build all docker images
 	$(COMPOSE) --profile prod build
 
 # ---------- deploy ----------
-.PHONY: image-be compose-prod-config deploy-fe-build
+.PHONY: image-be compose-prod-config
 
 image-be: ## Build the API container image locally (linux/amd64) tagged with the short SHA + :latest
 	docker build \
@@ -143,12 +143,6 @@ image-be: ## Build the API container image locally (linux/amd64) tagged with the
 compose-prod-config: ## Validate the merged prod compose graph (catches !reset / !override / env typos)
 	@TS_AUTHKEY=dummy GHCR_OWNER=$(GHCR_OWNER) JWT_SECRET=test-only-secret-please-do-not-use-in-production-aa $(COMPOSE_PROD) config >/dev/null
 	@echo "infra/docker-compose.{yml,prod.yml} merged config is valid"
-
-deploy-fe-build: ## Build the FE bundle as it'll be built on GH Pages (PWA + base path)
-	cd apps/web && \
-		VITE_BASE_PATH=/evernest/ \
-		VITE_API_BASE_URL=$${VITE_API_BASE_URL:-https://evernest.example.ts.net} \
-		npm run build
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Evernest make targets:\n"} /^[a-zA-Z0-9_-]+:.*##/ { printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
