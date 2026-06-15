@@ -91,7 +91,9 @@ services:
       REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-30}
       CORS_ALLOW_ORIGIN: ${CORS_ALLOW_ORIGIN:?set CORS_ALLOW_ORIGIN to your web app origin}
       PUBLIC_WEB_ORIGIN: ${PUBLIC_WEB_ORIGIN:?set PUBLIC_WEB_ORIGIN to your web app origin}
-      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-none}
+      # Same-origin: the API serves the SPA from this ts.net host, so the
+      # refresh cookie is first-party (SameSite=lax, Secure via https origin).
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
 
 volumes:
   db-data:

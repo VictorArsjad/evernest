@@ -1,27 +1,29 @@
 # Deploy pipeline (CP7)
 
 This is the operational runbook for the Evernest deploy stack. The design
-notes (why GH Pages vs. Cloudflare, why Tailscale vs. Caddy, public-access
-flip plan) live alongside the rest of the engineering plans; this file is the
-"what do I actually do" version.
+notes (why same-origin SPA vs. a separate FE host, why Tailscale vs. Caddy,
+public-access flip plan) live alongside the rest of the engineering plans;
+this file is the "what do I actually do" version.
 
 ## Topology
+
+The web app and API are one origin: the API image bundles the built SPA and
+the `api` binary serves it. There is no separate frontend deploy — shipping
+the API image ships the web app.
 
 ```
    git push origin master
             │
             ▼
-   .github/workflows/ci.yml ─── on green ───┬───► deploy-web.yml ──► GitHub Pages
-                                            │      (apps/web/dist published at
-                                            │       https://<owner>.github.io/evernest/)
-                                            │
-                                            └───► deploy-api.yml
-                                                   ├── docker build + push
-                                                   │     ghcr.io/<owner>/evernest-api:{sha,latest}
-                                                   └── tailscale up (ephemeral, tag:ci)
-                                                       └── PUT Portainer /api/stacks/{id}/git/redeploy
-                                                           ├── Portainer git-pulls latest compose
-                                                           └── repullImageAndRedeploy (:latest)
+   .github/workflows/ci.yml ─── on green ───► deploy-api.yml
+                                               ├── docker build + push
+                                               │     (image bundles the SPA: node stage in
+                                               │      api.Dockerfile, embedded via -tags embedspa)
+                                               │     ghcr.io/<owner>/evernest-api:{sha,latest}
+                                               └── tailscale up (ephemeral, tag:ci)
+                                                   └── PUT Portainer /api/stacks/{id}/git/redeploy
+                                                       ├── Portainer git-pulls latest compose
+                                                       └── repullImageAndRedeploy (:latest)
 ```
 
 The home server is a Portainer-managed Git stack (compose project at
@@ -38,18 +40,24 @@ On the home server, the prod compose stack is:
   `http://127.0.0.1:8080` inside the same netns.
 - `api` — published GHCR image, `network_mode: service:tailscale`, so the
   tailnet only ever sees the sidecar's interface. Talks to `db` over the
-  internal docker network through the shared netns.
+  internal docker network through the shared netns. Also serves the embedded
+  SPA at `/` (and `/v1/*` is the API), so `tailscale serve` proxies both from
+  one origin.
 
-The frontend is **not** in compose anymore; GitHub Pages serves it.
+The frontend has no separate service or host — it's compiled into the API
+image and served from the same ts.net origin. Same-origin is what lets the
+refresh token live in a first-party `httpOnly` cookie (see the auth notes in
+`apps/web/AGENTS.md`).
 
 ## One-time setup
 
 ### 1. GitHub repo settings
 
-- **Settings → Pages → Source**: GitHub Actions.
+(No GitHub Pages setup — the SPA ships inside the API image. The web bundle
+is built same-origin in the Dockerfile with `VITE_API_BASE_URL` empty and
+`VITE_BASE_PATH=/`, so no repo variable is needed for it.)
+
 - **Settings → Variables → Actions** (`vars`):
-  - `VITE_API_BASE_URL` = `https://<TS_HOSTNAME>.<tail>.ts.net` (no trailing
-    slash).
   - `PORTAINER_URL` / `PORTAINER_STACK_ID` / `PORTAINER_ENDPOINT_ID` — see
     [homelab-ci-portainer.md](./homelab-ci-portainer.md) §3.
 - **Settings → Secrets → Actions**:
@@ -83,13 +91,12 @@ curl https://<TS_HOSTNAME>.<tail>.ts.net/healthz   # → 200
 Push a no-op commit to `master`. You should see:
 
 1. `ci` workflow runs → green.
-2. `deploy-web` triggers via `workflow_run` → publishes to GH Pages.
-3. `deploy-api` triggers in parallel → builds + pushes to GHCR, then
-   PUTs Portainer's git/redeploy endpoint.
+2. `deploy-api` triggers via `workflow_run` → builds + pushes the SPA-bundled
+   image to GHCR, then PUTs Portainer's git/redeploy endpoint.
 
-The GH Pages URL is shown on the `deploy` job summary; the deploy job's
-log includes the new image's `:<sha>` tag, and Portainer's stack page
-shows the redeploy timestamp.
+The deploy job's log includes the new image's `:<sha>` tag, and Portainer's
+stack page shows the redeploy timestamp. Confirm the app loads at
+`https://<TS_HOSTNAME>.<tail>.ts.net/` (served by the API).
 
 ## Public-access flip
 
@@ -108,10 +115,17 @@ To open the API to the public internet (Tailscale Funnel):
 ```bash
 make lint                # CI parity
 make api-test            # go test -race
-make web-build           # vite build w/ default base path
-make deploy-fe-build     # vite build with VITE_BASE_PATH=/evernest/ (GH Pages parity)
+make web-build           # vite build (same-origin: base / , relative /v1)
 make compose-prod-config # docker compose config on the merged prod overlay
-make image-be            # build the api image locally (linux/amd64)
+make image-be            # build the api image locally — bundles the web stage + embeds the SPA
+```
+
+After `make image-be`, smoke-test the embedded SPA from one origin:
+
+```bash
+docker run --rm -p 8080:8080 -e DATABASE_URL=... -e JWT_SECRET=... <image>
+curl -sS localhost:8080/ | head      # SPA shell (text/html)
+curl -sS localhost:8080/v1/ping      # {"pong":"evernest"}
 ```
 
 ### Standalone home-server stack
@@ -135,7 +149,9 @@ to pin a `:<sha>` tag instead of `:latest` if you want belt-and-suspenders.
 
 These only work after a real push to `master`:
 
-- GitHub Pages publishes to `https://<owner>.github.io/evernest/`.
+- The deployed image actually serves the SPA at
+  `https://<TS_HOSTNAME>.<tail>.ts.net/` (the embed + catch-all route only
+  exists in the `-tags embedspa` image, not in `go build ./...`).
 - The GHCR image actually pushes (requires the `packages: write` permission to
   be enabled at the repo level).
 - The Tailscale OAuth client successfully joins the runner to the tailnet.

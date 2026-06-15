@@ -7,15 +7,14 @@
 // - Throws `ApiError` (with the server's error envelope when present) on
 //   non-2xx responses so TanStack Query treats them as errors.
 //
-// Refresh-token transport: the token is persisted in localStorage by
-// authStore (see authStore.ts header comment) and sent in the body of
-// /v1/auth/refresh + /v1/auth/logout. iOS Safari ITP blocks cross-site
-// cookies between github.io and our ts.net API, which used to log users
-// out every ~15min. For migration safety, if localStorage is empty we
-// fall through to a single `credentials: 'include'` refresh call so a
-// user with the legacy cookie still gets a clean upgrade on first page
-// load post-deploy. Once the cookie path is removed BE-side we can drop
-// the fallback here too.
+// Refresh-token transport: the FE and API are served from the same origin
+// (the API binary embeds the SPA — see apps/api/internal/spa), so the
+// refresh token rides a first-party httpOnly cookie set by the BE on
+// /v1/auth/{register,login,refresh}. /auth/refresh + /auth/logout send
+// `credentials: 'include'` and carry no token in the body — the cookie is
+// the source of truth. This is what makes iOS durable: a first-party
+// cookie survives WebKit's ITP eviction, unlike the localStorage token the
+// old cross-site (github.io -> ts.net) deploy was forced to use.
 //
 // CP6b adds `apiQueued()` as the mutation seam: on network failure / 5xx
 // it enqueues the mutation into the offline outbox and resolves with a
@@ -49,6 +48,9 @@ interface RequestOpts {
   // Skip the access-token attachment + 401-refresh dance. Used for /auth/*.
   skipAuth?: boolean;
   signal?: AbortSignal;
+  // Forwarded to fetch so cookie-carrying auth calls (logout) can opt into
+  // sending the first-party refresh cookie explicitly.
+  credentials?: RequestCredentials;
 }
 
 // In dev (Vite) and in same-origin prod (legacy Caddy reverse-proxy) the FE
@@ -81,22 +83,13 @@ async function tryRefresh(): Promise<TokenResponse | null> {
   if (!refreshInflight) {
     refreshInflight = (async () => {
       try {
-        const stored = useAuthStore.getState().refreshToken;
-        // Prefer the body-based call. If localStorage is empty (first
-        // boot post-deploy with only the legacy cookie), fall back to
-        // credentials:'include' with an empty body so the BE picks the
-        // cookie up and we get migrated to localStorage on success.
-        const init: RequestInit = stored
-          ? {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ refresh_token: stored }),
-            }
-          : {
-              method: "POST",
-              credentials: "include",
-            };
-        const res = await fetch(`${BASE}/auth/refresh`, init);
+        // Same-origin first-party cookie carries the refresh token; send
+        // no body so a stale value can never shadow the cookie. On success
+        // the BE rotates the cookie and returns a fresh access token.
+        const res = await fetch(`${BASE}/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+        });
         if (!res.ok) return null;
         const data = (await res.json()) as TokenResponse;
         useAuthStore.getState().setSession(data);
@@ -115,7 +108,7 @@ async function tryRefresh(): Promise<TokenResponse | null> {
 }
 
 export async function api<T>(path: string, opts: RequestOpts = {}): Promise<T> {
-  const { method = "GET", body, skipAuth = false, signal } = opts;
+  const { method = "GET", body, skipAuth = false, signal, credentials } = opts;
 
   const doFetch = async (token: string | null) => {
     const headers: Record<string, string> = {};
@@ -127,6 +120,7 @@ export async function api<T>(path: string, opts: RequestOpts = {}): Promise<T> {
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
+      credentials,
     });
   };
 

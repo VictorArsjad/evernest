@@ -43,10 +43,10 @@ services:
       db:
         condition: service_healthy
     environment:
-      # Cookies cross origins on prod (FE on github.io, API on ts.net), so
-      # SameSite must be "none" + Secure=true. The api already sets Secure
-      # when PUBLIC_WEB_ORIGIN starts with https://.
-      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-none}
+      # Same-origin prod: the API serves the SPA from the same ts.net host,
+      # so the refresh cookie is first-party and SameSite=lax (Secure=true is
+      # set automatically when PUBLIC_WEB_ORIGIN starts with https://).
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
 
   tailscale:
     image: tailscale/tailscale:latest

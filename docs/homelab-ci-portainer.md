@@ -45,9 +45,9 @@ Do this once per app/stack. After that, only CI touches deploys.
 | `POSTGRES_PASSWORD` | strong random |
 | `JWT_SECRET` | `openssl rand -hex 32` |
 | `EVERNEST_API_IMAGE` | `ghcr.io/victorarsjad/evernest-api:latest` |
-| `CORS_ALLOW_ORIGIN` | `https://victorarsjad.github.io/evernest` |
+| `CORS_ALLOW_ORIGIN` | `https://evernest.<tail>.ts.net` (same origin as the API; the API serves the SPA) |
 | `PUBLIC_WEB_ORIGIN` | same as CORS |
-| `COOKIE_SAMESITE` | `none` |
+| `COOKIE_SAMESITE` | `lax` (was `none` — same-origin no longer needs a cross-site cookie) |
 | `TS_AUTHKEY` | reusable Tailscale auth key |
 | `TS_HOSTNAME` | `evernest` |
 

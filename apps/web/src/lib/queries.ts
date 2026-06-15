@@ -157,18 +157,17 @@ export function useLogin() {
 export function useLogout() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => {
-      // Send the stored refresh token so the BE can revoke this exact
-      // session row. We use skipAuth because the access token may already
-      // be 401-stale and we don't want the api() refresh dance kicking in
-      // for the very call that's supposed to end the session.
-      const refresh_token = useAuthStore.getState().refreshToken;
-      return api<void>("/auth/logout", {
+    mutationFn: () =>
+      // The first-party refresh cookie identifies the session to revoke;
+      // `credentials: 'include'` sends it. skipAuth because the access
+      // token may already be 401-stale and we don't want the api() refresh
+      // dance kicking in for the very call that's supposed to end the
+      // session.
+      api<void>("/auth/logout", {
         method: "POST",
-        body: refresh_token ? { refresh_token } : undefined,
         skipAuth: true,
-      });
-    },
+        credentials: "include",
+      }),
     onSettled: () => {
       useAuthStore.getState().clear();
       qc.clear();

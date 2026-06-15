@@ -1,0 +1,14 @@
+# Build context is the repo root (see infra/docker/api.Dockerfile). Keep it
+# lean: deps are reinstalled (npm ci) / re-downloaded (go mod) inside the
+# build, and the embedded SPA is produced by the web stage, not the context.
+**/node_modules
+**/dist
+.git
+.github
+apps/api/bin/
+apps/api/build/
+apps/api/.tools/
+*.test
+*.out
+infra/.local-data/
+.DS_Store
