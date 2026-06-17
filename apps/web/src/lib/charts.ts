@@ -236,10 +236,23 @@ export function formatDayShort(ymd: string): string {
 
 // summarize folds a window of days into the single-line totals shown
 // above the chart cards (e.g. "1,840 ml total · 14 nursing min/day avg").
-// The "avg" arms divide by `days.length` (not by non-zero days) so a
-// week with low logging shows a low average — that's the honest signal
-// when the user is double-checking how often they actually fed today.
-export function summarize(days: ChartDaily[]): {
+//
+// Totals include every day in the window so the user sees what they've
+// actually logged. Averages, when `todayYMD` is provided, exclude that
+// date from both the numerator and denominator — today is a partial
+// day (the user hasn't finished feeding/diapering yet) and including
+// it drags the average down in a misleading way. Days other than today
+// still divide by total day count (not by non-zero days) so a quiet
+// week honestly shows a low average. When `todayYMD` isn't passed or
+// today isn't in the window, every day counts toward the average.
+//
+// Defensive: if excluding today would leave zero days (only happens
+// with a 1-day window that is today), fall back to including today
+// so the avg isn't NaN.
+export function summarize(
+  days: ChartDaily[],
+  todayYMD?: string,
+): {
   bottleTotalMl: number;
   bottleAvgMl: number;
   pumpingTotalMl: number;
@@ -268,27 +281,48 @@ export function summarize(days: ChartDaily[]): {
   let pumpingTotalMl = 0;
   let nursingTotalMin = 0;
   let diaperTotal = 0;
+  let bottleAvgSumMl = 0;
+  let pumpingAvgSumMl = 0;
+  let nursingAvgSumMin = 0;
+  let diaperAvgSum = 0;
+  let avgDays = 0;
   let latestWeightG: number | null = null;
   for (const d of days) {
-    bottleTotalMl += d.bottle_ml ?? 0;
-    pumpingTotalMl += d.pumping_ml ?? 0;
-    nursingTotalMin += d.nursing_minutes ?? 0;
-    diaperTotal += d.diaper_total ?? 0;
+    const bottle = d.bottle_ml ?? 0;
+    const pumping = d.pumping_ml ?? 0;
+    const nursing = d.nursing_minutes ?? 0;
+    const diaper = d.diaper_total ?? 0;
+    bottleTotalMl += bottle;
+    pumpingTotalMl += pumping;
+    nursingTotalMin += nursing;
+    diaperTotal += diaper;
+    if (!todayYMD || d.date !== todayYMD) {
+      bottleAvgSumMl += bottle;
+      pumpingAvgSumMl += pumping;
+      nursingAvgSumMin += nursing;
+      diaperAvgSum += diaper;
+      avgDays++;
+    }
     if (d.growth?.weight_g != null) {
       // Days are returned in ascending order so the last assignment
       // wins, which is exactly the latest reading in the window.
       latestWeightG = d.growth.weight_g;
     }
   }
+  const denom = avgDays > 0 ? avgDays : n;
+  const bottleAvgNumerator = avgDays > 0 ? bottleAvgSumMl : bottleTotalMl;
+  const pumpingAvgNumerator = avgDays > 0 ? pumpingAvgSumMl : pumpingTotalMl;
+  const nursingAvgNumerator = avgDays > 0 ? nursingAvgSumMin : nursingTotalMin;
+  const diaperAvgNumerator = avgDays > 0 ? diaperAvgSum : diaperTotal;
   return {
     bottleTotalMl,
-    bottleAvgMl: bottleTotalMl / n,
+    bottleAvgMl: bottleAvgNumerator / denom,
     pumpingTotalMl,
-    pumpingAvgMl: pumpingTotalMl / n,
+    pumpingAvgMl: pumpingAvgNumerator / denom,
     nursingTotalMin,
-    nursingAvgMin: nursingTotalMin / n,
+    nursingAvgMin: nursingAvgNumerator / denom,
     diaperTotal,
-    diaperAvg: diaperTotal / n,
+    diaperAvg: diaperAvgNumerator / denom,
     latestWeightG,
   };
 }
