@@ -260,4 +260,64 @@ describe("summarize", () => {
     expect(s.bottleAvgMl).toBe(0);
     expect(s.latestWeightG).toBeNull();
   });
+
+  it("excludes today from the average but keeps it in the total", () => {
+    // 7-day window where today is the last day and is partial (only
+    // 100 ml logged so far). Average should be over the 6 completed
+    // days, not all 7, so the in-progress day doesn't drag it down.
+    const days: ChartDaily[] = [
+      { ...emptyDay("2026-05-08"), bottle_ml: 600 },
+      { ...emptyDay("2026-05-09"), bottle_ml: 600 },
+      { ...emptyDay("2026-05-10"), bottle_ml: 600 },
+      { ...emptyDay("2026-05-11"), bottle_ml: 600 },
+      { ...emptyDay("2026-05-12"), bottle_ml: 600 },
+      { ...emptyDay("2026-05-13"), bottle_ml: 600 },
+      { ...emptyDay("2026-05-14"), bottle_ml: 100 }, // today, in progress
+    ];
+    const s = summarize(days, "2026-05-14");
+    expect(s.bottleTotalMl).toBe(3700);
+    expect(s.bottleAvgMl).toBe(600); // 3600 / 6, not 3700 / 7
+  });
+
+  it("excludes today from nursing/pumping/diaper averages too", () => {
+    const days: ChartDaily[] = [
+      {
+        ...emptyDay("2026-05-13"),
+        nursing_minutes: 40,
+        pumping_ml: 200,
+        diaper_total: 8,
+      },
+      {
+        ...emptyDay("2026-05-14"),
+        nursing_minutes: 5,
+        pumping_ml: 30,
+        diaper_total: 1,
+      },
+    ];
+    const s = summarize(days, "2026-05-14");
+    expect(s.nursingAvgMin).toBe(40);
+    expect(s.pumpingAvgMl).toBe(200);
+    expect(s.diaperAvg).toBe(8);
+  });
+
+  it("falls back to including today when it's the only day in the window", () => {
+    // 1-day window that *is* today. Excluding today would leave zero
+    // days and produce NaN; instead the avg should equal today's
+    // total.
+    const days: ChartDaily[] = [{ ...emptyDay("2026-05-14"), bottle_ml: 240 }];
+    const s = summarize(days, "2026-05-14");
+    expect(s.bottleTotalMl).toBe(240);
+    expect(s.bottleAvgMl).toBe(240);
+  });
+
+  it("averages over all days when todayYMD is not in the window", () => {
+    // e.g. user viewing a historical export that doesn't include
+    // today — divide by every day in the window.
+    const days: ChartDaily[] = [
+      { ...emptyDay("2026-05-01"), bottle_ml: 300 },
+      { ...emptyDay("2026-05-02"), bottle_ml: 500 },
+    ];
+    const s = summarize(days, "2026-05-14");
+    expect(s.bottleAvgMl).toBe(400); // 800 / 2
+  });
 });

@@ -268,7 +268,7 @@ function ChartsPage() {
           Could not load charts: {charts.error?.message ?? "unknown error"}
         </p>
       ) : (
-        <ChartGrid days={days} prefs={prefs} />
+        <ChartGrid days={days} prefs={prefs} todayYMD={window.to} />
       )}
     </PageShell>
   );
@@ -276,10 +276,21 @@ function ChartsPage() {
 
 // --- grid + cards ---
 
-function ChartGrid({ days, prefs }: { days: ChartDaily[]; prefs: CombinedPreferences }) {
+function ChartGrid({
+  days,
+  prefs,
+  todayYMD,
+}: {
+  days: ChartDaily[];
+  prefs: CombinedPreferences;
+  todayYMD: string;
+}) {
   // All four bar charts and the line chart share the same X axis (one
   // slot per day). Geometry is recomputed only when `days` changes.
-  const totals = useMemo(() => summarize(days), [days]);
+  // Pass `todayYMD` so the per-day averages exclude the in-progress
+  // current day; otherwise the average would drift down as the day
+  // ticks forward and reset every midnight.
+  const totals = useMemo(() => summarize(days, todayYMD), [days, todayYMD]);
   const nursing = useMemo(() => barLayout(days.map((d) => d.nursing_minutes)), [days]);
   const pumping = useMemo(() => barLayout(days.map((d) => d.pumping_ml)), [days]);
   const stacked = useMemo(
