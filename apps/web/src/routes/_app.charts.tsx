@@ -1,11 +1,18 @@
-// Charts screen — last 7 / 14 / 30 day overview of every metric the
-// app tracks. One inline-SVG card per metric; no chart library, since
-// the PWA install size matters more than the marginal feature density
+// Charts & History screen — last 7 / 14 / 30 day overview of every
+// metric the app tracks (charts, on top), followed by the individual
+// event log grouped by local day (History, below). Charts are the
+// "what totals look like" view; History is the "what individual events
+// happened" view — a single range control drives both.
+//
+// One inline-SVG card per metric; no chart library, since the PWA
+// install size matters more than the marginal feature density
 // recharts/visx would buy us. Mobile-first: full-width cards on narrow
 // viewports, two-up on `sm:`.
 import { Link, createFileRoute } from "@tanstack/react-router";
+import { format, isToday, isYesterday } from "date-fns";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { RecentRow } from "../components/RecentRow";
 import { useAuthStore } from "../lib/authStore";
 import {
   barLayout,
@@ -20,13 +27,20 @@ import {
   type SparkBar,
 } from "../lib/charts";
 import { isFeatureVisible } from "../lib/featureVisibility";
+import { groupByLocalDay, type DayGroup } from "../lib/groupByDay";
 import { DEFAULT_PALETTE, resolve } from "../lib/palette";
 import {
   useBabies,
+  useBottleFeeds,
   useDailyCharts,
+  useDiapers,
+  useGrowths,
   useHouseholds,
   useLogout,
+  useNursings,
+  usePumpings,
 } from "../lib/queries";
+import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
 import type { ChartDaily } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import {
@@ -50,6 +64,14 @@ const RANGES: { value: WindowDays; label: string }[] = [
 // invalidate the queryKey on every paint.
 const BROWSER_TZ =
   (typeof Intl !== "undefined" && Intl.DateTimeFormat().resolvedOptions().timeZone) || "UTC";
+
+// Hooks for the History section deliberately bypass the live-poll
+// defaults: past events don't change, and a 30-day window for an active
+// baby blows past the BE's 200-row default cap. `limit: 1000` matches
+// the BE max; `refetchInterval: false` shuts off the 15s/5min polls.
+const HISTORY_HOOK_OPTS = { limit: 1000, refetchInterval: false } as const;
+
+const MS_PER_DAY = 86_400_000;
 
 // Shared inner viewBox for every card. 100 wide gives bars sub-pixel
 // granularity at any reasonable card width; 40 high reads as a
@@ -124,6 +146,23 @@ function ChartTooltip({
   );
 }
 
+// "View entries →" link rendered at the foot of a chart tooltip. It's the
+// primary way to jump to a day's History on touch (where a bare tap only
+// previews the value); on desktop a mouse click on the bar does the same
+// thing directly. `pointer-events-auto` overrides the tooltip wrapper's
+// `pointer-events-none` so the tap/click actually lands.
+function TooltipJumpLink({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="pointer-events-auto mt-1 block w-full border-t border-white/10 pt-1 text-left text-[11px] font-medium text-accent hover:text-accent/80"
+    >
+      View entries →
+    </button>
+  );
+}
+
 // HitOverlays renders one full-height transparent rect per day-slot for
 // bar-style charts. Rendered AFTER the visible bars (it's the last
 // child of the <svg>) so it always wins the pointer hit-test, which
@@ -132,16 +171,22 @@ function ChartTooltip({
 // Pointer-type gating: mouse uses hover (enter/leave), touch/pen uses
 // tap-toggle (pointerdown). The outside-tap dismiss is owned by
 // useChartHover so we don't need an explicit "tap away" handler here.
+//
+// `onSelect` (jump to this day's History) fires on mouse click only —
+// touch keeps tap = tooltip preview, and navigates via the tooltip's
+// "View entries" link instead, so a stray tap never scrolls the page.
 function HitOverlays({
   n,
   hover,
   days,
   ariaValue,
+  onSelect,
 }: {
   n: number;
   hover: ChartHover;
   days: ChartDaily[];
   ariaValue: (i: number) => string;
+  onSelect?: (i: number) => void;
 }) {
   if (n === 0) return null;
   const slot = VB_W / n;
@@ -169,6 +214,9 @@ function HitOverlays({
             }}
             onPointerDown={(e) => {
               if (e.pointerType !== "mouse") hover.toggle(i);
+            }}
+            onPointerUp={(e) => {
+              if (e.pointerType === "mouse") onSelect?.(i);
             }}
           />
         );
@@ -224,6 +272,36 @@ function ChartsPage() {
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
   const [range, setRange] = useState<WindowDays>(14);
+  // Per-day expand overrides for the History section. Absence of a key
+  // means "fall through to the default", which is `idx === 0` (the
+  // newest group is open). Storing overrides instead of an explicit
+  // expanded set lets switching range preserve toggles without a reseed.
+  const [expandOverrides, setExpandOverrides] = useState<Record<string, boolean>>({});
+  // The day + metric the user just jumped to from a chart bar. Drives the
+  // one-shot glow on the matching History rows; null once it has faded.
+  const [highlight, setHighlight] = useState<{ dayKey: string; kind: RecentEvent["kind"] } | null>(
+    null,
+  );
+  const glowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Smooth-scroll the just-selected day into view. Runs after commit, so
+  // the (now-expanded) target section is already in the DOM.
+  useEffect(() => {
+    if (!highlight) return;
+    document
+      .getElementById(`history-day-section-${highlight.dayKey}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [highlight]);
+
+  // Drop the glow once it has played so the class is gone and ready to
+  // re-trigger on the next click (see handleSelectDay's null→value reset).
+  useEffect(() => {
+    if (!highlight) return;
+    glowTimer.current = setTimeout(() => setHighlight(null), 1900);
+    return () => {
+      if (glowTimer.current) clearTimeout(glowTimer.current);
+    };
+  }, [highlight]);
 
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
@@ -231,26 +309,73 @@ function ChartsPage() {
   // Follow the same active-baby selection the Today hub persists so a
   // baby flip on Today carries over to Charts (and vice versa).
   const { baby } = useActiveBaby(householdId, babies.data);
+  const babyId = baby?.id ?? null;
 
   // Pinning `now` per-render is fine — TanStack only refetches when
   // the queryKey changes, and the YYYY-MM-DD strings only change at
   // local midnight. We don't need to memoize harder than that.
   const window = useMemo(() => dailyWindowEndingToday(new Date(), range), [range]);
-  const charts = useDailyCharts(baby?.id ?? null, window.from, window.to, BROWSER_TZ);
-  const { prefs } = usePreferences(baby?.id ?? null);
+  const charts = useDailyCharts(babyId, window.from, window.to, BROWSER_TZ);
+  const { prefs } = usePreferences(babyId);
+
+  // History covers the same range window, but as ISO instants over the
+  // raw event feeds (charts read pre-aggregated daily rows). Both
+  // sections are driven by the single range control above.
+  const historyWindow = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const fromDate = new Date(start.getTime() - (range - 1) * MS_PER_DAY);
+    const toDate = new Date();
+    toDate.setHours(23, 59, 59, 999);
+    return { from: fromDate.toISOString(), to: toDate.toISOString() };
+  }, [range]);
+  const feeds = useBottleFeeds(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
+  const diapers = useDiapers(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
+  const pumpings = usePumpings(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
+  const nursings = useNursings(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
+  const growths = useGrowths(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
 
   if (households.isLoading || babies.isLoading) {
-    return <PageShell title="Charts">Loading…</PageShell>;
+    return <PageShell title="Charts & History">Loading…</PageShell>;
   }
   if (!baby) {
-    return <PageShell title="Charts">No baby selected.</PageShell>;
+    return <PageShell title="Charts & History">No baby selected.</PageShell>;
   }
 
   const days = charts.data?.days ?? [];
 
+  const recent = mergeRecent({
+    bottleFeeds: feeds.data,
+    diapers: diapers.data,
+    pumpings: pumpings.data,
+    nursings: nursings.data,
+    growths: growths.data,
+  });
+  const groups = groupByLocalDay(recent);
+  const historyLoading =
+    feeds.isLoading ||
+    diapers.isLoading ||
+    pumpings.isLoading ||
+    nursings.isLoading ||
+    growths.isLoading;
+
+  // Which local days actually have History entries — so a chart bar for
+  // an empty day offers no "jump" (no link, and a mouse click no-ops).
+  const entryDayKeys = new Set(groups.map((g) => g.dayKey));
+
+  // Jump from a chart bar (metric `kind`, day `date`) to that day's
+  // History: expand it, glow the matching rows, scroll it into view. The
+  // null→value reset restarts the CSS glow even on a repeat click.
+  const handleSelectDay = (date: string, kind: RecentEvent["kind"]) => {
+    if (!entryDayKeys.has(date)) return;
+    setExpandOverrides((prev) => ({ ...prev, [date]: true }));
+    setHighlight(null);
+    requestAnimationFrame(() => setHighlight({ dayKey: date, kind }));
+  };
+
   return (
     <PageShell
-      title="Charts"
+      title="Charts & History"
       subtitle={user ? `Signed in as ${user.display_name}` : undefined}
       onSignOut={() => logout.mutate()}
     >
@@ -261,6 +386,7 @@ function ChartsPage() {
         <SegmentedControl value={range} onChange={setRange} />
       </div>
 
+      {/* Charts — daily totals overview, on top. */}
       {charts.isLoading ? (
         <p className="rounded-xl bg-bg-surface p-4 text-sm text-white/50">Loading…</p>
       ) : charts.isError ? (
@@ -268,8 +394,44 @@ function ChartsPage() {
           Could not load charts: {charts.error?.message ?? "unknown error"}
         </p>
       ) : (
-        <ChartGrid days={days} prefs={prefs} todayYMD={window.to} />
+        <ChartGrid
+          days={days}
+          prefs={prefs}
+          todayYMD={window.to}
+          onSelectDay={handleSelectDay}
+          entryDayKeys={entryDayKeys}
+        />
       )}
+
+      {/* History — individual event log grouped by local day, below. */}
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-medium text-white/70">History</h2>
+        {historyLoading && groups.length === 0 ? (
+          <p className="rounded-xl bg-bg-surface p-4 text-sm text-white/50">Loading…</p>
+        ) : groups.length === 0 ? (
+          <p className="rounded-xl bg-bg-surface p-4 text-sm text-white/50">
+            Nothing logged in this window yet.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-5">
+            {groups.map((g, idx) => {
+              const isExpanded = expandOverrides[g.dayKey] ?? idx === 0;
+              return (
+                <DaySection
+                  key={g.dayKey}
+                  group={g}
+                  prefs={prefs}
+                  isExpanded={isExpanded}
+                  highlightKind={highlight?.dayKey === g.dayKey ? highlight.kind : undefined}
+                  onToggle={() =>
+                    setExpandOverrides((prev) => ({ ...prev, [g.dayKey]: !isExpanded }))
+                  }
+                />
+              );
+            })}
+          </div>
+        )}
+      </section>
     </PageShell>
   );
 }
@@ -280,11 +442,18 @@ function ChartGrid({
   days,
   prefs,
   todayYMD,
+  onSelectDay,
+  entryDayKeys,
 }: {
   days: ChartDaily[];
   prefs: CombinedPreferences;
   todayYMD: string;
+  onSelectDay?: (date: string, kind: RecentEvent["kind"]) => void;
+  entryDayKeys?: Set<string>;
 }) {
+  // Bind the "does this day have entries to jump to?" predicate once; each
+  // card supplies its own metric kind when calling onSelectDay.
+  const canSelectDay = (date: string) => !!entryDayKeys?.has(date);
   // All four bar charts and the line chart share the same X axis (one
   // slot per day). Geometry is recomputed only when `days` changes.
   // Pass `todayYMD` so the per-day averages exclude the in-progress
@@ -360,6 +529,8 @@ function ChartGrid({
       >
         <BottleStackChart
           days={days}
+          onSelectDay={(date) => onSelectDay?.(date, "bottle")}
+          canSelectDay={canSelectDay}
           breastColor={colors.bottle_breast}
           formulaColor={colors.bottle_formula}
           ariaValue={(i) =>
@@ -404,6 +575,8 @@ function ChartGrid({
           max={nursing.max}
           fill={colors.nursing}
           days={days}
+          onSelectDay={(date) => onSelectDay?.(date, "nursing")}
+          canSelectDay={canSelectDay}
           ariaValue={(i) => `${days[i].nursing_minutes} min`}
           renderTooltip={(i) => (
             <TooltipBody date={days[i].date}>
@@ -428,6 +601,8 @@ function ChartGrid({
           max={pumping.max}
           fill={colors.pumping}
           days={days}
+          onSelectDay={(date) => onSelectDay?.(date, "pumping")}
+          canSelectDay={canSelectDay}
           ariaValue={(i) => formatVolume(days[i].pumping_ml, prefs.unit_volume)}
           renderTooltip={(i) => (
             <TooltipBody date={days[i].date}>
@@ -451,6 +626,8 @@ function ChartGrid({
           stacked={stacked}
           colors={diaperColors}
           days={days}
+          onSelectDay={(date) => onSelectDay?.(date, "diaper")}
+          canSelectDay={canSelectDay}
           ariaValue={(i) =>
             `${days[i].diaper_wet} wet, ${days[i].diaper_soiled} soiled, ${days[i].diaper_mixed} mixed`
           }
@@ -502,6 +679,8 @@ function ChartGrid({
             points={weight.points}
             stroke={colors.weight}
             days={days}
+            onSelectDay={(date) => onSelectDay?.(date, "growth")}
+            canSelectDay={canSelectDay}
             ariaValue={(i) => {
               const g = days[i].growth?.weight_g;
               return g != null ? formatWeight(g, prefs.unit_weight) : "";
@@ -565,6 +744,8 @@ function BarChart({
   days,
   ariaValue,
   renderTooltip,
+  onSelectDay,
+  canSelectDay,
 }: {
   bars: SparkBar[];
   max: number;
@@ -572,9 +753,18 @@ function BarChart({
   days: ChartDaily[];
   ariaValue: (i: number) => string;
   renderTooltip: (i: number) => React.ReactNode;
+  onSelectDay?: (date: string) => void;
+  canSelectDay?: (date: string) => boolean;
 }) {
   const hover = useChartHover();
   const n = days.length;
+  const ai = hover.activeIndex;
+  const jumpTo = (i: number) => {
+    if (canSelectDay?.(days[i].date)) {
+      onSelectDay?.(days[i].date);
+      hover.clear();
+    }
+  };
   return (
     <div
       ref={hover.containerRef}
@@ -611,11 +801,18 @@ function BarChart({
             />
           );
         })}
-        <HitOverlays n={n} hover={hover} days={days} ariaValue={ariaValue} />
+        <HitOverlays
+          n={n}
+          hover={hover}
+          days={days}
+          ariaValue={ariaValue}
+          onSelect={jumpTo}
+        />
       </svg>
-      {hover.activeIndex != null && (
-        <ChartTooltip xPct={tooltipXPercent(hover.activeIndex, n)}>
-          {renderTooltip(hover.activeIndex)}
+      {ai != null && (
+        <ChartTooltip xPct={tooltipXPercent(ai, n)}>
+          {renderTooltip(ai)}
+          {canSelectDay?.(days[ai].date) && <TooltipJumpLink onClick={() => jumpTo(ai)} />}
         </ChartTooltip>
       )}
     </div>
@@ -628,15 +825,26 @@ function DiaperStackChart({
   days,
   ariaValue,
   renderTooltip,
+  onSelectDay,
+  canSelectDay,
 }: {
   stacked: ReturnType<typeof stackedDiaperLayout>;
   colors: { wet: string; soiled: string; mixed: string };
   days: ChartDaily[];
   ariaValue: (i: number) => string;
   renderTooltip: (i: number) => React.ReactNode;
+  onSelectDay?: (date: string) => void;
+  canSelectDay?: (date: string) => boolean;
 }) {
   const hover = useChartHover();
   const n = days.length;
+  const ai = hover.activeIndex;
+  const jumpTo = (i: number) => {
+    if (canSelectDay?.(days[i].date)) {
+      onSelectDay?.(days[i].date);
+      hover.clear();
+    }
+  };
   // Topmost stack height per day (in VB units) so the active outline
   // wraps the full visible stack rather than just one segment.
   const stackTops = useMemo(() => {
@@ -679,11 +887,18 @@ function DiaperStackChart({
               rx={0.5}
             />
           )}
-        <HitOverlays n={n} hover={hover} days={days} ariaValue={ariaValue} />
+        <HitOverlays
+          n={n}
+          hover={hover}
+          days={days}
+          ariaValue={ariaValue}
+          onSelect={jumpTo}
+        />
       </svg>
-      {hover.activeIndex != null && (
-        <ChartTooltip xPct={tooltipXPercent(hover.activeIndex, n)}>
-          {renderTooltip(hover.activeIndex)}
+      {ai != null && (
+        <ChartTooltip xPct={tooltipXPercent(ai, n)}>
+          {renderTooltip(ai)}
+          {canSelectDay?.(days[ai].date) && <TooltipJumpLink onClick={() => jumpTo(ai)} />}
         </ChartTooltip>
       )}
     </div>
@@ -738,12 +953,16 @@ function BottleStackChart({
   formulaColor,
   ariaValue,
   renderTooltip,
+  onSelectDay,
+  canSelectDay,
 }: {
   days: ChartDaily[];
   breastColor: string;
   formulaColor: string;
   ariaValue: (i: number) => string;
   renderTooltip: (i: number) => React.ReactNode;
+  onSelectDay?: (date: string) => void;
+  canSelectDay?: (date: string) => boolean;
 }) {
   const stacked = useMemo(() => {
     return stacked2Layout(
@@ -760,6 +979,13 @@ function BottleStackChart({
   }, [days]);
   const hover = useChartHover();
   const n = days.length;
+  const ai = hover.activeIndex;
+  const jumpTo = (i: number) => {
+    if (canSelectDay?.(days[i].date)) {
+      onSelectDay?.(days[i].date);
+      hover.clear();
+    }
+  };
   // Top of the visible stack per day (in VB units) so the active
   // outline wraps the full stack from y=0 to top[i].yTop.
   const stackTops = useMemo(() => stacked.top.map((t) => t.yTop), [stacked.top]);
@@ -797,11 +1023,18 @@ function BottleStackChart({
               rx={0.5}
             />
           )}
-        <HitOverlays n={n} hover={hover} days={days} ariaValue={ariaValue} />
+        <HitOverlays
+          n={n}
+          hover={hover}
+          days={days}
+          ariaValue={ariaValue}
+          onSelect={jumpTo}
+        />
       </svg>
-      {hover.activeIndex != null && (
-        <ChartTooltip xPct={tooltipXPercent(hover.activeIndex, n)}>
-          {renderTooltip(hover.activeIndex)}
+      {ai != null && (
+        <ChartTooltip xPct={tooltipXPercent(ai, n)}>
+          {renderTooltip(ai)}
+          {canSelectDay?.(days[ai].date) && <TooltipJumpLink onClick={() => jumpTo(ai)} />}
         </ChartTooltip>
       )}
     </div>
@@ -862,12 +1095,16 @@ function LineChart({
   days,
   ariaValue,
   renderTooltip,
+  onSelectDay,
+  canSelectDay,
 }: {
   points: LinePoint[];
   stroke: string;
   days: ChartDaily[];
   ariaValue: (i: number) => string;
   renderTooltip: (i: number) => React.ReactNode;
+  onSelectDay?: (date: string) => void;
+  canSelectDay?: (date: string) => boolean;
 }) {
   // Build polyline segments split on null gaps. Each contiguous run of
   // defined points becomes one polyline; nulls between runs break the
@@ -888,6 +1125,13 @@ function LineChart({
 
   const hover = useChartHover();
   const n = days.length;
+  const ai = hover.activeIndex;
+  const jumpTo = (i: number) => {
+    if (canSelectDay?.(days[i].date)) {
+      onSelectDay?.(days[i].date);
+      hover.clear();
+    }
+  };
   return (
     <div
       ref={hover.containerRef}
@@ -954,13 +1198,17 @@ function LineChart({
               onPointerDown={(e) => {
                 if (e.pointerType !== "mouse") hover.toggle(p.index);
               }}
+              onPointerUp={(e) => {
+                if (e.pointerType === "mouse") jumpTo(p.index);
+              }}
             />
           );
         })}
       </svg>
-      {hover.activeIndex != null && points[hover.activeIndex]?.defined && (
-        <ChartTooltip xPct={tooltipXPercent(hover.activeIndex, n)}>
-          {renderTooltip(hover.activeIndex)}
+      {ai != null && points[ai]?.defined && (
+        <ChartTooltip xPct={tooltipXPercent(ai, n)}>
+          {renderTooltip(ai)}
+          {canSelectDay?.(days[ai].date) && <TooltipJumpLink onClick={() => jumpTo(ai)} />}
         </ChartTooltip>
       )}
     </div>
@@ -1063,4 +1311,124 @@ function rangeSummary(min: number, max: number, prefs: CombinedPreferences): str
   return min === max
     ? `${formatWeight(min, prefs.unit_weight)} in window`
     : `${formatWeight(min, prefs.unit_weight)} – ${formatWeight(max, prefs.unit_weight)} in window`;
+}
+
+// --- history section ---
+
+function DaySection({
+  group,
+  prefs,
+  isExpanded,
+  onToggle,
+  highlightKind,
+}: {
+  group: DayGroup;
+  prefs: CombinedPreferences;
+  isExpanded: boolean;
+  onToggle: () => void;
+  // When set, rows of this kind glow (the user jumped here from that
+  // metric's chart bar). Only ever set on the matching day.
+  highlightKind?: RecentEvent["kind"];
+}) {
+  const heading = isToday(group.date)
+    ? "Today"
+    : isYesterday(group.date)
+      ? "Yesterday"
+      : format(group.date, "EEE, MMM d");
+  const summary = formatDaySummary(group.events, prefs);
+  const contentId = `history-day-${group.dayKey}`;
+  return (
+    <section
+      id={`history-day-section-${group.dayKey}`}
+      className="flex scroll-mt-4 flex-col gap-2"
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={isExpanded}
+        aria-controls={contentId}
+        className="-mx-1 flex w-full items-baseline justify-between gap-3 rounded-md px-1 py-0.5 text-left transition hover:bg-white/5 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/30"
+      >
+        <span className="flex items-baseline gap-2">
+          <Chevron expanded={isExpanded} />
+          <span className="text-sm font-medium text-white/70">{heading}</span>
+        </span>
+        {summary && (
+          <span className="truncate text-xs text-white/50">{summary}</span>
+        )}
+      </button>
+      {isExpanded && (
+        <ul id={contentId} className="flex flex-col gap-2">
+          {group.events.map((ev) => (
+            <RecentRow
+              key={`${ev.kind}-${ev.data.id}`}
+              ev={ev}
+              prefs={prefs}
+              syncing={false}
+              highlight={highlightKind != null && ev.kind === highlightKind}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function Chevron({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 12 12"
+      className={
+        "h-3 w-3 shrink-0 self-center text-white/50 transition-transform duration-150 " +
+        (expanded ? "rotate-90" : "")
+      }
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 2.5 L8 6 L4 9.5" />
+    </svg>
+  );
+}
+
+// Roll up the day's events into a one-line "60 ml · 12 min nursing · …"
+// summary. Zero parts are dropped so a quiet day reads "2 diapers"
+// rather than "0 ml · 0 min nursing · 0 pumped · 2 diapers · 0 growth".
+function formatDaySummary(events: RecentEvent[], prefs: CombinedPreferences): string {
+  let bottleMl = 0;
+  let nursingMin = 0;
+  let pumpedMl = 0;
+  let diaperCount = 0;
+  let growthCount = 0;
+  for (const ev of events) {
+    switch (ev.kind) {
+      case "bottle":
+        bottleMl += Number(ev.data.amount_ml) || 0;
+        break;
+      case "nursing":
+        nursingMin += Math.round(
+          (Number(ev.data.left_duration_s) + Number(ev.data.right_duration_s)) / 60,
+        );
+        break;
+      case "pumping":
+        pumpedMl += Number(ev.data.amount_ml) || 0;
+        break;
+      case "diaper":
+        diaperCount += 1;
+        break;
+      case "growth":
+        growthCount += 1;
+        break;
+    }
+  }
+  const parts: string[] = [];
+  if (bottleMl > 0) parts.push(formatVolume(bottleMl, prefs.unit_volume));
+  if (nursingMin > 0) parts.push(`${nursingMin} min nursing`);
+  if (pumpedMl > 0) parts.push(`${formatVolume(pumpedMl, prefs.unit_volume)} pumped`);
+  if (diaperCount > 0) parts.push(`${diaperCount} ${diaperCount === 1 ? "diaper" : "diapers"}`);
+  if (growthCount > 0) parts.push(`${growthCount} growth`);
+  return parts.join(" · ");
 }

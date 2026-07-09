@@ -43,6 +43,7 @@ export function RecentRow({
   ev,
   prefs,
   syncing,
+  highlight,
 }: {
   ev: RecentEvent;
   prefs: CombinedPreferences;
@@ -50,6 +51,10 @@ export function RecentRow({
   // sitting in the outbox queue. Render a small "syncing…" hint so
   // the user knows the row is local-only until the queue drains.
   syncing?: boolean;
+  // Briefly pulse the row when the user jumped here by clicking the
+  // matching chart bar. Reduced-motion users skip the pulse (they still
+  // get the expand + scroll).
+  highlight?: boolean;
 }) {
   const at = parseISO(ev.at);
   // Diaper rows can carry an optional photo (migration 000011). The
@@ -145,7 +150,12 @@ export function RecentRow({
     </>
   );
   return (
-    <li className="card flex flex-col gap-2 p-3">
+    <li
+      className={
+        "card flex flex-col gap-2 p-3" +
+        (highlight ? " animate-history-glow motion-reduce:animate-none" : "")
+      }
+    >
       <div className="flex items-center gap-3">
         <div className="flex shrink-0 items-center gap-2">
           <span className="text-2xl leading-none">{icon}</span>
