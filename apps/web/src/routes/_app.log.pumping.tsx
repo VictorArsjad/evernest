@@ -15,6 +15,7 @@ import {
   useHouseholds,
   useUpdatePumping,
 } from "../lib/queries";
+import { submitOnEnter } from "../lib/submitOnEnter";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import type { Pumping } from "../lib/types";
 import {
@@ -22,6 +23,7 @@ import {
   mlToDisplayVolume,
   volumeUnitLabel,
 } from "../lib/units";
+import { useEscapeKey } from "../lib/useEscapeKey";
 import { usePreferences } from "../lib/usePreferences";
 import { DeleteEntryButton } from "./_app.log.bottle";
 
@@ -53,6 +55,7 @@ function localToISO(local: string): string {
 
 function LogPumpingPage() {
   const nav = useNavigate();
+  useEscapeKey(() => nav({ to: "/" }));
   const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
@@ -163,7 +166,11 @@ function LogPumpingPage() {
         </button>
       </header>
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-5 p-5">
+      <form
+        onSubmit={onSubmit}
+        onKeyDown={submitOnEnter}
+        className="card flex flex-col gap-5 p-5"
+      >
         <div>
           <label className="text-xs uppercase tracking-wide text-white/50">Amount expressed</label>
           <div className="mt-1 flex items-baseline gap-2">

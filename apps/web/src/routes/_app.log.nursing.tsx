@@ -27,7 +27,9 @@ import {
   useUpdateNursing,
 } from "../lib/queries";
 import { useActiveBaby } from "../lib/useActiveBaby";
+import { submitOnEnter } from "../lib/submitOnEnter";
 import type { Nursing, NursingSide, StartingBreast } from "../lib/types";
+import { useEscapeKey } from "../lib/useEscapeKey";
 import { DeleteEntryButton } from "./_app.log.bottle";
 
 const search = z.object({
@@ -64,6 +66,7 @@ function parseMinutes(raw: string): number {
 
 function LogNursingPage() {
   const nav = useNavigate();
+  useEscapeKey(() => nav({ to: "/" }));
   const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
@@ -209,7 +212,11 @@ function LogNursingPage() {
         </button>
       </header>
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-5 p-5">
+      <form
+        onSubmit={onSubmit}
+        onKeyDown={submitOnEnter}
+        className="card flex flex-col gap-5 p-5"
+      >
         {editingOpenSession && (
           <p className="rounded-xl border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
             This session is still in progress. End it from the Today screen

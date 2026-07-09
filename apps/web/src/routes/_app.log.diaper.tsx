@@ -18,8 +18,10 @@ import {
   useHouseholds,
   useUpdateDiaper,
 } from "../lib/queries";
+import { submitOnEnter } from "../lib/submitOnEnter";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import type { Diaper, DiaperPhotoMime, DiaperType } from "../lib/types";
+import { useEscapeKey } from "../lib/useEscapeKey";
 import { DeleteEntryButton } from "./_app.log.bottle";
 
 const search = z.object({
@@ -75,6 +77,7 @@ function localToISO(local: string): string {
 
 function LogDiaperPage() {
   const nav = useNavigate();
+  useEscapeKey(() => nav({ to: "/" }));
   const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
@@ -304,7 +307,11 @@ function LogDiaperPage() {
         </button>
       </header>
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-5 p-5">
+      <form
+        onSubmit={onSubmit}
+        onKeyDown={submitOnEnter}
+        className="card flex flex-col gap-5 p-5"
+      >
         <div>
           <span className="text-xs uppercase tracking-wide text-white/50">Type</span>
           <div className="mt-2 grid grid-cols-3 gap-2">

@@ -17,6 +17,7 @@ import {
   useUpdateBottleFeed,
 } from "../lib/queries";
 import { suggestBottleAmountMl, DEFAULT_WINDOW_DAYS } from "../lib/bottleDefault";
+import { submitOnEnter } from "../lib/submitOnEnter";
 import type { BottleFeed } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import {
@@ -24,6 +25,7 @@ import {
   mlToDisplayVolume,
   volumeUnitLabel,
 } from "../lib/units";
+import { useEscapeKey } from "../lib/useEscapeKey";
 import { usePreferences } from "../lib/usePreferences";
 
 const search = z.object({
@@ -56,6 +58,7 @@ function localToISO(local: string): string {
 
 function LogBottlePage() {
   const nav = useNavigate();
+  useEscapeKey(() => nav({ to: "/" }));
   const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
@@ -220,7 +223,11 @@ function LogBottlePage() {
         </button>
       </header>
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-5 p-5">
+      <form
+        onSubmit={onSubmit}
+        onKeyDown={submitOnEnter}
+        className="card flex flex-col gap-5 p-5"
+      >
         <div>
           <label className="text-xs uppercase tracking-wide text-white/50">Amount</label>
           <div className="mt-1 flex items-baseline gap-2">
