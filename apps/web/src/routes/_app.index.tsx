@@ -194,11 +194,8 @@ function TodayPage() {
       headerExtra={
         <div className="flex items-center gap-3">
           <SyncStatusBadge />
-          <Link to="/history" className="text-xs text-white/60 hover:text-white">
-            History →
-          </Link>
           <Link to="/charts" className="text-xs text-white/60 hover:text-white">
-            View charts →
+            Charts & history →
           </Link>
           <Link
             to="/settings"
