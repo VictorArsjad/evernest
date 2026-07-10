@@ -2,7 +2,7 @@
 // own module so vi.mock("../lib/authStore") can `await import()` it
 // inside the factory (hoisted-vi.mock factories cannot close over
 // in-file variables). Not imported anywhere outside the test.
-export type AuthStatus = "initializing" | "authenticated" | "anonymous";
+export type AuthStatus = "initializing" | "authenticated" | "anonymous" | "error";
 
 let current: AuthStatus = "initializing";
 

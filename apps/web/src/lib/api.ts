@@ -42,6 +42,21 @@ export class ApiError extends Error {
   }
 }
 
+// TimeoutError is thrown when a request exceeds its client-side deadline.
+// iOS WebKit hangs (rather than fails) fetches that are in flight across a
+// background→foreground transition or issued before the tailnet is ready,
+// so without this the request never settles and the UI stays stuck on
+// "loading" / "Saving…" forever. We use a dedicated named class — rather
+// than relying on the fetch abort *reason* (only Safari 15.4+ propagates
+// it) — so downstream `instanceof` checks work on every engine and can
+// tell a timeout apart from a caller-initiated abort (query cancellation).
+export class TimeoutError extends Error {
+  constructor(message = "request timed out") {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
 interface RequestOpts {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
@@ -71,6 +86,42 @@ let refreshInflight: Promise<TokenResponse | null> | null = null;
 // one refresh round-trip.
 const EXPIRY_BUFFER_MS = 60_000;
 
+// Client-side request deadlines. Without them an iOS-suspended fetch never
+// settles (see TimeoutError). Data reads/mutations get a tolerant window so
+// a slow tailnet cold-load isn't cut short; the auth refresh gets a tighter
+// bound because it blocks boot and, via the single-flight below, every
+// subsequent authed request — it must fail fast so recovery can kick in.
+const REQUEST_TIMEOUT_MS = 15_000;
+const REFRESH_TIMEOUT_MS = 8_000;
+
+// makeTimeout builds an AbortSignal that fires after `ms`, optionally
+// chained to a caller-supplied signal (query cancellation). We use a manual
+// AbortController + setTimeout rather than AbortSignal.timeout()/any() on
+// purpose: AbortSignal.any() is iOS Safari 17.4+ only, and this PWA targets
+// older iOS. `timedOut()` lets the caller distinguish our deadline from a
+// caller-initiated abort so the two are classified differently downstream.
+function makeTimeout(ms: number, caller?: AbortSignal) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, ms);
+  const onAbort = () => controller.abort();
+  if (caller) {
+    if (caller.aborted) controller.abort();
+    else caller.addEventListener("abort", onAbort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    cleanup: () => {
+      clearTimeout(timer);
+      caller?.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
 async function ensureFreshToken(): Promise<void> {
   const { accessToken, expiresAt, refreshToken } = useAuthStore.getState();
   if (!accessToken || !refreshToken || !expiresAt) return;
@@ -79,30 +130,62 @@ async function ensureFreshToken(): Promise<void> {
   await tryRefresh();
 }
 
+// RefreshOutcome distinguishes the three cases the callers actually need to
+// act on differently:
+//   - "ok"          → we have a fresh session.
+//   - "unauth"      → the cookie is definitively invalid (401/403); the
+//                     session is really gone, so it's safe to sign out.
+//   - "unreachable" → timeout / network / 5xx: we DON'T know whether the
+//                     session is valid, so bootstrap must retry rather than
+//                     dump a possibly-valid session to /login.
+type RefreshOutcome =
+  | { status: "ok"; data: TokenResponse }
+  | { status: "unauth" }
+  | { status: "unreachable" };
+
+// refreshOnce performs a single timed refresh round-trip and classifies the
+// result. It always settles within REFRESH_TIMEOUT_MS (the timeout guarantees
+// the fetch promise rejects), which is what makes the single-flight below
+// impossible to wedge.
+async function refreshOnce(): Promise<RefreshOutcome> {
+  const t = makeTimeout(REFRESH_TIMEOUT_MS);
+  try {
+    // Same-origin first-party cookie carries the refresh token; send no body
+    // so a stale value can never shadow the cookie. On success the BE rotates
+    // the cookie and returns a fresh access token.
+    const res = await fetch(`${BASE}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+      signal: t.signal,
+    });
+    if (res.ok) {
+      const data = (await res.json()) as TokenResponse;
+      useAuthStore.getState().setSession(data);
+      return { status: "ok", data };
+    }
+    if (res.status === 401 || res.status === 403) return { status: "unauth" };
+    return { status: "unreachable" }; // 5xx and other non-2xx
+  } catch {
+    // TimeoutError / caller abort / network TypeError — all "we couldn't
+    // reach the server", not "the session is invalid".
+    return { status: "unreachable" };
+  } finally {
+    t.cleanup();
+  }
+}
+
 async function tryRefresh(): Promise<TokenResponse | null> {
   if (!refreshInflight) {
-    refreshInflight = (async () => {
-      try {
-        // Same-origin first-party cookie carries the refresh token; send
-        // no body so a stale value can never shadow the cookie. On success
-        // the BE rotates the cookie and returns a fresh access token.
-        const res = await fetch(`${BASE}/auth/refresh`, {
-          method: "POST",
-          credentials: "include",
-        });
-        if (!res.ok) return null;
-        const data = (await res.json()) as TokenResponse;
-        useAuthStore.getState().setSession(data);
-        return data;
-      } catch {
-        return null;
-      } finally {
-        // Allow the next refresh attempt to proceed.
+    refreshInflight = refreshOnce()
+      .then((o) => (o.status === "ok" ? o.data : null))
+      .finally(() => {
+        // Allow the next refresh attempt to proceed. Deferred a microtask so
+        // all concurrent awaiters observe the same settled promise before it
+        // is cleared (preserves the single-flight coalescing).
         queueMicrotask(() => {
           refreshInflight = null;
         });
-      }
-    })();
+      });
   }
   return refreshInflight;
 }
@@ -115,13 +198,24 @@ export async function api<T>(path: string, opts: RequestOpts = {}): Promise<T> {
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (token && !skipAuth) headers.Authorization = `Bearer ${token}`;
 
-    return fetch(`${BASE}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal,
-      credentials,
-    });
+    const t = makeTimeout(REQUEST_TIMEOUT_MS, signal);
+    try {
+      return await fetch(`${BASE}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: t.signal,
+        credentials,
+      });
+    } catch (err) {
+      // Our deadline fired → TimeoutError (a transient, enqueue-worthy
+      // failure). Anything else — a caller-initiated AbortError or a real
+      // network TypeError — is preserved so its own classification holds.
+      if (t.timedOut()) throw new TimeoutError();
+      throw err;
+    } finally {
+      t.cleanup();
+    }
   };
 
   if (!skipAuth && !path.startsWith("/auth/")) {
@@ -175,7 +269,15 @@ export async function apiBlob(
   const doFetch = async (token: string | null) => {
     const headers: Record<string, string> = {};
     if (token) headers.Authorization = `Bearer ${token}`;
-    return fetch(`${BASE}${path}`, { method: "GET", headers, signal: opts.signal });
+    const t = makeTimeout(REQUEST_TIMEOUT_MS, opts.signal);
+    try {
+      return await fetch(`${BASE}${path}`, { method: "GET", headers, signal: t.signal });
+    } catch (err) {
+      if (t.timedOut()) throw new TimeoutError();
+      throw err;
+    } finally {
+      t.cleanup();
+    }
   };
 
   let res = await doFetch(useAuthStore.getState().accessToken);
@@ -208,15 +310,38 @@ export async function apiBlob(
   return await res.blob();
 }
 
-// Convenience: bootstrap the auth store by attempting a silent refresh.
+// Bootstrap the auth store by attempting a silent refresh on cold start.
 // Returns true if we ended up authenticated, false otherwise.
+//
+// A definitive 401/403 ("unauth") means the session is really gone → sign
+// out and let the route guard send the user to /login. But a timeout /
+// network failure ("unreachable") is ambiguous — the refresh cookie may be
+// perfectly valid and the tailnet just wasn't up yet. Dumping such a user to
+// /login is the wrong call, so we retry with backoff and, if every attempt
+// is unreachable, flip to the "error" status the AuthGate turns into a
+// Retry screen (rather than an endless splash or a bogus logout).
+//
+// Calls refreshOnce() directly instead of the single-flight tryRefresh():
+// at cold start the routed query burst is gated behind the AuthGate splash,
+// so there is no concurrent refresh to coalesce with.
+const MAX_BOOT_ATTEMPTS = 3;
+const BOOT_BACKOFF_MS = [500, 1500]; // waits between attempts 1→2 and 2→3
+
 export async function bootstrapAuth(): Promise<boolean> {
-  const refreshed = await tryRefresh();
-  if (!refreshed) {
-    useAuthStore.getState().setAnonymous();
-    return false;
+  for (let attempt = 0; attempt < MAX_BOOT_ATTEMPTS; attempt++) {
+    const outcome = await refreshOnce();
+    if (outcome.status === "ok") return true;
+    if (outcome.status === "unauth") {
+      useAuthStore.getState().setAnonymous();
+      return false;
+    }
+    // "unreachable" — back off and retry (unless this was the last attempt).
+    if (attempt < MAX_BOOT_ATTEMPTS - 1) {
+      await new Promise((r) => setTimeout(r, BOOT_BACKOFF_MS[attempt]));
+    }
   }
-  return true;
+  useAuthStore.getState().setBootError();
+  return false;
 }
 
 // --- mutation seam: apiQueued ---
@@ -265,6 +390,13 @@ export async function apiQueued<T>(path: string, opts: QueuedOpts<T>): Promise<T
 }
 
 function shouldEnqueue(err: unknown): boolean {
+  // A client-side timeout (iOS hung the request) is transient — the write
+  // never reached the server, so queue it and hand the caller a synthetic
+  // success rather than leaving the form stuck on "Saving…". A caller-
+  // initiated abort (query cancellation) surfaces as a DOMException named
+  // "AbortError", which is NOT a TimeoutError, so it falls through to the
+  // final `return false` and is rethrown as a cancellation (never queued).
+  if (err instanceof TimeoutError) return true;
   // TypeError from fetch == network failure. The classic "navigator
   // didn't even reach the server" case; obvious queue candidate.
   if (err instanceof TypeError) return true;
@@ -296,6 +428,10 @@ async function outboxDispatch(record: {
     });
     return { kind: "ok", status: 200, data };
   } catch (err) {
+    if (err instanceof TimeoutError) {
+      // Hung replay send — retry with backoff, don't misclassify as dead.
+      return { kind: "transient", status: 0, message: err.message };
+    }
     if (err instanceof TypeError) {
       return {
         kind: "transient",
