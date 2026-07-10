@@ -21,6 +21,7 @@ import {
   useHouseholds,
   useUpdateGrowth,
 } from "../lib/queries";
+import { submitOnEnter } from "../lib/submitOnEnter";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import type { Growth } from "../lib/types";
 import {
@@ -31,6 +32,7 @@ import {
   lengthUnitLabel,
   weightUnitLabel,
 } from "../lib/units";
+import { useEscapeKey } from "../lib/useEscapeKey";
 import { usePreferences } from "../lib/usePreferences";
 import { DeleteEntryButton } from "./_app.log.bottle";
 
@@ -73,6 +75,7 @@ function parseOptional(raw: string, max: number): number | undefined {
 
 function LogGrowthPage() {
   const nav = useNavigate();
+  useEscapeKey(() => nav({ to: "/" }));
   const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
   const households = useHouseholds();
   const householdId = households.data?.[0]?.id ?? null;
@@ -219,7 +222,11 @@ function LogGrowthPage() {
         </button>
       </header>
 
-      <form onSubmit={onSubmit} className="card flex flex-col gap-5 p-5">
+      <form
+        onSubmit={onSubmit}
+        onKeyDown={submitOnEnter}
+        className="card flex flex-col gap-5 p-5"
+      >
         <p className="text-xs text-white/50">
           Fill in any combination — at least one is required.
         </p>

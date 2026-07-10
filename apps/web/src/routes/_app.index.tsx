@@ -30,9 +30,11 @@ import {
 } from "../lib/queries";
 import { getDailyTargets, type DailyTargets } from "../lib/recommendations";
 import { mergeRecent } from "../lib/recentEvents";
+import { submitOnEnter } from "../lib/submitOnEnter";
 import { formatTimeSince, lastEventAt, useNow } from "../lib/timeSince";
 import type { Baby, Nursing } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
+import { useEscapeKey } from "../lib/useEscapeKey";
 import { useOutbox } from "../lib/useOutbox";
 import { formatTime, formatVolume, formatWeight } from "../lib/units";
 import { type CombinedPreferences, usePreferences } from "../lib/usePreferences";
@@ -407,6 +409,7 @@ function EndNursingModal({
   prefs: CombinedPreferences;
   onClose: () => void;
 }) {
+  useEscapeKey(onClose);
   // Default each side to half the elapsed minutes when nursing both
   // sides; otherwise put the full elapsed time on the active side. The
   // user can override; this just removes the "blank input" friction for
@@ -455,6 +458,7 @@ function EndNursingModal({
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:items-center">
       <form
         onSubmit={onSubmit}
+        onKeyDown={submitOnEnter}
         className="w-full max-w-sm rounded-2xl border border-white/10 bg-bg-surface p-5 shadow-xl"
       >
         <div className="mb-4 flex items-baseline justify-between">

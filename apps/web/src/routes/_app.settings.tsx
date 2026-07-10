@@ -12,6 +12,7 @@ import { format, parseISO } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 
 import { useAuthStore } from "../lib/authStore";
+import { useEscapeKey } from "../lib/useEscapeKey";
 import {
   FEATURE_KEYS,
   FEATURE_LABELS,
@@ -827,6 +828,7 @@ function ConfirmHideModal({
   onConfirm: () => void;
 }) {
   const label = FEATURE_LABELS[featureKey];
+  useEscapeKey(onCancel);
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:items-center">
       <div
