@@ -59,4 +59,16 @@ describe("AuthGate", () => {
     expect(html).toContain(CHILD_MARKER);
     expect(html).not.toContain('data-testid="auth-gate-splash"');
   });
+
+  it("renders a Retry affordance (not the app) on boot 'error'", () => {
+    // Boot refresh was unreachable after retries — we don't know if the
+    // session is valid, so the gate must hold with a Retry screen rather
+    // than reveal the app or flash the splash.
+    setAuthStatusForTest("error");
+    const html = renderToStaticMarkup(<AuthGate>{child()}</AuthGate>);
+    expect(html).toContain('data-testid="auth-gate-error"');
+    expect(html).toContain("Retry");
+    expect(html).not.toContain(CHILD_MARKER);
+    expect(html).not.toContain('data-testid="auth-gate-splash"');
+  });
 });

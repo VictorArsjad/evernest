@@ -9,7 +9,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { api, apiQueued, ApiError } from "./api";
+import { api, apiQueued, ApiError, bootstrapAuth, TimeoutError } from "./api";
 import { useAuthStore } from "./authStore";
 import {
   _resetForTests,
@@ -352,5 +352,235 @@ describe("api — proactive token refresh near expiry", () => {
 
     await api<unknown>("/auth/refresh", { method: "POST", credentials: "include" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --- request timeouts (iOS-hung-fetch recovery) ---
+//
+// The bug these guard: iOS WebKit hangs (never settles) a fetch caught in a
+// background→foreground transition, so without a client deadline the app is
+// stuck on "loading" / "Saving…" forever. We fake ONLY setTimeout/clearTimeout
+// so makeTimeout()'s deadline and bootstrap's backoff are clock-driven, while
+// Date (expiry math) and the IndexedDB outbox keep running on real time.
+describe("api — request timeouts", () => {
+  const REQUEST_TIMEOUT_MS = 15_000;
+  const REFRESH_TIMEOUT_MS = 8_000;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // A fetch that never resolves on its own; it rejects with an AbortError
+  // the moment its signal aborts (whether already-aborted or aborted later),
+  // mirroring how the platform fetch reacts to our AbortController.
+  function hangingFetch(onCall?: (url: string) => void): typeof fetch {
+    return vi.fn(
+      (input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          onCall?.(String(input));
+          const signal = init?.signal;
+          const fail = () => reject(new DOMException("aborted", "AbortError"));
+          if (signal?.aborted) return fail();
+          signal?.addEventListener("abort", fail, { once: true });
+        }),
+    ) as typeof fetch;
+  }
+
+  function seedNearExpiry() {
+    useAuthStore.setState({
+      accessToken: "stale-token",
+      expiresAt: new Date(Date.now() + 1_000).toISOString(),
+      refreshToken: "rt",
+      status: "authenticated",
+    });
+  }
+
+  it("times out a hung mutation → synthesizes success AND enqueues (bug b)", async () => {
+    // Token has plenty of life (from the shared beforeEach), so the hang is
+    // the data POST itself, not a refresh.
+    globalThis.fetch = hangingFetch();
+
+    const synthetic = { id: "client", amount_ml: 60 };
+    const p = apiQueued<typeof synthetic>("/babies/b1/bottle-feeds", {
+      method: "POST",
+      body: { id: "client", amount_ml: 60 },
+      idempotencyKey: "client",
+      synthesize: () => synthetic,
+    });
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+    const out = await p;
+
+    expect(out).toEqual(synthetic);
+    const q = await peekQueue();
+    expect(q).toHaveLength(1);
+    expect(q[0].idempotencyKey).toBe("client");
+  });
+
+  it("throws TimeoutError from api() when the request exceeds the deadline", async () => {
+    globalThis.fetch = hangingFetch();
+    const p = api<unknown>("/babies/b1");
+    // Attach a catch synchronously so the eventual rejection is never an
+    // unhandled rejection while we advance the fake clock.
+    const settled = p.then(
+      () => "resolved",
+      (e) => e,
+    );
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+    expect(await settled).toBeInstanceOf(TimeoutError);
+  });
+
+  it("resets refreshInflight after a timed-out refresh so the next call retries (wedge recovery)", async () => {
+    let refreshCalls = 0;
+    // Refresh #1 hangs (→ times out); refresh #2 succeeds. Data always 200.
+    globalThis.fetch = vi.fn(
+      (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/auth/refresh")) {
+          refreshCalls += 1;
+          if (refreshCalls === 1) {
+            return new Promise<Response>((_res, reject) => {
+              const signal = init?.signal;
+              const fail = () => reject(new DOMException("aborted", "AbortError"));
+              if (signal?.aborted) return fail();
+              signal?.addEventListener("abort", fail, { once: true });
+            });
+          }
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                access_token: "rotated-token",
+                expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+                refresh_token: "rotated-refresh",
+                refresh_expires_at: new Date(Date.now() + 7 * 24 * 3600_000).toISOString(),
+                user: { id: "u1", email: "u@e.com", display_name: "U", created_at: "x" },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      },
+    ) as typeof fetch;
+
+    // First call: near-expiry → proactive refresh #1 hangs → times out;
+    // the data request then goes out with the (unchanged) stale token.
+    seedNearExpiry();
+    const p1 = api<{ ok: boolean }>("/babies/b1/first");
+    await vi.advanceTimersByTimeAsync(REFRESH_TIMEOUT_MS);
+    await p1;
+    expect(refreshCalls).toBe(1);
+
+    // Second call: still near-expiry (refresh never succeeded). If
+    // refreshInflight were still wedged this would await the dead promise
+    // forever; instead it issues a fresh refresh (#2) that succeeds.
+    seedNearExpiry();
+    await api<{ ok: boolean }>("/babies/b1/second");
+    expect(refreshCalls).toBe(2);
+  });
+
+  it("does NOT enqueue a caller-aborted request (query cancellation)", async () => {
+    globalThis.fetch = hangingFetch();
+    const ac = new AbortController();
+    ac.abort(); // pre-aborted, as TanStack Query does on cancellation
+
+    await expect(
+      apiQueued("/babies/b1/bottle-feeds", {
+        method: "POST",
+        body: { id: "client" },
+        idempotencyKey: "client",
+        synthesize: () => ({ id: "client" }),
+        signal: ac.signal,
+      }),
+    ).rejects.toBeInstanceOf(DOMException);
+    expect(await peekQueue()).toHaveLength(0);
+  });
+
+  it("leaves a fast success unaffected (no timeout, no enqueue)", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ) as typeof fetch;
+
+    const out = await api<{ ok: boolean }>("/babies/b1");
+    expect(out.ok).toBe(true);
+    expect(await peekQueue()).toHaveLength(0);
+  });
+});
+
+// --- bootstrapAuth classification (boot-timeout UX) ---
+describe("bootstrapAuth — outcome classification", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // Boot runs from a cold store.
+    useAuthStore.setState({
+      accessToken: null,
+      expiresAt: null,
+      refreshToken: null,
+      user: null,
+      status: "initializing",
+    });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a valid refresh → authenticated / returns true", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          access_token: "a",
+          expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+          refresh_token: "r",
+          refresh_expires_at: new Date(Date.now() + 7 * 24 * 3600_000).toISOString(),
+          user: { id: "u1", email: "u@e.com", display_name: "U", created_at: "x" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    ) as typeof fetch;
+
+    const p = bootstrapAuth();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await p).toBe(true);
+    expect(useAuthStore.getState().status).toBe("authenticated");
+  });
+
+  it("a definitive 401 → anonymous / returns false (goes to /login)", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 401 })) as typeof fetch;
+
+    const p = bootstrapAuth();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await p).toBe(false);
+    expect(useAuthStore.getState().status).toBe("anonymous");
+  });
+
+  it("all attempts unreachable → error (NOT anonymous), returns false", async () => {
+    // Every refresh hangs → each attempt times out; after retries we must
+    // land on "error", never "anonymous" (which would dump a possibly-valid
+    // session to /login — the exact regression we're guarding against).
+    globalThis.fetch = vi.fn(
+      (_input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+        new Promise<Response>((_res, reject) => {
+          const signal = init?.signal;
+          const fail = () => reject(new DOMException("aborted", "AbortError"));
+          if (signal?.aborted) return fail();
+          signal?.addEventListener("abort", fail, { once: true });
+        }),
+    ) as typeof fetch;
+
+    const p = bootstrapAuth();
+    // Drive 3 refresh timeouts (8s each) + the two backoffs (0.5s, 1.5s).
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(await p).toBe(false);
+    expect(useAuthStore.getState().status).toBe("error");
   });
 });

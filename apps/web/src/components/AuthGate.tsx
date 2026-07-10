@@ -12,6 +12,7 @@
 // flash before the gate lifts.
 import type { ReactNode } from "react";
 
+import { bootstrapAuth } from "../lib/api";
 import { useAuthStore } from "../lib/authStore";
 
 interface AuthGateProps {
@@ -36,6 +37,31 @@ export function AuthGate({ children }: AuthGateProps) {
           aria-hidden="true"
           className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/80"
         />
+      </div>
+    );
+  }
+
+  // Boot refresh couldn't reach the server (timeout / network) after
+  // retries. We don't know whether the session is valid, so we show a
+  // Retry affordance instead of the endless splash or a bogus redirect to
+  // /login. Retry drops back to "initializing" (re-showing the splash) and
+  // re-runs the same bootstrap round-trip.
+  if (status === "error") {
+    const retry = () => {
+      useAuthStore.setState({ status: "initializing" });
+      void bootstrapAuth();
+    };
+    return (
+      <div
+        role="alert"
+        data-testid="auth-gate-error"
+        className="flex flex-1 flex-col items-center justify-center gap-6 bg-bg-base px-6 text-white"
+      >
+        <h1 className="text-4xl font-semibold tracking-tight">Evernest</h1>
+        <p className="text-center text-white/60">Couldn't reach Evernest.</p>
+        <button type="button" onClick={retry} className="btn-primary">
+          Retry
+        </button>
       </div>
     );
   }

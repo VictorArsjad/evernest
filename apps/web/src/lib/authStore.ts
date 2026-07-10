@@ -23,7 +23,13 @@ import type { User } from "./types";
 // resolves. The AuthGate splash covers this state; route layouts use
 // the authRedirect helpers (lib/authRedirect.ts) to react when this
 // transitions to "anonymous" / "authenticated" post-mount.
-export type AuthStatus = "initializing" | "anonymous" | "authenticated";
+//
+// "error" is the terminal boot state when the silent refresh couldn't
+// reach the server (timeout / network) after retries — distinct from
+// "anonymous" so we DON'T dump a possibly-valid session to /login. The
+// AuthGate renders a Retry screen for it; the authRedirect helpers no-op
+// on it, so it triggers no route bounce.
+export type AuthStatus = "initializing" | "anonymous" | "authenticated" | "error";
 
 interface AuthState {
   accessToken: string | null;
@@ -41,6 +47,7 @@ interface AuthState {
   setUser: (user: User) => void;
   clear: () => void;
   setAnonymous: () => void;
+  setBootError: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -71,6 +78,18 @@ export const useAuthStore = create<AuthState>((set) => ({
   setAnonymous: () => {
     set({
       status: "anonymous",
+      accessToken: null,
+      expiresAt: null,
+      refreshToken: null,
+      user: null,
+    });
+  },
+  // Boot refresh couldn't reach the server after retries. Leave tokens
+  // null but keep the session's true state unknown — the AuthGate shows a
+  // Retry screen rather than sending the user to /login.
+  setBootError: () => {
+    set({
+      status: "error",
       accessToken: null,
       expiresAt: null,
       refreshToken: null,
