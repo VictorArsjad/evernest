@@ -101,11 +101,31 @@ function TodayPage() {
     d.setHours(23, 59, 59, 999);
     return d.toISOString();
   }, []);
+  // Lookback for "last fed / last diaper" — the banner surfaces the most
+  // recent event regardless of day, so a feed from last night still reads
+  // "Fed 8h ago" this morning instead of "No feeds yet today". 30 days
+  // matches formatTimeSince's ceiling (older than that renders "—" anyway),
+  // so a wider window buys nothing.
+  const sinceStart = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, []);
 
   const feeds = useBottleFeeds(baby?.id ?? null, todayStart, todayEnd);
   const diapers = useDiapers(baby?.id ?? null, todayStart, todayEnd);
   const pumpings = usePumpings(baby?.id ?? null, todayStart, todayEnd);
   const nursings = useNursings(baby?.id ?? null, todayStart, todayEnd);
+  // Most-recent-event queries powering the banner's "last fed / last diaper"
+  // labels. Separate from the today-scoped lists above so the totals and the
+  // "Recent — today" list stay bound to today; these look back 30 days and
+  // cap at a tiny limit (server returns newest-first).
+  const latestFeeds = useBottleFeeds(baby?.id ?? null, sinceStart, todayEnd, { limit: 1 });
+  const latestDiapers = useDiapers(baby?.id ?? null, sinceStart, todayEnd, { limit: 1 });
+  // A small limit (not 1): the newest row could be an open session, which we
+  // exclude below; a handful is enough to reach the latest completed one.
+  const latestNursings = useNursings(baby?.id ?? null, sinceStart, todayEnd, { limit: 10 });
   // Display preferences for the active baby + user. Falls back to
   // canonical units while the queries hydrate so the tile grid renders
   // immediately rather than blocking on a settings round-trip.
@@ -165,10 +185,10 @@ function TodayPage() {
   // priority in TodayBanner, so we exclude open sessions here to avoid
   // double-counting.
   const lastFedAt = lastEventAt([
-    ...(feeds.data ?? []),
-    ...((nursings.data ?? []).filter((n) => n.ended_at != null)),
+    ...(latestFeeds.data ?? []),
+    ...((latestNursings.data ?? []).filter((n) => n.ended_at != null)),
   ]);
-  const lastDiaperAt = lastEventAt(diapers.data ?? []);
+  const lastDiaperAt = lastEventAt(latestDiapers.data ?? []);
 
   const recent = mergeRecent({
     bottleFeeds: feeds.data,
@@ -578,7 +598,7 @@ function TodayBanner({
             </div>
           ) : (
             <div className="mt-1 text-lg font-semibold leading-tight text-white/60">
-              No feeds yet today
+              No feeds yet
             </div>
           )}
           {lastDiaperAt && (
