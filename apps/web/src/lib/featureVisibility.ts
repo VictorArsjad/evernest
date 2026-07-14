@@ -15,7 +15,8 @@ export type FeatureKey =
   | "nursing"
   | "pumping"
   | "diaper"
-  | "growth";
+  | "growth"
+  | "note";
 
 // Render order for the settings card. Matches the order of tiles on the
 // Today screen left-to-right so the toggle list mirrors what users see.
@@ -25,6 +26,7 @@ export const FEATURE_KEYS: FeatureKey[] = [
   "pumping",
   "diaper",
   "growth",
+  "note",
 ];
 
 export const FEATURE_LABELS: Record<FeatureKey, string> = {
@@ -33,6 +35,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   pumping: "Pumping",
   diaper: "Diaper",
   growth: "Growth",
+  note: "Note",
 };
 
 export type FeatureVisibilityMap = Partial<Record<FeatureKey, boolean>>;

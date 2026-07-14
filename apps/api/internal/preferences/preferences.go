@@ -129,6 +129,7 @@ var allowedFeatureKeys = map[string]struct{}{
 	"pumping": {},
 	"diaper":  {},
 	"growth":  {},
+	"note":    {},
 }
 
 // validateFeatureVisibility runs the post-validator key check. Values are

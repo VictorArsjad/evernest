@@ -21,6 +21,7 @@ import { Route as AppHistoryRouteImport } from './routes/_app.history'
 import { Route as AppChartsRouteImport } from './routes/_app.charts'
 import { Route as AppLogPumpingRouteImport } from './routes/_app.log.pumping'
 import { Route as AppLogNursingRouteImport } from './routes/_app.log.nursing'
+import { Route as AppLogNoteRouteImport } from './routes/_app.log.note'
 import { Route as AppLogGrowthRouteImport } from './routes/_app.log.growth'
 import { Route as AppLogDiaperRouteImport } from './routes/_app.log.diaper'
 import { Route as AppLogBottleRouteImport } from './routes/_app.log.bottle'
@@ -83,6 +84,11 @@ const AppLogNursingRoute = AppLogNursingRouteImport.update({
   path: '/log/nursing',
   getParentRoute: () => AppRoute,
 } as any)
+const AppLogNoteRoute = AppLogNoteRouteImport.update({
+  id: '/log/note',
+  path: '/log/note',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppLogGrowthRoute = AppLogGrowthRouteImport.update({
   id: '/log/growth',
   path: '/log/growth',
@@ -111,6 +117,7 @@ export interface FileRoutesByFullPath {
   '/log/bottle': typeof AppLogBottleRoute
   '/log/diaper': typeof AppLogDiaperRoute
   '/log/growth': typeof AppLogGrowthRoute
+  '/log/note': typeof AppLogNoteRoute
   '/log/nursing': typeof AppLogNursingRoute
   '/log/pumping': typeof AppLogPumpingRoute
 }
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/log/bottle': typeof AppLogBottleRoute
   '/log/diaper': typeof AppLogDiaperRoute
   '/log/growth': typeof AppLogGrowthRoute
+  '/log/note': typeof AppLogNoteRoute
   '/log/nursing': typeof AppLogNursingRoute
   '/log/pumping': typeof AppLogPumpingRoute
 }
@@ -144,6 +152,7 @@ export interface FileRoutesById {
   '/_app/log/bottle': typeof AppLogBottleRoute
   '/_app/log/diaper': typeof AppLogDiaperRoute
   '/_app/log/growth': typeof AppLogGrowthRoute
+  '/_app/log/note': typeof AppLogNoteRoute
   '/_app/log/nursing': typeof AppLogNursingRoute
   '/_app/log/pumping': typeof AppLogPumpingRoute
 }
@@ -161,6 +170,7 @@ export interface FileRouteTypes {
     | '/log/bottle'
     | '/log/diaper'
     | '/log/growth'
+    | '/log/note'
     | '/log/nursing'
     | '/log/pumping'
   fileRoutesByTo: FileRoutesByTo
@@ -176,6 +186,7 @@ export interface FileRouteTypes {
     | '/log/bottle'
     | '/log/diaper'
     | '/log/growth'
+    | '/log/note'
     | '/log/nursing'
     | '/log/pumping'
   id:
@@ -193,6 +204,7 @@ export interface FileRouteTypes {
     | '/_app/log/bottle'
     | '/_app/log/diaper'
     | '/_app/log/growth'
+    | '/_app/log/note'
     | '/_app/log/nursing'
     | '/_app/log/pumping'
   fileRoutesById: FileRoutesById
@@ -289,6 +301,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLogNursingRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/log/note': {
+      id: '/_app/log/note'
+      path: '/log/note'
+      fullPath: '/log/note'
+      preLoaderRoute: typeof AppLogNoteRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/log/growth': {
       id: '/_app/log/growth'
       path: '/log/growth'
@@ -322,6 +341,7 @@ interface AppRouteChildren {
   AppLogBottleRoute: typeof AppLogBottleRoute
   AppLogDiaperRoute: typeof AppLogDiaperRoute
   AppLogGrowthRoute: typeof AppLogGrowthRoute
+  AppLogNoteRoute: typeof AppLogNoteRoute
   AppLogNursingRoute: typeof AppLogNursingRoute
   AppLogPumpingRoute: typeof AppLogPumpingRoute
 }
@@ -335,6 +355,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppLogBottleRoute: AppLogBottleRoute,
   AppLogDiaperRoute: AppLogDiaperRoute,
   AppLogGrowthRoute: AppLogGrowthRoute,
+  AppLogNoteRoute: AppLogNoteRoute,
   AppLogNursingRoute: AppLogNursingRoute,
   AppLogPumpingRoute: AppLogPumpingRoute,
 }

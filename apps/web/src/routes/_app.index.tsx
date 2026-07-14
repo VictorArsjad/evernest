@@ -24,6 +24,7 @@ import {
   useGrowths,
   useHouseholds,
   useLogout,
+  useNotes,
   useNursings,
   useOpenNursing,
   usePumpings,
@@ -135,6 +136,7 @@ function TodayPage() {
   // chip in place of the standard Nursing tile when this resolves to a row.
   const openNursing = useOpenNursing(baby?.id ?? null);
   const growthsToday = useGrowths(baby?.id ?? null, todayStart, todayEnd);
+  const notesToday = useNotes(baby?.id ?? null, todayStart, todayEnd);
   // Latest measurement ever — fed into the banner's Growth cell. The
   // default server-side window for growths covers the past year, which
   // is plenty for "most-recent weight" since the rows return DESC by
@@ -196,6 +198,7 @@ function TodayPage() {
     pumpings: pumpings.data,
     nursings: nursings.data,
     growths: growthsToday.data,
+    notes: notesToday.data,
   });
 
   return (
@@ -268,6 +271,9 @@ function TodayPage() {
         {isFeatureVisible(prefs.feature_visibility, "growth") && (
           <Tile to="/log/growth" babyId={baby.id} icon="📏" label="Growth" accent="lilac" />
         )}
+        {isFeatureVisible(prefs.feature_visibility, "note") && (
+          <Tile to="/log/note" babyId={baby.id} icon="📝" label="Note" accent="rose" />
+        )}
       </section>
 
       <section className="flex flex-col gap-2">
@@ -317,7 +323,7 @@ function TodayPage() {
 
 // --- tiles ---
 
-type Accent = "peach" | "mint" | "sky" | "lemon" | "lilac";
+type Accent = "peach" | "mint" | "sky" | "lemon" | "lilac" | "rose";
 
 const accentClass: Record<Accent, string> = {
   peach: "border-orange-300/20 bg-orange-300/5",
@@ -325,6 +331,7 @@ const accentClass: Record<Accent, string> = {
   sky: "border-sky-300/20 bg-sky-300/5",
   lemon: "border-yellow-300/20 bg-yellow-300/5",
   lilac: "border-violet-300/20 bg-violet-300/5",
+  rose: "border-rose-300/20 bg-rose-300/5",
 };
 
 function Tile({

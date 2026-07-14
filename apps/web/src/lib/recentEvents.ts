@@ -1,14 +1,15 @@
 // Pure helpers for the Today screen "Recent" list. Kept here (rather than
 // inline in the route) so the comparator can be tested in isolation —
 // see recentEvents.test.ts.
-import type { BottleFeed, Diaper, Growth, Nursing, Pumping } from "./types";
+import type { BottleFeed, Diaper, Growth, Note, Nursing, Pumping } from "./types";
 
 export type RecentEvent =
   | { kind: "bottle"; at: string; data: BottleFeed }
   | { kind: "diaper"; at: string; data: Diaper }
   | { kind: "pumping"; at: string; data: Pumping }
   | { kind: "nursing"; at: string; data: Nursing }
-  | { kind: "growth"; at: string; data: Growth };
+  | { kind: "growth"; at: string; data: Growth }
+  | { kind: "note"; at: string; data: Note };
 
 export interface RecentEventSources {
   bottleFeeds?: readonly BottleFeed[];
@@ -16,6 +17,7 @@ export interface RecentEventSources {
   pumpings?: readonly Pumping[];
   nursings?: readonly Nursing[];
   growths?: readonly Growth[];
+  notes?: readonly Note[];
 }
 
 // compareRecentDesc sorts events newest first by `occurred_at` instant,
@@ -66,6 +68,11 @@ export function mergeRecent(sources: RecentEventSources): RecentEvent[] {
       kind: "growth",
       at: g.measured_at,
       data: g,
+    })),
+    ...(sources.notes ?? []).map<RecentEvent>((n) => ({
+      kind: "note",
+      at: n.occurred_at,
+      data: n,
     })),
   ];
   events.sort(compareRecentDesc);

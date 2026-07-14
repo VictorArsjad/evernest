@@ -37,6 +37,7 @@ import {
   useGrowths,
   useHouseholds,
   useLogout,
+  useNotes,
   useNursings,
   usePumpings,
 } from "../lib/queries";
@@ -334,6 +335,7 @@ function ChartsPage() {
   const pumpings = usePumpings(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const nursings = useNursings(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const growths = useGrowths(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
+  const notes = useNotes(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
 
   if (households.isLoading || babies.isLoading) {
     return <PageShell title="Charts & History">Loading…</PageShell>;
@@ -350,6 +352,7 @@ function ChartsPage() {
     pumpings: pumpings.data,
     nursings: nursings.data,
     growths: growths.data,
+    notes: notes.data,
   });
   const groups = groupByLocalDay(recent);
   const historyLoading =
@@ -357,7 +360,8 @@ function ChartsPage() {
     diapers.isLoading ||
     pumpings.isLoading ||
     nursings.isLoading ||
-    growths.isLoading;
+    growths.isLoading ||
+    notes.isLoading;
 
   // Which local days actually have History entries — so a chart bar for
   // an empty day offers no "jump" (no link, and a mouse click no-ops).
@@ -1403,6 +1407,7 @@ function formatDaySummary(events: RecentEvent[], prefs: CombinedPreferences): st
   let pumpedMl = 0;
   let diaperCount = 0;
   let growthCount = 0;
+  let noteCount = 0;
   for (const ev of events) {
     switch (ev.kind) {
       case "bottle":
@@ -1422,6 +1427,9 @@ function formatDaySummary(events: RecentEvent[], prefs: CombinedPreferences): st
       case "growth":
         growthCount += 1;
         break;
+      case "note":
+        noteCount += 1;
+        break;
     }
   }
   const parts: string[] = [];
@@ -1430,5 +1438,6 @@ function formatDaySummary(events: RecentEvent[], prefs: CombinedPreferences): st
   if (pumpedMl > 0) parts.push(`${formatVolume(pumpedMl, prefs.unit_volume)} pumped`);
   if (diaperCount > 0) parts.push(`${diaperCount} ${diaperCount === 1 ? "diaper" : "diapers"}`);
   if (growthCount > 0) parts.push(`${growthCount} growth`);
+  if (noteCount > 0) parts.push(`${noteCount} ${noteCount === 1 ? "note" : "notes"}`);
   return parts.join(" · ");
 }

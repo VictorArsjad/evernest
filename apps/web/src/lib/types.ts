@@ -109,6 +109,22 @@ export interface Diaper {
   created_at: string;
 }
 
+// Note: a free-form caregiver observation ("had a small rash on hand"). The
+// free text IS the entry, so `body` is required (unlike the optional `notes`
+// column the other kinds carry). Reuses the diaper photo pipeline — has_photo
+// is the list-endpoint canary; the bytes are fetched on demand via
+// GET /v1/notes/{id}/photo (see useNotePhotoUrl).
+export interface Note {
+  id: string;
+  baby_id: string;
+  occurred_at: string;
+  body: string;
+  has_photo: boolean;
+  photo_mime?: DiaperPhotoMime | null;
+  source: string;
+  created_at: string;
+}
+
 export interface Pumping {
   id: string;
   baby_id: string;

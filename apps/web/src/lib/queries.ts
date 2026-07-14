@@ -19,6 +19,7 @@ import type {
   HouseholdRole,
   Invite,
   InviteInfo,
+  Note,
   Nursing,
   NursingSide,
   Pumping,
@@ -120,6 +121,8 @@ export const qk = {
   openNursing: (babyId: string) => ["babies", babyId, "nursing-sessions", "open"] as const,
   growths: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "growths", from ?? "", to ?? ""] as const,
+  notes: (babyId: string, from?: string, to?: string) =>
+    ["babies", babyId, "notes", from ?? "", to ?? ""] as const,
   chartsDaily: (babyId: string, from: string, to: string, tz: string) =>
     ["babies", babyId, "charts", "daily", from, to, tz] as const,
   myPreferences: ["me", "preferences"] as const,
@@ -622,6 +625,186 @@ export function useDiaperPhotoUrl(
     queryFn: () => apiBlob(`/diapers/${id}/photo`),
     // Photos are write-once-per-edit; cache for 5 min before refetch.
     // Matches the BE's `Cache-Control: private, max-age=300`.
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
+  });
+
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const blob = query.data;
+    if (!blob) {
+      setUrl(null);
+      return;
+    }
+    const next = URL.createObjectURL(blob);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [query.data]);
+  return url;
+}
+
+// --- notes ---
+
+export function useNotes(
+  babyId: string | null,
+  from?: string,
+  to?: string,
+  opts?: ListHookOpts,
+) {
+  return useQuery({
+    queryKey: babyId ? qk.notes(babyId, from, to) : ["babies", "none", "notes"],
+    enabled: !!babyId,
+    refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      if (opts?.limit != null) params.set("limit", String(opts.limit));
+      const qs = params.toString();
+      return api<Note[]>(`/babies/${babyId}/notes${qs ? `?${qs}` : ""}`);
+    },
+  });
+}
+
+export function useCreateNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      babyId: string;
+      occurred_at: string;
+      body: string;
+      // Optional photo. photoBase64 must already be the raw base64 payload
+      // (no `data:` prefix) — the caller runs lib/image.compressForUpload
+      // first. Both fields move as a pair.
+      photoBase64?: string;
+      photoMime?: DiaperPhotoMime;
+    }) => {
+      const id = makeId();
+      const hasPhoto = !!vars.photoBase64;
+      const synthetic: Note = {
+        id,
+        baby_id: vars.babyId,
+        occurred_at: vars.occurred_at,
+        body: vars.body,
+        has_photo: hasPhoto,
+        photo_mime: hasPhoto ? vars.photoMime ?? null : null,
+        source: "manual",
+        created_at: new Date().toISOString(),
+      };
+      const body: Record<string, unknown> = {
+        id,
+        occurred_at: vars.occurred_at,
+        body: vars.body,
+      };
+      if (vars.photoBase64) {
+        body.photo = vars.photoBase64;
+        body.photo_mime = vars.photoMime;
+      }
+      return apiQueued<Note>(`/babies/${vars.babyId}/notes`, {
+        method: "POST",
+        body,
+        idempotencyKey: id,
+        synthesize: () => synthetic,
+      });
+    },
+    onSuccess: (data, vars) => {
+      upsertList<Note>(qc, ["babies", vars.babyId, "notes"], data);
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "notes"] });
+    },
+  });
+}
+
+export function useDeleteNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; babyId: string }) =>
+      apiQueued<void>(`/notes/${vars.id}`, {
+        method: "DELETE",
+        idempotencyKey: `del-note-${vars.id}`,
+        synthesize: () => undefined as unknown as void,
+      }),
+    onSuccess: (_data, vars) => {
+      removeFromList<Note>(qc, ["babies", vars.babyId, "notes"], vars.id);
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "notes"] });
+    },
+  });
+}
+
+export function useUpdateNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      id: string;
+      babyId: string;
+      occurred_at?: string;
+      body?: string;
+      // Photo update semantics mirror the BE:
+      //   - undefined: leave the column alone
+      //   - "":        clear the stored photo (sends `"photo": ""`)
+      //   - <base64>:  replace; photoMime must be set alongside
+      photoBase64?: string;
+      photoMime?: DiaperPhotoMime;
+    }) => {
+      const lists = qc.getQueriesData<Note[] | undefined>({
+        queryKey: ["babies", vars.babyId, "notes"],
+      }) as Array<[unknown, Note[] | undefined]>;
+      const existing = lists
+        .flatMap(([, list]) => list ?? [])
+        .find((r) => r.id === vars.id);
+
+      let syntheticHasPhoto = existing?.has_photo ?? false;
+      let syntheticMime: DiaperPhotoMime | null | undefined = existing?.photo_mime ?? null;
+      if (vars.photoBase64 === "") {
+        syntheticHasPhoto = false;
+        syntheticMime = null;
+      } else if (vars.photoBase64 !== undefined) {
+        syntheticHasPhoto = true;
+        syntheticMime = vars.photoMime ?? syntheticMime ?? null;
+      }
+
+      const synthetic: Note = {
+        id: vars.id,
+        baby_id: existing?.baby_id ?? vars.babyId,
+        occurred_at: vars.occurred_at ?? existing?.occurred_at ?? new Date().toISOString(),
+        body: vars.body ?? existing?.body ?? "",
+        has_photo: syntheticHasPhoto,
+        photo_mime: syntheticMime ?? null,
+        source: existing?.source ?? "manual",
+        created_at: existing?.created_at ?? new Date().toISOString(),
+      };
+      const body: Record<string, unknown> = {};
+      if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
+      if (vars.body !== undefined) body.body = vars.body;
+      if (vars.photoBase64 !== undefined) {
+        body.photo = vars.photoBase64;
+        if (vars.photoBase64 !== "" && vars.photoMime) {
+          body.photo_mime = vars.photoMime;
+        }
+      }
+      return apiQueued<Note>(`/notes/${vars.id}`, {
+        method: "PATCH",
+        body,
+        idempotencyKey: vars.id,
+        synthesize: () => synthetic,
+      });
+    },
+    onSuccess: (data, vars) => {
+      upsertList<Note>(qc, ["babies", vars.babyId, "notes"], data);
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "notes"] });
+    },
+  });
+}
+
+// useNotePhotoUrl mirrors useDiaperPhotoUrl: lazily fetch the raw bytes for a
+// note's optional photo and surface them as a blob URL for `<img src>`.
+export function useNotePhotoUrl(
+  id: string | null,
+  hasPhoto: boolean | undefined,
+): string | null {
+  const query = useQuery({
+    queryKey: ["notes", id ?? "none", "photo"],
+    enabled: !!id && !!hasPhoto,
+    queryFn: () => apiBlob(`/notes/${id}/photo`),
     staleTime: 5 * 60_000,
     gcTime: 10 * 60_000,
   });

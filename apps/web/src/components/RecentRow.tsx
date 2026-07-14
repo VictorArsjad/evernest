@@ -7,7 +7,7 @@ import { Link } from "@tanstack/react-router";
 import { format, isToday, parseISO } from "date-fns";
 import { useState } from "react";
 
-import { useDiaperPhotoUrl } from "../lib/queries";
+import { useDiaperPhotoUrl, useNotePhotoUrl } from "../lib/queries";
 import type { RecentEvent } from "../lib/recentEvents";
 import { formatLength, formatTime, formatVolume, formatWeight } from "../lib/units";
 import type { CombinedPreferences } from "../lib/usePreferences";
@@ -57,16 +57,24 @@ export function RecentRow({
   highlight?: boolean;
 }) {
   const at = parseISO(ev.at);
-  // Diaper rows can carry an optional photo (migration 000011). The
-  // badge is only rendered when has_photo is true; tapping it lazily
-  // mounts the photo URL hook so we don't pre-fetch every diaper image
-  // on the Today / History screens.
+  // Diaper and note rows can carry an optional photo (same pipeline,
+  // migrations 000011 / 000012). The badge is only rendered when has_photo
+  // is true; tapping it lazily mounts the matching photo URL hook so we
+  // don't pre-fetch every image on the Today / History screens. Both hooks
+  // are enabled-gated, so the non-matching one no-ops.
   const isDiaperWithPhoto = ev.kind === "diaper" && !!ev.data.has_photo;
+  const isNoteWithPhoto = ev.kind === "note" && !!ev.data.has_photo;
+  const hasPhoto = isDiaperWithPhoto || isNoteWithPhoto;
   const [photoExpanded, setPhotoExpanded] = useState(false);
   const diaperPhotoUrl = useDiaperPhotoUrl(
     isDiaperWithPhoto ? ev.data.id : null,
     isDiaperWithPhoto && photoExpanded,
   );
+  const notePhotoUrl = useNotePhotoUrl(
+    isNoteWithPhoto ? ev.data.id : null,
+    isNoteWithPhoto && photoExpanded,
+  );
+  const photoUrl = isNoteWithPhoto ? notePhotoUrl : diaperPhotoUrl;
   const icon =
     ev.kind === "bottle"
       ? "🍼"
@@ -76,7 +84,9 @@ export function RecentRow({
           ? "💧"
           : ev.kind === "growth"
             ? "📏"
-            : "👶";
+            : ev.kind === "note"
+              ? "📝"
+              : "👶";
   // Tap target: the row body links to the matching /log/<kind>?edit=<id>
   // form so users can correct mistyped values. Open nursing sessions are
   // intentionally NOT editable from here — those flow through the
@@ -144,6 +154,11 @@ export function RecentRow({
           )}
         </>
       )}
+      {ev.kind === "note" && (
+        <div className="line-clamp-2 whitespace-pre-wrap break-words text-base font-medium">
+          {ev.data.body}
+        </div>
+      )}
       {!isToday(at) && (
         <div className="text-xs text-white/40">{format(at, "MMM d")}</div>
       )}
@@ -171,7 +186,7 @@ export function RecentRow({
               ⏳ syncing
             </span>
           )}
-          {isDiaperWithPhoto && (
+          {hasPhoto && (
             <button
               type="button"
               onClick={(e) => {
@@ -203,15 +218,15 @@ export function RecentRow({
           <div className="min-w-0 flex-1">{body}</div>
         )}
       </div>
-      {isDiaperWithPhoto && photoExpanded && (
+      {hasPhoto && photoExpanded && (
         // Indent so the thumbnail lines up under the row body, past the
         // icon (≈2 rem) + gap + time chip (4 rem) + gap. Tweak this
         // alongside the metadata cluster widths above.
         <div className="pl-[calc(2rem+0.5rem+4rem+0.5rem)]">
-          {diaperPhotoUrl ? (
+          {photoUrl ? (
             <img
-              src={diaperPhotoUrl}
-              alt="Diaper photo"
+              src={photoUrl}
+              alt={ev.kind === "note" ? "Note photo" : "Diaper photo"}
               className="max-h-48 rounded-xl border border-white/10 object-contain"
             />
           ) : (

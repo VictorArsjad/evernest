@@ -24,6 +24,7 @@ import (
 	"github.com/varsjad/evernest/apps/api/internal/growth"
 	"github.com/varsjad/evernest/apps/api/internal/household"
 	"github.com/varsjad/evernest/apps/api/internal/httpx"
+	"github.com/varsjad/evernest/apps/api/internal/note"
 	"github.com/varsjad/evernest/apps/api/internal/nursing"
 	"github.com/varsjad/evernest/apps/api/internal/preferences"
 	"github.com/varsjad/evernest/apps/api/internal/pumping"
@@ -90,6 +91,7 @@ func mountV1(r chi.Router, cfg *config.Config, st *store.Store, logger *slog.Log
 	pumpingH := pumping.NewHandler(st, logger)
 	nursingH := nursing.NewHandler(st, logger)
 	growthH := growth.NewHandler(st, logger)
+	noteH := note.NewHandler(st, logger)
 	chartH := chart.NewHandler(st, logger)
 	prefsH := preferences.NewHandler(st, logger)
 
@@ -128,6 +130,7 @@ func mountV1(r chi.Router, cfg *config.Config, st *store.Store, logger *slog.Log
 			pumpingH.BabyRoutes(r)
 			nursingH.BabyRoutes(r)
 			growthH.BabyRoutes(r)
+			noteH.BabyRoutes(r)
 			chartH.BabyRoutes(r)
 		})
 		r.Route("/bottle-feeds/{id}", bottleH.ItemRoutes)
@@ -135,5 +138,6 @@ func mountV1(r chi.Router, cfg *config.Config, st *store.Store, logger *slog.Log
 		r.Route("/pumpings/{id}", pumpingH.ItemRoutes)
 		r.Route("/nursing-sessions/{id}", nursingH.ItemRoutes)
 		r.Route("/growths/{id}", growthH.ItemRoutes)
+		r.Route("/notes/{id}", noteH.ItemRoutes)
 	})
 }
