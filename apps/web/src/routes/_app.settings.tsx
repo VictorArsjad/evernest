@@ -7,10 +7,11 @@
 // No save button. Each select is its own optimistic mutation — small
 // surface (4 fields), and "press button, see toast" feels heavier than a
 // settings change deserves on a phone-first UI.
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { format, parseISO } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 
+import { PageShell } from "../components/PageShell";
 import { useAuthStore } from "../lib/authStore";
 import { useEscapeKey } from "../lib/useEscapeKey";
 import {
@@ -80,7 +81,6 @@ function SettingsPage() {
     <PageShell
       title="Settings"
       subtitle={user ? `Signed in as ${user.display_name}` : undefined}
-      onSignOut={() => logout.mutate()}
     >
       <section className="card flex flex-col gap-4 p-5">
         <header className="flex items-baseline justify-between">
@@ -170,6 +170,22 @@ function SettingsPage() {
       </section>
 
       <HouseholdSection household={household} />
+
+      <section className="card flex flex-col gap-4 p-5">
+        <header>
+          <h2 className="text-base font-semibold">Account</h2>
+        </header>
+        {user && (
+          <p className="text-sm text-white/60">Signed in as {user.display_name}</p>
+        )}
+        <button
+          onClick={() => logout.mutate()}
+          disabled={logout.isPending}
+          className="btn-ghost self-start text-sm text-red-300 hover:bg-red-400/10"
+        >
+          Sign out
+        </button>
+      </section>
     </PageShell>
   );
 }
@@ -1117,44 +1133,4 @@ function SaveAffordance({
     );
   }
   return <span className="hidden sm:col-span-full sm:block" />;
-}
-
-// --- page shell ---
-
-function PageShell({
-  title,
-  subtitle,
-  onSignOut,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  onSignOut?: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <main className="flex flex-1 flex-col gap-4 p-5 pb-12">
-      <header className="flex items-start justify-between gap-3">
-        <div className="flex items-baseline gap-3">
-          <Link
-            to="/"
-            className="text-xs text-white/50 hover:text-white"
-            aria-label="Back to Today"
-          >
-            ← Today
-          </Link>
-          <div>
-            <h1 className="text-2xl font-semibold">{title}</h1>
-            {subtitle && <p className="text-xs text-white/50">{subtitle}</p>}
-          </div>
-        </div>
-        {onSignOut && (
-          <button onClick={onSignOut} className="text-xs text-white/50 hover:text-white">
-            Sign out
-          </button>
-        )}
-      </header>
-      {children}
-    </main>
-  );
 }

@@ -8,11 +8,12 @@
 // install size matters more than the marginal feature density
 // recharts/visx would buy us. Mobile-first: full-width cards on narrow
 // viewports, two-up on `sm:`.
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { format, isToday, isYesterday } from "date-fns";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ChartTooltip } from "../components/ChartTooltip";
+import { PageShell } from "../components/PageShell";
 import { RecentRow } from "../components/RecentRow";
 import { useAuthStore } from "../lib/authStore";
 import { useChartHover, type ChartHover } from "../lib/useChartHover";
@@ -36,7 +37,6 @@ import {
   useDiapers,
   useGrowths,
   useHouseholds,
-  useLogout,
   useNotes,
   useNursings,
   usePumpings,
@@ -205,7 +205,6 @@ export const Route = createFileRoute("/_app/charts")({
 
 function ChartsPage() {
   const user = useAuthStore((s) => s.user);
-  const logout = useLogout();
   const [range, setRange] = useState<WindowDays>(14);
   // Per-day expand overrides for the History section. Absence of a key
   // means "fall through to the default", which is `idx === 0` (the
@@ -315,7 +314,6 @@ function ChartsPage() {
     <PageShell
       title="Charts & History"
       subtitle={user ? `Signed in as ${user.display_name}` : undefined}
-      onSignOut={() => logout.mutate()}
     >
       <div className="flex items-center justify-between">
         <div className="text-xs text-white/60">
@@ -1019,46 +1017,6 @@ function SegmentedControl({
         </button>
       ))}
     </div>
-  );
-}
-
-// --- shell + formatters ---
-
-function PageShell({
-  title,
-  subtitle,
-  onSignOut,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  onSignOut?: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <main className="flex flex-1 flex-col gap-5 p-5 pb-12">
-      <header className="flex items-start justify-between gap-3">
-        <div className="flex items-baseline gap-3">
-          <Link
-            to="/"
-            className="text-xs text-white/50 hover:text-white"
-            aria-label="Back to Today"
-          >
-            ← Today
-          </Link>
-          <div>
-            <h1 className="text-2xl font-semibold">{title}</h1>
-            {subtitle && <p className="text-xs text-white/50">{subtitle}</p>}
-          </div>
-        </div>
-        {onSignOut && (
-          <button onClick={onSignOut} className="text-xs text-white/50 hover:text-white">
-            Sign out
-          </button>
-        )}
-      </header>
-      {children}
-    </main>
   );
 }
 

@@ -15,10 +15,22 @@
 //      Chrome incognito both tripped this before; devices with a
 //      stored refresh token hid the bug because bootstrap completed
 //      before the page tried to render data.
-import { Outlet, createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import {
+  Outlet,
+  createFileRoute,
+  redirect,
+  useNavigate,
+  useRouterState,
+} from "@tanstack/react-router";
 import { useEffect } from "react";
+import { AppNav } from "../components/AppNav";
 import { useAuthStore } from "../lib/authStore";
 import { authedSurfaceRedirect } from "../lib/authRedirect";
+
+// The bottom tab bar only belongs on the primary destinations. The
+// /log/* forms and /onboarding are focused sub-flows with their own
+// Cancel/Save chrome, so the bar stays hidden there.
+const NAV_PATHS = new Set(["/", "/growth", "/charts", "/settings"]);
 
 export const Route = createFileRoute("/_app")({
   beforeLoad: () => {
@@ -33,9 +45,15 @@ export const Route = createFileRoute("/_app")({
 function AppLayout() {
   const nav = useNavigate();
   const status = useAuthStore((s) => s.status);
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
   useEffect(() => {
     const target = authedSurfaceRedirect(status);
     if (target) void nav({ to: target, replace: true });
   }, [status, nav]);
-  return <Outlet />;
+  return (
+    <>
+      <Outlet />
+      {NAV_PATHS.has(pathname) && <AppNav />}
+    </>
+  );
 }

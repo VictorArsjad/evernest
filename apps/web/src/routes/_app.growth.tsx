@@ -18,6 +18,7 @@ import { format } from "date-fns";
 import { useMemo, useState } from "react";
 
 import { ChartTooltip } from "../components/ChartTooltip";
+import { PageShell } from "../components/PageShell";
 import { useBabies, useGrowths, useHouseholds } from "../lib/queries";
 import type { Growth } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
@@ -129,22 +130,10 @@ function GrowthPage() {
   const hasReference = !!referenceRows && !!dob;
 
   return (
-    <main className="flex flex-1 flex-col gap-5 p-5 pb-12">
-      <header className="flex items-start justify-between gap-3">
-        <div className="flex items-baseline gap-3">
-          <Link to="/" className="text-xs text-white/50 hover:text-white" aria-label="Back to Today">
-            ← Today
-          </Link>
-          <div>
-            <h1 className="text-2xl font-semibold">Growth</h1>
-            <p className="text-xs text-white/50">
-              {baby.name}
-              {dob ? ` · ${ageLabel(ageInMonths(dob, new Date()))}` : ""}
-            </p>
-          </div>
-        </div>
-      </header>
-
+    <PageShell
+      title="Growth"
+      subtitle={`${baby.name}${dob ? ` · ${ageLabel(ageInMonths(dob, new Date()))}` : ""}`}
+    >
       <MetricToggle value={metric} onChange={setMetric} />
 
       {!dob ? (
@@ -180,7 +169,7 @@ function GrowthPage() {
         a healthy reference population grows and are not medical advice — a baby a little above or
         below the median is usually perfectly normal.
       </p>
-    </main>
+    </PageShell>
   );
 }
 
