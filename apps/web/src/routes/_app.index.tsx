@@ -9,6 +9,7 @@ import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 
 import { InstallPromptBanner } from "../components/InstallPromptBanner";
+import { PageShell } from "../components/PageShell";
 import { RecentRow } from "../components/RecentRow";
 import { SyncStatusBadge } from "../components/SyncStatusBadge";
 import { useAuthStore } from "../lib/authStore";
@@ -23,7 +24,6 @@ import {
   useEndNursing,
   useGrowths,
   useHouseholds,
-  useLogout,
   useNotes,
   useNursings,
   useOpenNursing,
@@ -54,7 +54,6 @@ export const Route = createFileRoute("/_app/")({
 function TodayPage() {
   const nav = useNavigate();
   const user = useAuthStore((s) => s.user);
-  const logout = useLogout();
 
   // CP6b: subscribe to the offline outbox so the badge + recent-row
   // "syncing…" hints + "all caught up" toast all read from a single
@@ -215,28 +214,7 @@ function TodayPage() {
         )
       }
       subtitle={user ? `Signed in as ${user.display_name}` : undefined}
-      onSignOut={() => logout.mutate()}
-      headerExtra={
-        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
-          <SyncStatusBadge />
-          {isFeatureVisible(prefs.feature_visibility, "growth") && (
-            <Link to="/growth" className="text-xs text-white/60 hover:text-white">
-              Growth →
-            </Link>
-          )}
-          <Link to="/charts" className="text-xs text-white/60 hover:text-white">
-            Charts & history →
-          </Link>
-          <Link
-            to="/settings"
-            className="text-xs text-white/60 hover:text-white"
-            aria-label="Settings"
-            title="Settings"
-          >
-            ⚙︎
-          </Link>
-        </div>
-      }
+      aside={<SyncStatusBadge />}
     >
       <TodayBanner
         totalMl={totalMl}
@@ -822,42 +800,6 @@ function Sparkline({ values }: { values: number[] }) {
         );
       })}
     </svg>
-  );
-}
-
-function PageShell({
-  title,
-  titleNode,
-  subtitle,
-  onSignOut,
-  headerExtra,
-  children,
-}: {
-  title?: string;
-  titleNode?: React.ReactNode;
-  subtitle?: string;
-  onSignOut?: () => void;
-  headerExtra?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <main className="flex flex-1 flex-col gap-5 p-5 pb-12">
-      <header className="flex items-start justify-between gap-3">
-        <div>
-          {titleNode ?? <h1 className="text-2xl font-semibold">{title}</h1>}
-          {subtitle && <p className="text-xs text-white/50">{subtitle}</p>}
-        </div>
-        <div className="flex items-center gap-4">
-          {headerExtra}
-          {onSignOut && (
-            <button onClick={onSignOut} className="text-xs text-white/50 hover:text-white">
-              Sign out
-            </button>
-          )}
-        </div>
-      </header>
-      {children}
-    </main>
   );
 }
 
