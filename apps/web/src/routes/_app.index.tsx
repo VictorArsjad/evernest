@@ -217,8 +217,13 @@ function TodayPage() {
       subtitle={user ? `Signed in as ${user.display_name}` : undefined}
       onSignOut={() => logout.mutate()}
       headerExtra={
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
           <SyncStatusBadge />
+          {isFeatureVisible(prefs.feature_visibility, "growth") && (
+            <Link to="/growth" className="text-xs text-white/60 hover:text-white">
+              Growth →
+            </Link>
+          )}
           <Link to="/charts" className="text-xs text-white/60 hover:text-white">
             Charts & history →
           </Link>

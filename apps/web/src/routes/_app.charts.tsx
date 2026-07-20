@@ -10,20 +10,20 @@
 // viewports, two-up on `sm:`.
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { format, isToday, isYesterday } from "date-fns";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ChartTooltip } from "../components/ChartTooltip";
 import { RecentRow } from "../components/RecentRow";
 import { useAuthStore } from "../lib/authStore";
+import { useChartHover, type ChartHover } from "../lib/useChartHover";
 import {
   barLayout,
   dailyWindowEndingToday,
   formatDayShort,
-  linePoints,
   stacked2Layout,
   stackedDiaperLayout,
   summarize,
   tooltipXPercent,
-  type LinePoint,
   type SparkBar,
 } from "../lib/charts";
 import { isFeatureVisible } from "../lib/featureVisibility";
@@ -44,12 +44,7 @@ import {
 import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
 import type { ChartDaily } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
-import {
-  formatVolume,
-  formatWeight,
-  volumeUnitLabel,
-  weightUnitLabel,
-} from "../lib/units";
+import { formatVolume, volumeUnitLabel } from "../lib/units";
 import { type CombinedPreferences, usePreferences } from "../lib/usePreferences";
 
 type WindowDays = 7 | 14 | 30;
@@ -82,70 +77,9 @@ const VB_H = 40;
 
 // --- chart hover primitive ---
 
-// useChartHover owns the active-bar index for a single chart card. The
-// hover state is per-chart (not global) so tooltips on different cards
-// don't fight each other when the user drags across the grid.
-//
-// - `setActive(i)` shows the tooltip at `i`.
-// - `clear()` hides it.
-// - `toggle(i)` is the mobile tap behavior: tap a bar shows it; tapping
-//   the same bar again toggles off; tapping a different bar moves it.
-// - `containerRef` is attached to the chart wrapper; the effect below
-//   listens for a `pointerdown` anywhere on the document and clears the
-//   active state when the event landed outside this chart, so a mobile
-//   user can dismiss a tooltip by tapping anywhere off-chart.
-function useChartHover() {
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  const setActive = useCallback((i: number) => setActiveIndex(i), []);
-  const clear = useCallback(() => setActiveIndex(null), []);
-  const toggle = useCallback((i: number) => {
-    setActiveIndex((prev) => (prev === i ? null : i));
-  }, []);
-
-  useEffect(() => {
-    if (activeIndex == null) return;
-    const onDown = (e: PointerEvent) => {
-      const c = containerRef.current;
-      if (!c) return;
-      if (e.target instanceof Node && c.contains(e.target)) return;
-      setActiveIndex(null);
-    };
-    document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
-  }, [activeIndex]);
-
-  return { activeIndex, setActive, clear, toggle, containerRef };
-}
-
-type ChartHover = ReturnType<typeof useChartHover>;
-
-// ChartTooltip is the dark popover anchored above the active bar. It is
-// absolutely positioned with `pointer-events-none` so it never affects
-// layout or eats events; the `clamp(8%, x%, 92%)` keeps the popover from
-// running off the edges of the card without any JS measurement.
-function ChartTooltip({
-  xPct,
-  children,
-}: {
-  xPct: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      role="tooltip"
-      className="pointer-events-none absolute -top-1 z-10 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-lg border border-white/10 bg-bg-subtle px-2 py-1.5 text-[11px] tabular-nums text-white shadow-lg"
-      style={{ left: `clamp(8%, ${xPct}%, 92%)` }}
-    >
-      {children}
-      <span
-        aria-hidden="true"
-        className="absolute left-1/2 top-full h-0 w-0 -translate-x-1/2 border-x-4 border-t-4 border-x-transparent border-t-white/10"
-      />
-    </div>
-  );
-}
+// `useChartHover` and `ChartTooltip` are shared chart primitives (also
+// used by the growth chart). See lib/useChartHover.ts and
+// components/ChartTooltip.tsx.
 
 // "View entries →" link rendered at the foot of a chart tooltip. It's the
 // primary way to jump to a day's History on touch (where a bare tap only
@@ -473,10 +407,6 @@ function ChartGrid({
       ),
     [days],
   );
-  const weight = useMemo(
-    () => linePoints(days.map((d) => d.growth?.weight_g ?? null)),
-    [days],
-  );
   // Resolve the user's palette once per render and pass concrete colors
   // down to each chart. `?? DEFAULT_PALETTE` handles both old-BE
   // (chart_palette absent on the response) and the brief loading window
@@ -503,18 +433,14 @@ function ChartGrid({
   }
 
   const volLabel = volumeUnitLabel(prefs.unit_volume);
-  const wLabel = weightUnitLabel(prefs.unit_weight);
   // Per-feature visibility gates each ChartCard. Hidden cards drop out of
-  // the grid entirely; the `grid-cols-2` layout reflows naturally. The
-  // Weight card keeps its `wide` column-span when visible, so a 3-card
-  // layout (e.g. Bottle/Nursing visible, Weight visible) renders as
-  // two-up + full-width below rather than leaving a gap.
+  // the grid entirely; the `grid-cols-2` layout reflows naturally. Growth
+  // is no longer charted here — it has its own /growth page.
   const showBottle = isFeatureVisible(prefs.feature_visibility, "bottle");
   const showNursing = isFeatureVisible(prefs.feature_visibility, "nursing");
   const showPumping = isFeatureVisible(prefs.feature_visibility, "pumping");
   const showDiaper = isFeatureVisible(prefs.feature_visibility, "diaper");
-  const showGrowth = isFeatureVisible(prefs.feature_visibility, "growth");
-  if (!showBottle && !showNursing && !showPumping && !showDiaper && !showGrowth) {
+  if (!showBottle && !showNursing && !showPumping && !showDiaper) {
     return (
       <p className="rounded-xl bg-bg-surface p-4 text-sm text-white/50">
         All charts are hidden. Re-enable a feature in Settings to see its chart.
@@ -660,49 +586,6 @@ function ChartGrid({
         />
         <Axis days={days} />
         <DiaperLegend colors={diaperColors} />
-      </ChartCard>
-      )}
-
-      {showGrowth && (
-      <ChartCard
-        title="Weight"
-        unit={wLabel}
-        accent="text-violet-300"
-        primary={
-          totals.latestWeightG != null
-            ? formatWeight(totals.latestWeightG, prefs.unit_weight)
-            : "no readings"
-        }
-        secondary={
-          weight.hasData ? rangeSummary(weight.min, weight.max, prefs) : ""
-        }
-        wide
-      >
-        {weight.hasData ? (
-          <LineChart
-            points={weight.points}
-            stroke={colors.weight}
-            days={days}
-            onSelectDay={(date) => onSelectDay?.(date, "growth")}
-            canSelectDay={canSelectDay}
-            ariaValue={(i) => {
-              const g = days[i].growth?.weight_g;
-              return g != null ? formatWeight(g, prefs.unit_weight) : "";
-            }}
-            renderTooltip={(i) => {
-              const g = days[i].growth?.weight_g;
-              if (g == null) return null;
-              return (
-                <TooltipBody date={days[i].date}>
-                  <div>{formatWeight(g, prefs.unit_weight)}</div>
-                </TooltipBody>
-              );
-            }}
-          />
-        ) : (
-          <EmptyState>No measurements in this window</EmptyState>
-        )}
-        <Axis days={days} />
       </ChartCard>
       )}
     </div>
@@ -1093,138 +976,6 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-function LineChart({
-  points,
-  stroke,
-  days,
-  ariaValue,
-  renderTooltip,
-  onSelectDay,
-  canSelectDay,
-}: {
-  points: LinePoint[];
-  stroke: string;
-  days: ChartDaily[];
-  ariaValue: (i: number) => string;
-  renderTooltip: (i: number) => React.ReactNode;
-  onSelectDay?: (date: string) => void;
-  canSelectDay?: (date: string) => boolean;
-}) {
-  // Build polyline segments split on null gaps. Each contiguous run of
-  // defined points becomes one polyline; nulls between runs break the
-  // line so a missing measurement renders as an empty stretch rather
-  // than a baseline pull-down. Dots remain rendered at every defined
-  // point.
-  const segments: LinePoint[][] = [];
-  let current: LinePoint[] = [];
-  for (const p of points) {
-    if (p.defined) {
-      current.push(p);
-    } else if (current.length > 0) {
-      segments.push(current);
-      current = [];
-    }
-  }
-  if (current.length > 0) segments.push(current);
-
-  const hover = useChartHover();
-  const n = days.length;
-  const ai = hover.activeIndex;
-  const jumpTo = (i: number) => {
-    if (canSelectDay?.(days[i].date)) {
-      onSelectDay?.(days[i].date);
-      hover.clear();
-    }
-  };
-  return (
-    <div
-      ref={hover.containerRef}
-      className="relative h-24 w-full"
-      style={{ touchAction: "manipulation" }}
-    >
-      <svg
-        viewBox={`0 0 ${VB_W} ${VB_H}`}
-        preserveAspectRatio="none"
-        className="absolute inset-0 h-full w-full overflow-visible"
-        role="img"
-        aria-label="Weight line chart"
-      >
-        {segments.map((seg, i) => (
-          <polyline
-            key={i}
-            fill="none"
-            stroke={stroke}
-            strokeWidth={1}
-            vectorEffect="non-scaling-stroke"
-            points={seg.map((p) => `${p.x * VB_W},${VB_H - p.y * VB_H}`).join(" ")}
-          />
-        ))}
-        {points
-          .filter((p) => p.defined)
-          .map((p) => {
-            const isActive = hover.activeIndex === p.index;
-            const cx = p.x * VB_W;
-            const cy = VB_H - p.y * VB_H;
-            return (
-              <g key={p.index}>
-                {isActive && (
-                  <circle cx={cx} cy={cy} r={4} fill={stroke} opacity={0.25} />
-                )}
-                <circle cx={cx} cy={cy} r={isActive ? 2.4 : 1.2} fill={stroke} />
-              </g>
-            );
-          })}
-        {/* Hit overlays only on defined days — undefined days have no
-            dot to hover and we don't want a tooltip showing "—". */}
-        {points.map((p) => {
-          if (!p.defined) return null;
-          const slot = VB_W / n;
-          const x = p.index * slot;
-          const isActive = hover.activeIndex === p.index;
-          return (
-            <rect
-              key={`hit-${p.index}`}
-              x={x}
-              y={0}
-              width={slot}
-              height={VB_H}
-              fill="transparent"
-              role="button"
-              tabIndex={-1}
-              aria-label={`${formatDayShort(days[p.index].date)}: ${ariaValue(p.index)}`}
-              aria-pressed={isActive}
-              onPointerEnter={(e) => {
-                if (e.pointerType === "mouse") hover.setActive(p.index);
-              }}
-              onPointerLeave={(e) => {
-                if (e.pointerType === "mouse") hover.clear();
-              }}
-              onPointerDown={(e) => {
-                if (e.pointerType !== "mouse") hover.toggle(p.index);
-              }}
-              onPointerUp={(e) => {
-                if (e.pointerType === "mouse") jumpTo(p.index);
-              }}
-            />
-          );
-        })}
-      </svg>
-      {ai != null && points[ai]?.defined && (
-        <ChartTooltip xPct={tooltipXPercent(ai, n)}>
-          {renderTooltip(ai)}
-          {canSelectDay?.(days[ai].date) && <TooltipJumpLink onClick={() => jumpTo(ai)} />}
-        </ChartTooltip>
-      )}
-    </div>
-  );
-}
-
-function EmptyState({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-20 items-center justify-center text-xs text-white/40">{children}</div>
-  );
-}
-
 function Axis({ days }: { days: ChartDaily[] }) {
   if (days.length === 0) return null;
   // First, middle, and last day. Adding more would crowd at 7d and
@@ -1309,12 +1060,6 @@ function PageShell({
       {children}
     </main>
   );
-}
-
-function rangeSummary(min: number, max: number, prefs: CombinedPreferences): string {
-  return min === max
-    ? `${formatWeight(min, prefs.unit_weight)} in window`
-    : `${formatWeight(min, prefs.unit_weight)} – ${formatWeight(max, prefs.unit_weight)} in window`;
 }
 
 // --- history section ---

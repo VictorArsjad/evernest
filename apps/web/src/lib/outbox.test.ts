@@ -37,13 +37,18 @@ const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 // Used in retry-loop tests where we don't know exactly when the next
 // drain tick lands but we do know the eventual end state.
 //
-// timeoutMs defaults to 2s because GH-hosted runners under load can
-// easily blow past tighter bounds even though the same drain finishes
-// in <100ms locally. Bailing on the first true predicate keeps the
-// happy path fast; the timeout is just the upper bound.
+// timeoutMs defaults to 8s. GH-hosted runners under load can blow past
+// tighter bounds even though the same drain finishes in <100ms locally —
+// this suite has flaked at the previous 2s bound on loaded runners more
+// than once (see CI history on `master`), always right at the deadline,
+// never on a genuine correctness failure. Bailing on the first true
+// predicate keeps the happy path fast; the timeout is just the upper
+// bound. Keep in sync with `testTimeout` in vitest.config.ts, which must
+// stay comfortably above this or vitest's own per-test timeout fires
+// first with a less useful error.
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
-  { timeoutMs = 2000, intervalMs = 5 }: { timeoutMs?: number; intervalMs?: number } = {},
+  { timeoutMs = 8000, intervalMs = 5 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

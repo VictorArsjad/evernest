@@ -110,9 +110,10 @@ docs/
 
 | Task | Where to look |
 |---|---|
-| Add a new event kind (e.g. sleep) | `apps/api/migrations/` (new table) → `apps/api/internal/store/` (CRUD) → `apps/api/internal/handlers/` (HTTP) → `docs/api.openapi.yaml` (contract) → `apps/web/src/lib/outbox.ts` (kind) → `apps/web/src/routes/log.<kind>.tsx` (form) |
+| Add a new event kind (e.g. sleep) | `apps/api/migrations/` (new table) → `apps/api/internal/store/` (CRUD) → `apps/api/internal/handlers/` (HTTP) → `docs/api.openapi.yaml` (contract) → `apps/web/src/lib/outbox.ts` (kind) → `apps/web/src/routes/_app.log.<kind>.tsx` (form) |
 | Tweak the BabyPlus importer | `apps/api/cmd/import-babyplus/{parse,importer}.go` + `*_test.go` |
-| Adjust the FE chart range | `apps/web/src/routes/charts.tsx` |
+| Adjust the FE activity-chart range | `apps/web/src/routes/_app.charts.tsx` |
+| Work on the growth / WHO-percentile view | `apps/web/src/routes/_app.growth.tsx` + `apps/web/src/lib/who/` (bundled WHO LMS tables, percentile math, curve geometry — all pure + unit-tested) |
 | New migration | `make migrate-new name=<snake>` |
 | Bump prod image | merge to `master` → CI pushes `:<sha>` and `:latest` to GHCR → `deploy-api.yml` rolls the home server |
 
