@@ -8,7 +8,11 @@ file only covers FE-local conventions.
 
 Vite 6 + React 18 + TypeScript, TanStack Router (file-based) + TanStack Query,
 Tailwind, Zustand for auth state, `idb` for the offline outbox, `vite-plugin-pwa`
-(Workbox). Forms use `react-hook-form` + `zod`. Charts use `recharts`.
+(Workbox). Forms are plain `useState` + `zod` (the latter for search-param
+validation). Charts are hand-rolled inline SVG — **no chart library** (`recharts`
+is an unused leftover dependency; don't reach for it). Shared chart geometry lives
+in `lib/charts.ts`; the growth page's WHO percentile math and curve geometry live
+in `lib/who/`.
 
 ## Layout
 
