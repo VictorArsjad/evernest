@@ -18,6 +18,7 @@ import { Route as AuthLoginRouteImport } from './routes/_auth.login'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppOnboardingRouteImport } from './routes/_app.onboarding'
 import { Route as AppHistoryRouteImport } from './routes/_app.history'
+import { Route as AppGrowthRouteImport } from './routes/_app.growth'
 import { Route as AppChartsRouteImport } from './routes/_app.charts'
 import { Route as AppLogPumpingRouteImport } from './routes/_app.log.pumping'
 import { Route as AppLogNursingRouteImport } from './routes/_app.log.nursing'
@@ -69,6 +70,11 @@ const AppHistoryRoute = AppHistoryRouteImport.update({
   path: '/history',
   getParentRoute: () => AppRoute,
 } as any)
+const AppGrowthRoute = AppGrowthRouteImport.update({
+  id: '/growth',
+  path: '/growth',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppChartsRoute = AppChartsRouteImport.update({
   id: '/charts',
   path: '/charts',
@@ -108,6 +114,7 @@ const AppLogBottleRoute = AppLogBottleRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/charts': typeof AppChartsRoute
+  '/growth': typeof AppGrowthRoute
   '/history': typeof AppHistoryRoute
   '/onboarding': typeof AppOnboardingRoute
   '/settings': typeof AppSettingsRoute
@@ -124,6 +131,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/charts': typeof AppChartsRoute
+  '/growth': typeof AppGrowthRoute
   '/history': typeof AppHistoryRoute
   '/onboarding': typeof AppOnboardingRoute
   '/settings': typeof AppSettingsRoute
@@ -142,6 +150,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/_auth': typeof AuthRouteWithChildren
   '/_app/charts': typeof AppChartsRoute
+  '/_app/growth': typeof AppGrowthRoute
   '/_app/history': typeof AppHistoryRoute
   '/_app/onboarding': typeof AppOnboardingRoute
   '/_app/settings': typeof AppSettingsRoute
@@ -161,6 +170,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/charts'
+    | '/growth'
     | '/history'
     | '/onboarding'
     | '/settings'
@@ -177,6 +187,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/charts'
+    | '/growth'
     | '/history'
     | '/onboarding'
     | '/settings'
@@ -194,6 +205,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/_auth'
     | '/_app/charts'
+    | '/_app/growth'
     | '/_app/history'
     | '/_app/onboarding'
     | '/_app/settings'
@@ -280,6 +292,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppHistoryRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/growth': {
+      id: '/_app/growth'
+      path: '/growth'
+      fullPath: '/growth'
+      preLoaderRoute: typeof AppGrowthRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/charts': {
       id: '/_app/charts'
       path: '/charts'
@@ -334,6 +353,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppChartsRoute: typeof AppChartsRoute
+  AppGrowthRoute: typeof AppGrowthRoute
   AppHistoryRoute: typeof AppHistoryRoute
   AppOnboardingRoute: typeof AppOnboardingRoute
   AppSettingsRoute: typeof AppSettingsRoute
@@ -348,6 +368,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppChartsRoute: AppChartsRoute,
+  AppGrowthRoute: AppGrowthRoute,
   AppHistoryRoute: AppHistoryRoute,
   AppOnboardingRoute: AppOnboardingRoute,
   AppSettingsRoute: AppSettingsRoute,
