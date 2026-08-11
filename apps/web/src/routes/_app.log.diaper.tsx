@@ -377,7 +377,6 @@ function LogDiaperPage() {
             ref={fileInputRef}
             type="file"
             accept="image/*"
-            capture="environment"
             onChange={onPickPhoto}
             disabled={photoBusy}
             className="text-xs text-white/70 file:mr-3 file:rounded-lg file:border-0 file:bg-bg-subtle file:px-3 file:py-2 file:text-white/80 hover:file:bg-bg-subtle/80"
