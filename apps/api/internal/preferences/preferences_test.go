@@ -597,7 +597,7 @@ func TestUserPreferences_FeatureVisibilityRejectsBadInput(t *testing.T) {
 	}{
 		{
 			name:       "unknown feature key",
-			visibility: map[string]any{"sleep": false},
+			visibility: map[string]any{"bathtime": false},
 		},
 		{
 			name:       "non-bool value",

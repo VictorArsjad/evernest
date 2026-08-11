@@ -129,6 +129,7 @@ var allowedFeatureKeys = map[string]struct{}{
 	"pumping": {},
 	"diaper":  {},
 	"growth":  {},
+	"sleep":   {},
 	"note":    {},
 }
 

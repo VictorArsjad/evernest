@@ -153,6 +153,22 @@ export interface Nursing {
   created_at: string;
 }
 
+export type SleepType = "nap" | "night";
+
+export interface Sleep {
+  id: string;
+  baby_id: string;
+  started_at: string;
+  // NULL while the session is open ("baby still asleep") — mirrors the
+  // nursing open-session model.
+  ended_at?: string | null;
+  sleep_type?: SleepType | null;
+  location?: string | null;
+  notes?: string | null;
+  source: string;
+  created_at: string;
+}
+
 export interface Growth {
   id: string;
   baby_id: string;

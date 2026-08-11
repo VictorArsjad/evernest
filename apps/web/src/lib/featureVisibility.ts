@@ -1,5 +1,5 @@
 // Per-user "feature visibility" map. Lets the user hide event kinds
-// (bottle / nursing / pumping / diaper / growth) from the Today banner
+// (bottle / nursing / pumping / diaper / growth / sleep / note) from the Today banner
 // stats, the action tile grid, and the Charts page WITHOUT touching the
 // underlying data. Past entries remain in their tables; this helper only
 // gates UI surfaces.
@@ -16,6 +16,7 @@ export type FeatureKey =
   | "pumping"
   | "diaper"
   | "growth"
+  | "sleep"
   | "note";
 
 // Render order for the settings card. Matches the order of tiles on the
@@ -26,6 +27,7 @@ export const FEATURE_KEYS: FeatureKey[] = [
   "pumping",
   "diaper",
   "growth",
+  "sleep",
   "note",
 ];
 
@@ -35,6 +37,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   pumping: "Pumping",
   diaper: "Diaper",
   growth: "Growth",
+  sleep: "Sleep",
   note: "Note",
 };
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compareRecentDesc, mergeRecent, type RecentEvent } from "./recentEvents";
-import type { BottleFeed, Diaper, Growth, Nursing, Pumping } from "./types";
+import type { BottleFeed, Diaper, Growth, Nursing, Pumping, Sleep } from "./types";
 
 // Convenience factories — each returns a minimally-populated record; tests
 // only depend on `id`, `occurred_at`, `created_at`.
@@ -68,6 +68,20 @@ function growth(id: string, measuredAt: string, createdAt = measuredAt): Growth 
     weight_g: 6500,
     height_cm: null,
     head_circumference_cm: null,
+    notes: null,
+    source: "manual",
+    created_at: createdAt,
+  };
+}
+
+function sleep(id: string, startedAt: string, createdAt = startedAt): Sleep {
+  return {
+    id,
+    baby_id: "b1",
+    started_at: startedAt,
+    ended_at: null,
+    sleep_type: null,
+    location: null,
     notes: null,
     source: "manual",
     created_at: createdAt,
@@ -182,10 +196,24 @@ describe("mergeRecent", () => {
     expect(merged.map((e) => e.data.id)).toEqual(["g-late", "b-mid", "g-early"]);
   });
 
+  // Sleep rows are interval-shaped like nursing: ordering keys off
+  // `started_at`.
+  it("orders sleep rows by started_at, not occurred_at", () => {
+    const merged = mergeRecent({
+      bottleFeeds: [bottle("b-mid", "2026-05-22T09:00:00Z")],
+      sleeps: [
+        sleep("s-early", "2026-05-22T08:00:00Z"),
+        sleep("s-late", "2026-05-22T10:00:00Z"),
+      ],
+    });
+    expect(merged.map((e) => e.data.id)).toEqual(["s-late", "b-mid", "s-early"]);
+  });
+
   it("treats missing sources as empty without throwing", () => {
     expect(mergeRecent({})).toEqual([]);
     expect(mergeRecent({ bottleFeeds: [bottle("only", "2026-05-22T08:00:00Z")] })).toHaveLength(1);
     expect(mergeRecent({ nursings: [nursing("nx", "2026-05-22T08:00:00Z")] })).toHaveLength(1);
     expect(mergeRecent({ growths: [growth("gx", "2026-05-22T08:00:00Z")] })).toHaveLength(1);
+    expect(mergeRecent({ sleeps: [sleep("sx", "2026-05-22T08:00:00Z")] })).toHaveLength(1);
   });
 });

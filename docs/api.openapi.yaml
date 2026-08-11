@@ -18,7 +18,7 @@ info:
     ## Idempotency
 
     Every event POST (bottle-feeds, diapers, pumpings, nursing-sessions,
-    growths) accepts a client-supplied `id` (UUIDv7) in the request body.
+    growths, sleeps) accepts a client-supplied `id` (UUIDv7) in the request body.
     Inserts use `ON CONFLICT (id) DO NOTHING`, so retrying a write with the
     same `id` returns the existing row with status `201` instead of
     erroring. If `id` is omitted the server generates one. There is no
@@ -63,6 +63,11 @@ tags:
     description: At-the-breast feeds. Per-side duration in seconds, no volume.
   - name: Growths
     description: Growth measurements. Any combination of weight (g), height (cm), head circumference (cm); at least one required.
+  - name: Sleeps
+    description: |
+      Sleep sessions (asleep/awake intervals). `ended_at` is absent while
+      a session is open; at most one open session per baby. Optional
+      nap/night type, location, and notes.
 security:
   - bearerAuth: []
 paths:
@@ -1267,6 +1272,185 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/babies/{babyID}/sleeps:
+    parameters:
+      - $ref: "#/components/parameters/BabyIDPath"
+    post:
+      tags: [Sleeps]
+      operationId: createSleep
+      summary: Log a sleep session
+      description: |
+        Idempotent on the request body's `id` field. Omitting `ended_at`
+        opens an in-progress session ("baby just fell asleep"); at most
+        one open session per baby is allowed. `ended_at`, when provided,
+        must be `>= started_at`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSleepRequest"
+      responses:
+        "201":
+          description: Sleep created (or returned unchanged on idempotent replay).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sleep"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "`open_session_exists` — a sleep is already in progress for this baby."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Sleeps]
+      operationId: listSleeps
+      summary: List sleep sessions for a baby
+      parameters:
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: Sleeps in the [from, to) window (by `started_at`), newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Sleep"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/babies/{babyID}/sleeps/open:
+    parameters:
+      - $ref: "#/components/parameters/BabyIDPath"
+    get:
+      tags: [Sleeps]
+      operationId: getOpenSleep
+      summary: Get the in-progress sleep session for this baby
+      description: |
+        Returns `200` with the open session if one exists, or `204` if no
+        sleep is currently open for this baby. The Today screen polls
+        this on render to derive the in-progress tile without scanning
+        the full per-day list.
+      responses:
+        "200":
+          description: Open session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sleep"
+        "204":
+          description: No open session for this baby.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/sleeps/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    patch:
+      tags: [Sleeps]
+      operationId: updateSleep
+      summary: Close an open sleep OR edit a closed one
+      description: |
+        Dispatches based on the row's current `ended_at` state:
+
+        - **Open session** (`ended_at IS NULL`): closes the session.
+          Body must include `ended_at` (`>= started_at`). Returns
+          `409 already_closed` if the row was closed by a concurrent
+          request.
+        - **Closed session** (`ended_at IS NOT NULL`): partial edit.
+          All fields optional. Sending `ended_at: null` is not
+          supported (edits can't re-open a closed session). Set
+          `clear_sleep_type: true` to clear the type; send an empty
+          string for `location` or `notes` to clear them. Returns
+          `409 session_state_changed` if the row was deleted or
+          re-opened mid-edit.
+
+        Server preserves `id`, `source`, `created_at`, and
+        `created_by_user_id` regardless of input.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/EndSleepRequest"
+                - $ref: "#/components/schemas/UpdateSleepRequest"
+      responses:
+        "200":
+          description: Closed (open session path) or updated (closed session path).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sleep"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            Either `already_closed` (close-path) or
+            `session_state_changed` (edit-path) — see description.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Sleeps]
+      operationId: deleteSleep
+      summary: Delete a sleep session
+      description: Idempotent. Open rows can be deleted ("started by mistake").
+      responses:
+        "204":
+          description: Deleted (or no row matched).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   # -----------------------------------------------------------------------
   # Coming soon
   # -----------------------------------------------------------------------
@@ -2133,6 +2317,130 @@ components:
         notes:
           type: string
           example: "fell asleep on right"
+
+    Sleep:
+      type: object
+      required:
+        - id
+        - baby_id
+        - started_at
+        - source
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 01919b8c-1a2b-7c3d-e4f5-a6b7c8d9e0f1
+        baby_id:
+          type: string
+          format: uuid
+          example: 01919b87-9a8c-7f2d-b1c3-4d5e6f7a8b9c
+        started_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T13:00:00Z"
+        ended_at:
+          type: string
+          format: date-time
+          description: Absent while the session is open (baby still asleep).
+          example: "2026-05-26T14:25:00Z"
+        sleep_type:
+          type: string
+          enum: [nap, night]
+          example: nap
+        location:
+          type: string
+          maxLength: 100
+          example: crib
+        notes:
+          type: string
+          maxLength: 500
+          example: "fell asleep on the walk"
+        source:
+          type: string
+          example: manual
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T13:00:01Z"
+
+    CreateSleepRequest:
+      type: object
+      required: [started_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Optional client-supplied UUIDv7 for idempotency.
+          example: 01919b8c-1a2b-7c3d-e4f5-a6b7c8d9e0f1
+        started_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T13:00:00Z"
+        ended_at:
+          type: string
+          format: date-time
+          description: |
+            Optional. Omit to open an in-progress session; when provided,
+            must be `>= started_at`.
+          example: "2026-05-26T14:25:00Z"
+        sleep_type:
+          type: string
+          enum: [nap, night]
+          example: nap
+        location:
+          type: string
+          maxLength: 100
+          example: crib
+        notes:
+          type: string
+          maxLength: 500
+          example: "fell asleep on the walk"
+
+    EndSleepRequest:
+      type: object
+      required: [ended_at]
+      description: |
+        Body shape for closing an OPEN sleep session via
+        `PATCH /v1/sleeps/{id}`.
+      properties:
+        ended_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T14:25:00Z"
+
+    UpdateSleepRequest:
+      type: object
+      description: |
+        Body shape for editing a CLOSED sleep session via
+        `PATCH /v1/sleeps/{id}`. All fields optional. Set
+        `clear_sleep_type: true` to clear that nullable column. Send an
+        empty string for `location` or `notes` to clear them.
+      properties:
+        started_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T13:00:00Z"
+        ended_at:
+          type: string
+          format: date-time
+          description: When provided, must be `>= started_at`.
+          example: "2026-05-26T14:25:00Z"
+        sleep_type:
+          type: string
+          enum: [nap, night]
+          example: night
+        clear_sleep_type:
+          type: boolean
+          example: false
+        location:
+          type: string
+          maxLength: 100
+          example: crib
+        notes:
+          type: string
+          maxLength: 500
+          example: "restless"
 
     Growth:
       type: object
