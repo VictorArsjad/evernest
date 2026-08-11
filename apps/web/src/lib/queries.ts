@@ -1446,6 +1446,7 @@ export function useDailyCharts(
   from: string | null,
   to: string | null,
   tz: string,
+  opts?: { refetchInterval?: number | false },
 ) {
   const enabled = !!babyId && !!from && !!to;
   return useQuery({
@@ -1453,7 +1454,7 @@ export function useDailyCharts(
       ? qk.chartsDaily(babyId as string, from as string, to as string, tz)
       : ["babies", "none", "charts", "daily"],
     enabled,
-    refetchInterval: HEAVY_REFETCH_MS,
+    refetchInterval: opts?.refetchInterval ?? HEAVY_REFETCH_MS,
     queryFn: () => {
       const params = new URLSearchParams({
         from: from as string,

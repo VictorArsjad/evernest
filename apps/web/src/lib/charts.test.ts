@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   barLayout,
+  dailyWindowEndingOn,
   dailyWindowEndingToday,
   formatDayShort,
   formatLocalYMD,
@@ -56,6 +57,33 @@ describe("dailyWindowEndingToday", () => {
     const today = new Date(2026, 4, 14, 9, 0, 0);
     expect(dailyWindowEndingToday(today, 0)).toEqual({ from: "2026-05-14", to: "2026-05-14" });
     expect(dailyWindowEndingToday(today, -5)).toEqual({ from: "2026-05-14", to: "2026-05-14" });
+  });
+});
+
+describe("dailyWindowEndingOn", () => {
+  it("matches dailyWindowEndingToday when the end date is today", () => {
+    const today = new Date(2026, 7, 11, 9, 0, 0); // Aug 11, 2026
+    expect(dailyWindowEndingOn(today, 7)).toEqual(dailyWindowEndingToday(today, 7));
+    expect(dailyWindowEndingOn(today, 14)).toEqual(dailyWindowEndingToday(today, 14));
+    expect(dailyWindowEndingOn(today, 30)).toEqual(dailyWindowEndingToday(today, 30));
+  });
+
+  it("produces the previous 7-day window when the end date steps back one range", () => {
+    // Aug 5 – Aug 11 stepped back once → Jul 29 – Aug 4.
+    const prevEnd = new Date(2026, 7, 4); // Aug 4, 2026
+    expect(dailyWindowEndingOn(prevEnd, 7)).toEqual({ from: "2026-07-29", to: "2026-08-04" });
+  });
+
+  it("crosses month and year boundaries", () => {
+    const end = new Date(2026, 0, 3); // Jan 3, 2026
+    expect(dailyWindowEndingOn(end, 7)).toEqual({ from: "2025-12-28", to: "2026-01-03" });
+    expect(dailyWindowEndingOn(end, 30)).toEqual({ from: "2025-12-05", to: "2026-01-03" });
+  });
+
+  it("treats 0/negative days as a single-day window", () => {
+    const end = new Date(2026, 4, 14);
+    expect(dailyWindowEndingOn(end, 0)).toEqual({ from: "2026-05-14", to: "2026-05-14" });
+    expect(dailyWindowEndingOn(end, -5)).toEqual({ from: "2026-05-14", to: "2026-05-14" });
   });
 });
 
