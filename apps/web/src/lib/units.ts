@@ -190,6 +190,20 @@ export function formatTime(iso: string, pref: TimeFormat): string {
   return `${pad(h)}:${pad(m)}`;
 }
 
+// formatDurationHM renders a minute count as a compact "1h 25m" / "45m"
+// duration label — used by the sleep rows and the Today banner's sleep
+// cell, where totals routinely exceed 99 minutes and a raw minute count
+// stops being glanceable. Non-finite and negative inputs collapse to
+// "0m" so the UI never renders garbage.
+export function formatDurationHM(totalMinutes: number): string {
+  if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return "0m";
+  const whole = Math.round(totalMinutes);
+  const h = Math.floor(whole / 60);
+  const m = whole % 60;
+  if (h === 0) return `${m}m`;
+  return `${h}h ${m}m`;
+}
+
 // --- internal ---
 
 // trimDecimal returns a string with at most `digits` decimals, dropping

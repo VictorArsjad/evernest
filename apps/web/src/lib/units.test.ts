@@ -8,6 +8,7 @@ import {
   displayLengthToCm,
   displayVolumeToMl,
   displayWeightToG,
+  formatDurationHM,
   formatLength,
   formatTime,
   formatVolume,
@@ -171,6 +172,25 @@ describe("formatTime", () => {
   it("guards against bad input", () => {
     expect(formatTime("", "24h")).toBe("—");
     expect(formatTime("nope", "24h")).toBe("—");
+  });
+});
+
+describe("formatDurationHM", () => {
+  it("renders minutes-only below an hour", () => {
+    expect(formatDurationHM(0)).toBe("0m");
+    expect(formatDurationHM(45)).toBe("45m");
+  });
+
+  it("splits hours and minutes above an hour", () => {
+    expect(formatDurationHM(60)).toBe("1h 0m");
+    expect(formatDurationHM(85)).toBe("1h 25m");
+    expect(formatDurationHM(600)).toBe("10h 0m");
+  });
+
+  it("guards against bad input", () => {
+    expect(formatDurationHM(-5)).toBe("0m");
+    expect(formatDurationHM(Number.NaN)).toBe("0m");
+    expect(formatDurationHM(Number.POSITIVE_INFINITY)).toBe("0m");
   });
 });
 

@@ -22,22 +22,25 @@ import {
   useDailyCharts,
   useDiapers,
   useEndNursing,
+  useEndSleep,
   useGrowths,
   useHouseholds,
   useNotes,
   useNursings,
   useOpenNursing,
+  useOpenSleep,
   usePumpings,
+  useSleeps,
 } from "../lib/queries";
 import { getDailyTargets, type DailyTargets } from "../lib/recommendations";
 import { mergeRecent } from "../lib/recentEvents";
 import { submitOnEnter } from "../lib/submitOnEnter";
 import { formatTimeSince, lastEventAt, useNow } from "../lib/timeSince";
-import type { Baby, Nursing } from "../lib/types";
+import type { Baby, Nursing, Sleep } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import { useEscapeKey } from "../lib/useEscapeKey";
 import { useOutbox } from "../lib/useOutbox";
-import { formatTime, formatVolume, formatWeight } from "../lib/units";
+import { formatDurationHM, formatTime, formatVolume, formatWeight } from "../lib/units";
 import { type CombinedPreferences, usePreferences } from "../lib/usePreferences";
 
 // Browser tz pinned at module init — the user's tz effectively never
@@ -136,6 +139,10 @@ function TodayPage() {
   const openNursing = useOpenNursing(baby?.id ?? null);
   const growthsToday = useGrowths(baby?.id ?? null, todayStart, todayEnd);
   const notesToday = useNotes(baby?.id ?? null, todayStart, todayEnd);
+  const sleepsToday = useSleeps(baby?.id ?? null, todayStart, todayEnd);
+  // Same "is one running?" check as nursing — swaps the Sleep tile for
+  // the in-progress variant while a session is open.
+  const openSleep = useOpenSleep(baby?.id ?? null);
   // Latest measurement ever — fed into the banner's Growth cell. The
   // default server-side window for growths covers the past year, which
   // is plenty for "most-recent weight" since the rows return DESC by
@@ -171,6 +178,20 @@ function TodayPage() {
   // overkill for a 2x3 hub cell. Plain expression (not useMemo) because
   // the early return above means we can't add another hook here without
   // tripping rules-of-hooks; the find() over a small list is cheap.
+  // Sleep total: closed intervals only (an open session contributes
+  // nothing until it ends), attributed wholly to the local day the sleep
+  // STARTED — same rule the nursing total follows via the todayStart
+  // list filter, and the same grouping History uses.
+  const sleepMin =
+    sleepsToday.data?.reduce((sum, s) => {
+      if (s.ended_at == null) return sum;
+      return (
+        sum +
+        Math.round(
+          (new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 60_000,
+        )
+      );
+    }, 0) ?? 0;
   const latestWeightRow = growthsLatest.data?.find((g) => g.weight_g != null);
   const latestWeightG =
     latestWeightRow?.weight_g != null ? Number(latestWeightRow.weight_g) : null;
@@ -197,6 +218,7 @@ function TodayPage() {
     pumpings: pumpings.data,
     nursings: nursings.data,
     growths: growthsToday.data,
+    sleeps: sleepsToday.data,
     notes: notesToday.data,
   });
 
@@ -220,6 +242,7 @@ function TodayPage() {
         totalMl={totalMl}
         pumpedMl={pumpedMl}
         nursingMin={nursingMin}
+        sleepMin={sleepMin}
         diaperCount={diaperCount}
         latestWeightG={latestWeightG}
         lastFedAt={lastFedAt}
@@ -254,6 +277,16 @@ function TodayPage() {
         {isFeatureVisible(prefs.feature_visibility, "growth") && (
           <Tile to="/log/growth" babyId={baby.id} icon="📏" label="Growth" accent="lilac" />
         )}
+        {isFeatureVisible(prefs.feature_visibility, "sleep") &&
+          (openSleep.data ? (
+            <SleepInProgressTile
+              session={openSleep.data}
+              babyId={baby.id}
+              prefs={prefs}
+            />
+          ) : (
+            <Tile to="/log/sleep" babyId={baby.id} icon="😴" label="Sleep" accent="indigo" />
+          ))}
         {isFeatureVisible(prefs.feature_visibility, "note") && (
           <Tile to="/log/note" babyId={baby.id} icon="📝" label="Note" accent="rose" />
         )}
@@ -306,7 +339,7 @@ function TodayPage() {
 
 // --- tiles ---
 
-type Accent = "peach" | "mint" | "sky" | "lemon" | "lilac" | "rose";
+type Accent = "peach" | "mint" | "sky" | "lemon" | "lilac" | "indigo" | "rose";
 
 const accentClass: Record<Accent, string> = {
   peach: "border-orange-300/20 bg-orange-300/5",
@@ -314,6 +347,7 @@ const accentClass: Record<Accent, string> = {
   sky: "border-sky-300/20 bg-sky-300/5",
   lemon: "border-yellow-300/20 bg-yellow-300/5",
   lilac: "border-violet-300/20 bg-violet-300/5",
+  indigo: "border-indigo-300/20 bg-indigo-300/5",
   rose: "border-rose-300/20 bg-rose-300/5",
 };
 
@@ -523,6 +557,142 @@ function EndNursingModal({
   );
 }
 
+// SleepInProgressTile replaces the standard Sleep tile while a session
+// is open. Same 30s tick + live elapsed as NursingInProgressTile; the
+// end modal is simpler because closing a sleep only needs the wake-up
+// time (no per-side durations).
+function SleepInProgressTile({
+  session,
+  babyId,
+  prefs,
+}: {
+  session: Sleep;
+  babyId: string;
+  prefs: CombinedPreferences;
+}) {
+  const [now, setNow] = useState(() => new Date());
+  const [showEnd, setShowEnd] = useState(false);
+
+  useEffect(() => {
+    // 30s tick: matches the formatter's whole-minute resolution.
+    const id = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const elapsed = formatElapsedHHMM(session.started_at, now);
+
+  return (
+    <>
+      <div
+        className={
+          "flex aspect-square flex-col items-center justify-center gap-1 rounded-2xl border p-3 text-center " +
+          accentClass.indigo
+        }
+      >
+        <span className="text-[10px] uppercase tracking-wide text-white/50">Sleep</span>
+        <span className="text-2xl font-semibold tabular-nums leading-tight">{elapsed}</span>
+        <span className="text-[10px] text-white/50">asleep</span>
+        <button
+          type="button"
+          onClick={() => setShowEnd(true)}
+          className="mt-1 rounded-full bg-indigo-300/20 px-3 py-1 text-xs font-medium text-indigo-200 transition active:scale-95"
+        >
+          Woke up
+        </button>
+      </div>
+      {showEnd && (
+        <EndSleepModal
+          session={session}
+          babyId={babyId}
+          now={now}
+          prefs={prefs}
+          onClose={() => setShowEnd(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function EndSleepModal({
+  session,
+  babyId,
+  now,
+  prefs,
+  onClose,
+}: {
+  session: Sleep;
+  babyId: string;
+  now: Date;
+  prefs: CombinedPreferences;
+  onClose: () => void;
+}) {
+  useEscapeKey(onClose);
+  // Default the wake-up time to now — the common case is "baby just woke
+  // up, tap confirm". datetime-local lets the user back-date it when they
+  // noticed late.
+  const [endedLocal, setEndedLocal] = useState(() => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  });
+  const end = useEndSleep();
+
+  const endedMs = new Date(endedLocal).getTime();
+  const isValid =
+    Number.isFinite(endedMs) && endedMs > new Date(session.started_at).getTime();
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isValid) return;
+    end.mutate(
+      {
+        id: session.id,
+        babyId,
+        ended_at: new Date(endedLocal).toISOString(),
+      },
+      { onSuccess: onClose },
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:items-center">
+      <form
+        onSubmit={onSubmit}
+        onKeyDown={submitOnEnter}
+        className="w-full max-w-sm rounded-2xl border border-white/10 bg-bg-surface p-5 shadow-xl"
+      >
+        <div className="mb-4 flex items-baseline justify-between">
+          <h2 className="text-lg font-semibold">End sleep</h2>
+          <button type="button" onClick={onClose} className="text-sm text-white/60">
+            Cancel
+          </button>
+        </div>
+        <p className="mb-4 text-xs text-white/50">
+          Fell asleep {formatTime(session.started_at, prefs.time_format)} · {formatElapsedHHMM(session.started_at, now)} elapsed
+        </p>
+        <label className="flex flex-col gap-1 text-xs uppercase tracking-wide text-white/50">
+          Woke up
+          <input
+            type="datetime-local"
+            value={endedLocal}
+            onChange={(e) => setEndedLocal(e.target.value)}
+            className="rounded-xl bg-bg-subtle px-3 py-2 text-base text-white outline-none focus:ring-2 focus:ring-accent"
+          />
+        </label>
+        {end.isError && (
+          <p className="mt-3 text-sm text-red-400">{end.error?.message ?? "could not save"}</p>
+        )}
+        <button
+          type="submit"
+          disabled={!isValid || end.isPending}
+          className="btn-primary mt-4 w-full text-base"
+        >
+          {end.isPending ? "Saving…" : "Confirm end"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 // TodayBanner replaces the old square 6th-cell SummaryTile with a wider
 // infographic that:
 //   - leads with a glanceable "Fed Xh Ym ago" headline (or "Nursing
@@ -538,6 +708,7 @@ function TodayBanner({
   totalMl,
   pumpedMl,
   nursingMin,
+  sleepMin,
   diaperCount,
   latestWeightG,
   lastFedAt,
@@ -551,6 +722,7 @@ function TodayBanner({
   totalMl: number;
   pumpedMl: number;
   nursingMin: number;
+  sleepMin: number;
   diaperCount: number;
   latestWeightG: number | null;
   lastFedAt: string | null;
@@ -604,6 +776,7 @@ function TodayBanner({
         prefs={prefs}
         totalMl={totalMl}
         nursingMin={nursingMin}
+        sleepMin={sleepMin}
         pumpedMl={pumpedMl}
         diaperCount={diaperCount}
         latestWeightG={latestWeightG}
@@ -623,6 +796,7 @@ function BannerStatRow({
   prefs,
   totalMl,
   nursingMin,
+  sleepMin,
   pumpedMl,
   diaperCount,
   latestWeightG,
@@ -631,6 +805,7 @@ function BannerStatRow({
   prefs: CombinedPreferences;
   totalMl: number;
   nursingMin: number;
+  sleepMin: number;
   pumpedMl: number;
   diaperCount: number;
   latestWeightG: number | null;
@@ -691,6 +866,18 @@ function BannerStatRow({
           latestWeightG != null ? formatWeight(latestWeightG, prefs.unit_weight) : "—"
         }
         // Growth doesn't have a daily total → no bar, ever.
+        barFill={null}
+        barClass=""
+      />,
+    );
+  }
+  if (isFeatureVisible(prefs.feature_visibility, "sleep")) {
+    cells.push(
+      <BannerStat
+        key="sleep"
+        icon="😴"
+        valueLabel={formatDurationHM(sleepMin)}
+        // No sleep entry in DailyTargets (yet) → no bar, like Growth.
         barFill={null}
         barClass=""
       />,

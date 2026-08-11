@@ -9,7 +9,13 @@ import { useState } from "react";
 
 import { useDiaperPhotoUrl, useNotePhotoUrl } from "../lib/queries";
 import type { RecentEvent } from "../lib/recentEvents";
-import { formatLength, formatTime, formatVolume, formatWeight } from "../lib/units";
+import {
+  formatDurationHM,
+  formatLength,
+  formatTime,
+  formatVolume,
+  formatWeight,
+} from "../lib/units";
 import type { CombinedPreferences } from "../lib/usePreferences";
 
 // Internal helper — not exported because nothing outside this file uses
@@ -37,6 +43,14 @@ function growthSummary(
     parts.push(`${formatLength(Number(g.head_circumference_cm), prefs.unit_length)} head`);
   }
   return parts.length > 0 ? parts.join(" · ") : "Measurement";
+}
+
+// minutesBetween: whole-minute duration of a closed interval, floored at
+// zero so malformed rows never render a negative duration.
+function minutesBetween(startISO: string, endISO: string): number {
+  const delta = new Date(endISO).getTime() - new Date(startISO).getTime();
+  if (!Number.isFinite(delta) || delta <= 0) return 0;
+  return Math.round(delta / 60_000);
 }
 
 export function RecentRow({
@@ -84,17 +98,21 @@ export function RecentRow({
           ? "💧"
           : ev.kind === "growth"
             ? "📏"
-            : ev.kind === "note"
-              ? "📝"
-              : "👶";
+            : ev.kind === "sleep"
+              ? "😴"
+              : ev.kind === "note"
+                ? "📝"
+                : "👶";
   // Tap target: the row body links to the matching /log/<kind>?edit=<id>
-  // form so users can correct mistyped values. Open nursing sessions are
-  // intentionally NOT editable from here — those flow through the
-  // in-progress chip's End-now modal, which is the only place that
-  // owns the close-session transition. Syncing rows stay tappable
-  // because the edit form prefills from the same cache that holds the
-  // unsynced row.
-  const editable = !(ev.kind === "nursing" && ev.data.ended_at == null);
+  // form so users can correct mistyped values. Open nursing and sleep
+  // sessions are intentionally NOT editable from here — those flow
+  // through the in-progress tile's End-now modal, which is the only
+  // place that owns the close-session transition. Syncing rows stay
+  // tappable because the edit form prefills from the same cache that
+  // holds the unsynced row.
+  const editable =
+    !(ev.kind === "nursing" && ev.data.ended_at == null) &&
+    !(ev.kind === "sleep" && ev.data.ended_at == null);
   const body = (
     <>
       {ev.kind === "bottle" && (
@@ -149,6 +167,28 @@ export function RecentRow({
       {ev.kind === "growth" && (
         <>
           <div className="text-base font-medium">{growthSummary(ev.data, prefs)}</div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+      )}
+      {ev.kind === "sleep" && (
+        <>
+          <div className="text-base font-medium">
+            {ev.data.ended_at != null ? (
+              <>Slept {formatDurationHM(minutesBetween(ev.data.started_at, ev.data.ended_at))}</>
+            ) : (
+              <>Sleeping</>
+            )}
+            {(ev.data.sleep_type || ev.data.location) && (
+              <span className="ml-2 text-xs font-normal capitalize text-white/50">
+                · {[ev.data.sleep_type, ev.data.location].filter(Boolean).join(" · ")}
+              </span>
+            )}
+            {ev.data.ended_at == null && (
+              <span className="ml-2 text-xs font-normal text-indigo-300">· in progress</span>
+            )}
+          </div>
           {ev.data.notes && (
             <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
           )}

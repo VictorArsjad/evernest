@@ -1,7 +1,7 @@
 // Pure helpers for the Today screen "Recent" list. Kept here (rather than
 // inline in the route) so the comparator can be tested in isolation —
 // see recentEvents.test.ts.
-import type { BottleFeed, Diaper, Growth, Note, Nursing, Pumping } from "./types";
+import type { BottleFeed, Diaper, Growth, Note, Nursing, Pumping, Sleep } from "./types";
 
 export type RecentEvent =
   | { kind: "bottle"; at: string; data: BottleFeed }
@@ -9,6 +9,7 @@ export type RecentEvent =
   | { kind: "pumping"; at: string; data: Pumping }
   | { kind: "nursing"; at: string; data: Nursing }
   | { kind: "growth"; at: string; data: Growth }
+  | { kind: "sleep"; at: string; data: Sleep }
   | { kind: "note"; at: string; data: Note };
 
 export interface RecentEventSources {
@@ -17,6 +18,7 @@ export interface RecentEventSources {
   pumpings?: readonly Pumping[];
   nursings?: readonly Nursing[];
   growths?: readonly Growth[];
+  sleeps?: readonly Sleep[];
   notes?: readonly Note[];
 }
 
@@ -36,11 +38,11 @@ export function compareRecentDesc(a: RecentEvent, b: RecentEvent): number {
 }
 
 // mergeRecent flattens the per-kind query results into a single
-// time-sorted list ready for rendering. Nursing rows use `started_at`
-// (the moment the session began) as the ordering instant, since they
-// don't have an `occurred_at` column — the schema models them as an
-// interval, not an instant. Growth rows use `measured_at` for the same
-// reason: the schema names it after the event ("when was this baby
+// time-sorted list ready for rendering. Nursing and sleep rows use
+// `started_at` (the moment the session began) as the ordering instant,
+// since they don't have an `occurred_at` column — the schema models them
+// as an interval, not an instant. Growth rows use `measured_at` for the
+// same reason: the schema names it after the event ("when was this baby
 // measured") rather than reusing the generic `occurred_at` slot.
 export function mergeRecent(sources: RecentEventSources): RecentEvent[] {
   const events: RecentEvent[] = [
@@ -68,6 +70,11 @@ export function mergeRecent(sources: RecentEventSources): RecentEvent[] {
       kind: "growth",
       at: g.measured_at,
       data: g,
+    })),
+    ...(sources.sleeps ?? []).map<RecentEvent>((s) => ({
+      kind: "sleep",
+      at: s.started_at,
+      data: s,
     })),
     ...(sources.notes ?? []).map<RecentEvent>((n) => ({
       kind: "note",

@@ -75,7 +75,8 @@ hasn't touched it yet". The FE mirrors the same convention via small leaf
 modules (`apps/web/src/lib/palette.ts`, `apps/web/src/lib/featureVisibility.ts`).
 
 `feature_visibility` (added in migration 000009) lets a caregiver hide
-event kinds — bottle / nursing / pumping / diaper / growth — from the
+event kinds — bottle / nursing / pumping / diaper / growth / sleep / note —
+from the
 Today banner stats, the action tile grid, and the /charts page **without**
 touching the underlying data. Past entries remain in their tables; this
 column only gates UI surfaces. The closed allowlist is enforced
@@ -112,6 +113,21 @@ TOAST handles out-of-line storage automatically, so list scans only read the
 main heap row's TOAST pointer — adding photos does not regress the existing
 `diapers_baby_occurred_idx`-driven plan.
 
+## Sleep sessions (migration 000013)
+
+`sleeps` tracks asleep/awake intervals and reuses the nursing open-session
+model: `ended_at` is NULL while the baby is still asleep ("start now, close
+later"), and `sleeps_interval_chk` guarantees `ended_at >= started_at` once
+closed. Duration is always derived from the pair — there is no duration
+column. Optional columns: `sleep_type` (`nap` | `night`, CHECK-enforced),
+`location` (free text, e.g. "crib"), `notes`.
+
+At most one open sleep per baby is enforced in the app layer (like nursing),
+**not** via a partial unique index: a `UNIQUE (baby_id) WHERE ended_at IS
+NULL` index would collide when the offline outbox replays the same
+open-create row, breaking the `ON CONFLICT (id) DO NOTHING` idempotency
+contract described below.
+
 ## `source` column on every event table
 
 Every event table has a `source text not null default 'manual'` column. Values
@@ -146,6 +162,6 @@ of the import and make partial-failure recovery harder.
 ## Indexes
 
 Every event table has a composite `(baby_id, occurred_at DESC)` (or
-`(baby_id, started_at DESC)` for nursing, `(baby_id, measured_at DESC)` for
-growths). This single index serves both the timeline view (most recent N for
+`(baby_id, started_at DESC)` for nursing and sleeps, `(baby_id, measured_at
+DESC)` for growths). This single index serves both the timeline view (most recent N for
 a baby) and the daily chart aggregation (date range scan for a baby).

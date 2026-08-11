@@ -23,6 +23,8 @@ import type {
   Nursing,
   NursingSide,
   Pumping,
+  Sleep,
+  SleepType,
   StartingBreast,
   TokenResponse,
   User,
@@ -121,6 +123,9 @@ export const qk = {
   openNursing: (babyId: string) => ["babies", babyId, "nursing-sessions", "open"] as const,
   growths: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "growths", from ?? "", to ?? ""] as const,
+  sleeps: (babyId: string, from?: string, to?: string) =>
+    ["babies", babyId, "sleeps", from ?? "", to ?? ""] as const,
+  openSleep: (babyId: string) => ["babies", babyId, "sleeps", "open"] as const,
   notes: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "notes", from ?? "", to ?? ""] as const,
   chartsDaily: (babyId: string, from: string, to: string, tz: string) =>
@@ -1203,6 +1208,231 @@ export function useUpdateNursing() {
     onSuccess: (data, vars) => {
       upsertList<Nursing>(qc, ["babies", vars.babyId, "nursing-sessions"], data);
       qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "nursing-sessions"] });
+    },
+  });
+}
+
+// --- sleeps ---
+
+export function useSleeps(
+  babyId: string | null,
+  from?: string,
+  to?: string,
+  opts?: ListHookOpts,
+) {
+  return useQuery({
+    queryKey: babyId ? qk.sleeps(babyId, from, to) : ["babies", "none", "sleeps"],
+    enabled: !!babyId,
+    refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      if (opts?.limit != null) params.set("limit", String(opts.limit));
+      const qs = params.toString();
+      return api<Sleep[]>(`/babies/${babyId}/sleeps${qs ? `?${qs}` : ""}`);
+    },
+  });
+}
+
+export function useCreateSleep() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      babyId: string;
+      started_at: string;
+      // Omitting ended_at opens an "in progress" session that the FE
+      // later closes via useEndSleep.
+      ended_at?: string;
+      sleep_type?: SleepType;
+      location?: string;
+      notes?: string;
+    }) => {
+      const id = makeId();
+      const synthetic: Sleep = {
+        id,
+        baby_id: vars.babyId,
+        started_at: vars.started_at,
+        ended_at: vars.ended_at ?? null,
+        sleep_type: vars.sleep_type ?? null,
+        location: vars.location ?? null,
+        notes: vars.notes ?? null,
+        source: "manual",
+        created_at: new Date().toISOString(),
+      };
+      return apiQueued<Sleep>(`/babies/${vars.babyId}/sleeps`, {
+        method: "POST",
+        body: {
+          id,
+          started_at: vars.started_at,
+          ended_at: vars.ended_at,
+          sleep_type: vars.sleep_type,
+          location: vars.location || undefined,
+          notes: vars.notes || undefined,
+        },
+        idempotencyKey: id,
+        synthesize: () => synthetic,
+      });
+    },
+    onSuccess: (data, vars) => {
+      upsertList<Sleep>(qc, ["babies", vars.babyId, "sleeps"], data);
+      // If we just opened an in-progress session (no ended_at), prime
+      // the open-sleep query so the in-progress tile shows up
+      // immediately even before the next refetch.
+      if (!data.ended_at) {
+        qc.setQueryData(qk.openSleep(vars.babyId), data);
+      }
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "sleeps"] });
+    },
+  });
+}
+
+// useOpenSleep polls /open for a single in-progress session. Same
+// 204→null normalization as useOpenNursing.
+export function useOpenSleep(babyId: string | null) {
+  return useQuery({
+    queryKey: babyId ? qk.openSleep(babyId) : ["babies", "none", "sleeps", "open"],
+    enabled: !!babyId,
+    // Kept faster than the list refetch so a partner ending the
+    // session on another device clears the in-progress tile quickly.
+    refetchInterval: OPEN_NURSING_REFETCH_MS,
+    queryFn: async () => {
+      const data = await api<Sleep | undefined>(`/babies/${babyId}/sleeps/open`);
+      return data ?? null;
+    },
+  });
+}
+
+export function useEndSleep() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; babyId: string; ended_at: string }) => {
+      // Best-effort synthesize by patching whichever cached open-sleep
+      // (or list) row carries this id — same fallback logic as
+      // useEndNursing for offline use.
+      const fromOpen = qc.getQueryData<Sleep | null>(qk.openSleep(vars.babyId));
+      const fromList = (
+        qc.getQueriesData<Sleep[] | undefined>({
+          queryKey: ["babies", vars.babyId, "sleeps"],
+        }) as Array<[unknown, Sleep[] | undefined]>
+      )
+        .flatMap(([, list]) => list ?? [])
+        .find((s) => s.id === vars.id);
+      const base = fromList ?? fromOpen ?? null;
+      const synthetic: Sleep = {
+        id: vars.id,
+        baby_id: base?.baby_id ?? vars.babyId,
+        started_at: base?.started_at ?? new Date().toISOString(),
+        ended_at: vars.ended_at,
+        sleep_type: base?.sleep_type ?? null,
+        location: base?.location ?? null,
+        notes: base?.notes ?? null,
+        source: base?.source ?? "manual",
+        created_at: base?.created_at ?? new Date().toISOString(),
+      };
+      return apiQueued<Sleep>(`/sleeps/${vars.id}`, {
+        method: "PATCH",
+        body: { ended_at: vars.ended_at },
+        // Same row id as the key — re-ending the same session is a
+        // no-op server-side and the outbox dedupes the second PATCH.
+        idempotencyKey: `end-sleep-${vars.id}`,
+        synthesize: () => synthetic,
+      });
+    },
+    onSuccess: (data, vars) => {
+      // The in-progress tile should disappear immediately once we've
+      // recorded an ended_at.
+      qc.setQueryData(qk.openSleep(vars.babyId), null);
+      upsertList<Sleep>(qc, ["babies", vars.babyId, "sleeps"], data);
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "sleeps"] });
+    },
+  });
+}
+
+// useUpdateSleep patches a CLOSED sleep session. The BE refuses to touch
+// open sessions on the edit path (the close-session PATCH owns that
+// transition via useEndSleep). The form hides the edit affordance for
+// open rows.
+export function useUpdateSleep() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      id: string;
+      babyId: string;
+      started_at?: string;
+      ended_at?: string;
+      sleep_type?: SleepType;
+      clear_sleep_type?: boolean;
+      location?: string;
+      notes?: string;
+    }) => {
+      const lists = qc.getQueriesData<Sleep[] | undefined>({
+        queryKey: ["babies", vars.babyId, "sleeps"],
+      }) as Array<[unknown, Sleep[] | undefined]>;
+      const existing = lists
+        .flatMap(([, list]) => list ?? [])
+        .find((r) => r.id === vars.id);
+      const synthetic: Sleep = {
+        id: vars.id,
+        baby_id: existing?.baby_id ?? vars.babyId,
+        started_at: vars.started_at ?? existing?.started_at ?? new Date().toISOString(),
+        ended_at: vars.ended_at ?? existing?.ended_at ?? null,
+        sleep_type: vars.clear_sleep_type
+          ? null
+          : vars.sleep_type ?? existing?.sleep_type ?? null,
+        location:
+          vars.location === undefined
+            ? existing?.location ?? null
+            : vars.location === ""
+              ? null
+              : vars.location,
+        notes:
+          vars.notes === undefined
+            ? existing?.notes ?? null
+            : vars.notes === ""
+              ? null
+              : vars.notes,
+        source: existing?.source ?? "manual",
+        created_at: existing?.created_at ?? new Date().toISOString(),
+      };
+      const body: Record<string, unknown> = {};
+      if (vars.started_at !== undefined) body.started_at = vars.started_at;
+      if (vars.ended_at !== undefined) body.ended_at = vars.ended_at;
+      if (vars.sleep_type !== undefined) body.sleep_type = vars.sleep_type;
+      if (vars.clear_sleep_type) body.clear_sleep_type = true;
+      if (vars.location !== undefined) body.location = vars.location;
+      if (vars.notes !== undefined) body.notes = vars.notes;
+      return apiQueued<Sleep>(`/sleeps/${vars.id}`, {
+        method: "PATCH",
+        body,
+        idempotencyKey: vars.id,
+        synthesize: () => synthetic,
+      });
+    },
+    onSuccess: (data, vars) => {
+      upsertList<Sleep>(qc, ["babies", vars.babyId, "sleeps"], data);
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "sleeps"] });
+    },
+  });
+}
+
+export function useDeleteSleep() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; babyId: string }) =>
+      apiQueued<void>(`/sleeps/${vars.id}`, {
+        method: "DELETE",
+        idempotencyKey: `del-sleep-${vars.id}`,
+        synthesize: () => undefined as unknown as void,
+      }),
+    onSuccess: (_data, vars) => {
+      removeFromList<Sleep>(qc, ["babies", vars.babyId, "sleeps"], vars.id);
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "sleeps"] });
+      // If the deleted row was the currently-open session, drop it.
+      const open = qc.getQueryData<Sleep | null>(qk.openSleep(vars.babyId));
+      if (open && open.id === vars.id) {
+        qc.setQueryData(qk.openSleep(vars.babyId), null);
+      }
     },
   });
 }

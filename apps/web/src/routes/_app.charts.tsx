@@ -41,12 +41,13 @@ import {
   useNotes,
   useNursings,
   usePumpings,
+  useSleeps,
 } from "../lib/queries";
 import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
 import type { ChartDaily } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import { useSwipe } from "../lib/useSwipe";
-import { formatVolume, volumeUnitLabel } from "../lib/units";
+import { formatDurationHM, formatVolume, volumeUnitLabel } from "../lib/units";
 import { type CombinedPreferences, usePreferences } from "../lib/usePreferences";
 
 type WindowDays = 7 | 14 | 30;
@@ -286,6 +287,7 @@ function ChartsPage() {
   const pumpings = usePumpings(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const nursings = useNursings(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const growths = useGrowths(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
+  const sleeps = useSleeps(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const notes = useNotes(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
 
   // Window navigation. `goForward`'s clamp at 0 is the only guard we
@@ -320,6 +322,7 @@ function ChartsPage() {
     pumpings: pumpings.data,
     nursings: nursings.data,
     growths: growths.data,
+    sleeps: sleeps.data,
     notes: notes.data,
   });
   const groups = groupByLocalDay(recent);
@@ -329,6 +332,7 @@ function ChartsPage() {
     pumpings.isLoading ||
     nursings.isLoading ||
     growths.isLoading ||
+    sleeps.isLoading ||
     notes.isLoading;
 
   // Which local days actually have History entries — so a chart bar for
@@ -1178,6 +1182,7 @@ function formatDaySummary(events: RecentEvent[], prefs: CombinedPreferences): st
   let pumpedMl = 0;
   let diaperCount = 0;
   let growthCount = 0;
+  let sleepMin = 0;
   let noteCount = 0;
   for (const ev of events) {
     switch (ev.kind) {
@@ -1198,6 +1203,19 @@ function formatDaySummary(events: RecentEvent[], prefs: CombinedPreferences): st
       case "growth":
         growthCount += 1;
         break;
+      case "sleep":
+        // Closed intervals only — an open session has no duration yet.
+        if (ev.data.ended_at != null) {
+          sleepMin += Math.max(
+            0,
+            Math.round(
+              (new Date(ev.data.ended_at).getTime() -
+                new Date(ev.data.started_at).getTime()) /
+                60_000,
+            ),
+          );
+        }
+        break;
       case "note":
         noteCount += 1;
         break;
@@ -1209,6 +1227,7 @@ function formatDaySummary(events: RecentEvent[], prefs: CombinedPreferences): st
   if (pumpedMl > 0) parts.push(`${formatVolume(pumpedMl, prefs.unit_volume)} pumped`);
   if (diaperCount > 0) parts.push(`${diaperCount} ${diaperCount === 1 ? "diaper" : "diapers"}`);
   if (growthCount > 0) parts.push(`${growthCount} growth`);
+  if (sleepMin > 0) parts.push(`${formatDurationHM(sleepMin)} sleep`);
   if (noteCount > 0) parts.push(`${noteCount} ${noteCount === 1 ? "note" : "notes"}`);
   return parts.join(" · ");
 }
