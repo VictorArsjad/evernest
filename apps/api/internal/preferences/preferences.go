@@ -95,6 +95,8 @@ var allowedSeriesKeys = map[string]struct{}{
 	"diaper_wet":     {},
 	"diaper_soiled":  {},
 	"diaper_mixed":   {},
+	"sleep_night":    {},
+	"sleep_nap":      {},
 	"weight":         {},
 }
 

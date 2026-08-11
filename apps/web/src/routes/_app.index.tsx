@@ -33,6 +33,7 @@ import {
   useSleeps,
 } from "../lib/queries";
 import { getDailyTargets, type DailyTargets } from "../lib/recommendations";
+import { getWakeWindow, type WakeWindow } from "../lib/sleepGuidance";
 import { mergeRecent } from "../lib/recentEvents";
 import { submitOnEnter } from "../lib/submitOnEnter";
 import { formatTimeSince, lastEventAt, useNow } from "../lib/timeSince";
@@ -143,6 +144,10 @@ function TodayPage() {
   // Same "is one running?" check as nursing — swaps the Sleep tile for
   // the in-progress variant while a session is open.
   const openSleep = useOpenSleep(baby?.id ?? null);
+  // Recent-sleeps lookback for the wake-window card: the last sleep may
+  // have ended yesterday (overnight), so today's list alone can't answer
+  // "how long has baby been awake?". Small limit, newest-first.
+  const latestSleeps = useSleeps(baby?.id ?? null, sinceStart, todayEnd, { limit: 10 });
   // Latest measurement ever — fed into the banner's Growth cell. The
   // default server-side window for growths covers the past year, which
   // is plenty for "most-recent weight" since the rows return DESC by
@@ -212,6 +217,19 @@ function TodayPage() {
   ]);
   const lastDiaperAt = lastEventAt(latestDiapers.data ?? []);
 
+  // Wake-window inputs: the most recent CLOSED sleep's wake-up time and
+  // the age-typical window. Both gated below; either being null hides
+  // the card entirely.
+  const wakeWindow: WakeWindow | null = prefs.show_recommended_targets
+    ? getWakeWindow(baby, now)
+    : null;
+  const lastWokeAt =
+    (latestSleeps.data ?? [])
+      .filter((s) => s.ended_at != null)
+      .map((s) => s.ended_at as string)
+      .sort()
+      .at(-1) ?? null;
+
   const recent = mergeRecent({
     bottleFeeds: feeds.data,
     diapers: diapers.data,
@@ -253,6 +271,18 @@ function TodayPage() {
         targets={targets}
         prefs={prefs}
       />
+
+      {isFeatureVisible(prefs.feature_visibility, "sleep") &&
+        wakeWindow != null &&
+        lastWokeAt != null &&
+        openSleep.data == null && (
+          <WakeWindowCard
+            lastWokeAt={lastWokeAt}
+            window={wakeWindow}
+            now={now}
+            prefs={prefs}
+          />
+        )}
 
       <section className="grid grid-cols-3 gap-3">
         {isFeatureVisible(prefs.feature_visibility, "bottle") && (
@@ -554,6 +584,98 @@ function EndNursingModal({
         </button>
       </form>
     </div>
+  );
+}
+
+// WakeWindowCard answers "can baby handle more awake time, or are we
+// heading into overtired?" — awake-since-last-sleep against the
+// age-typical wake window from sleepGuidance.ts. Hidden while a sleep
+// is in progress (the in-progress tile owns that state), when there's
+// no closed sleep to measure from, when the baby has no DoB, or when
+// the user turned recommended targets off in Settings (same "not
+// medical advice" posture as the banner bars). Also self-hides once
+// the awake stretch exceeds 24h — at that point the number is stale
+// data, not guidance.
+function WakeWindowCard({
+  lastWokeAt,
+  window: ww,
+  now,
+  prefs,
+}: {
+  lastWokeAt: string;
+  window: WakeWindow;
+  now: Date;
+  prefs: CombinedPreferences;
+}) {
+  const awakeMin = Math.floor((now.getTime() - new Date(lastWokeAt).getTime()) / 60_000);
+  if (!Number.isFinite(awakeMin) || awakeMin < 0 || awakeMin > 24 * 60) return null;
+
+  // Bar scale: the track runs to 125% of the window max so the
+  // overtired zone is visible as a distinct final stretch rather than
+  // the bar just pinning at 100%.
+  const scaleMin = ww.maxMin * 1.25;
+  const fillPct = Math.min(100, (awakeMin / scaleMin) * 100);
+  const zoneStartPct = (ww.maxMin / scaleMin) * 100;
+  const minMarkPct = (ww.minMin / scaleMin) * 100;
+
+  const napFrom = new Date(new Date(lastWokeAt).getTime() + ww.minMin * 60_000);
+  const napTo = new Date(new Date(lastWokeAt).getTime() + ww.maxMin * 60_000);
+  // Sub-2h windows read better in minutes ("45–90m") than as awkward
+  // decimals ("0.8–1.5h"); longer windows read better in hours.
+  const windowLabel =
+    ww.maxMin < 120
+      ? `${ww.minMin}–${ww.maxMin}m`
+      : `${(ww.minMin % 60 === 0 ? ww.minMin / 60 : (ww.minMin / 60).toFixed(1))}–${(ww.maxMin % 60 === 0 ? ww.maxMin / 60 : (ww.maxMin / 60).toFixed(1))}h`;
+
+  let status: React.ReactNode;
+  if (awakeMin < ww.minMin) {
+    status = (
+      <>
+        Room to spare — next nap likely{" "}
+        <span className="text-indigo-200">
+          {formatTime(napFrom.toISOString(), prefs.time_format)}–
+          {formatTime(napTo.toISOString(), prefs.time_format)}
+        </span>
+      </>
+    );
+  } else if (awakeMin <= ww.maxMin) {
+    status = <>In the sleepy window — a nap soon should go smoothly.</>;
+  } else {
+    status = (
+      <span className="text-orange-300">
+        Past the typical window — watch for overtired cues.
+      </span>
+    );
+  }
+
+  return (
+    <section className="rounded-2xl border border-white/10 bg-bg-surface p-4">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-base font-semibold">
+          Awake {formatDurationHM(awakeMin)}
+        </span>
+        <span className="text-[11px] text-white/50">
+          typical window {windowLabel}
+        </span>
+      </div>
+      <div className="relative mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+        {/* Overtired zone (past the window max). */}
+        <div
+          className="absolute inset-y-0 right-0 bg-orange-300/25"
+          style={{ left: `${zoneStartPct}%` }}
+        />
+        <div
+          className="absolute inset-y-0 left-0 rounded-full bg-indigo-400"
+          style={{ width: `${fillPct}%` }}
+        />
+        {/* Window-min marker: where "ready for a nap" begins. */}
+        <div
+          className="absolute inset-y-0 w-px bg-white/50"
+          style={{ left: `${minMarkPct}%` }}
+        />
+      </div>
+      <p className="mt-2 text-xs text-white/60">{status}</p>
+    </section>
   );
 }
 
