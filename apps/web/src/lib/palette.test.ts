@@ -57,6 +57,8 @@ describe("resolve", () => {
         "diaper_wet",
         "nursing",
         "pumping",
+        "sleep_nap",
+        "sleep_night",
         "weight",
       ].sort(),
     );

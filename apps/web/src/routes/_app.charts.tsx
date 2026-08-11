@@ -44,7 +44,9 @@ import {
   useSleeps,
 } from "../lib/queries";
 import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
-import type { ChartDaily } from "../lib/types";
+import { clipSleepToDays, dailySleepTotals, type SleepDay } from "../lib/sleepDays";
+import { getDailySleepRange } from "../lib/sleepGuidance";
+import type { Baby, ChartDaily, Sleep } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import { useSwipe } from "../lib/useSwipe";
 import { formatDurationHM, formatVolume, volumeUnitLabel } from "../lib/units";
@@ -120,7 +122,10 @@ function HitOverlays({
 }: {
   n: number;
   hover: ChartHover;
-  days: ChartDaily[];
+  // Only `.date` is read — widened past ChartDaily so the sleep charts
+  // (which aren't backed by the daily-aggregation endpoint) can reuse
+  // the same overlay behavior.
+  days: { date: string }[];
   ariaValue: (i: number) => string;
   onSelect?: (i: number) => void;
 }) {
@@ -289,6 +294,16 @@ function ChartsPage() {
   const growths = useGrowths(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const sleeps = useSleeps(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const notes = useNotes(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
+  // The rhythm chart needs one extra lookback day: an overnight sleep
+  // that STARTED before the window still paints the window's first
+  // morning once clipped at midnight. Kept as its own query (separate
+  // key) so the History list above never grows a phantom day group.
+  const rhythmWindow = useMemo(() => {
+    const fromDate = new Date(endDate);
+    fromDate.setDate(fromDate.getDate() - range);
+    return { from: fromDate.toISOString(), to: historyWindow.to };
+  }, [endDate, range, historyWindow.to]);
+  const rhythmSleeps = useSleeps(babyId, rhythmWindow.from, rhythmWindow.to, HISTORY_HOOK_OPTS);
 
   // Window navigation. `goForward`'s clamp at 0 is the only guard we
   // need against moving past today. Changing the range snaps back to
@@ -406,6 +421,20 @@ function ChartsPage() {
           prefs={prefs}
           todayYMD={formatLocalYMD(new Date())}
           onSelectDay={handleSelectDay}
+          entryDayKeys={entryDayKeys}
+        />
+      )}
+
+      {isFeatureVisible(prefs.feature_visibility, "sleep") && (
+        <SleepChartsSection
+          key={`sleep-${range}-${offset}`}
+          baby={baby}
+          prefs={prefs}
+          sleeps={rhythmSleeps.data ?? []}
+          fromYMD={window.from}
+          toYMD={window.to}
+          todayYMD={formatLocalYMD(new Date())}
+          onSelectDay={(date) => handleSelectDay(date, "sleep")}
           entryDayKeys={entryDayKeys}
         />
       )}
@@ -657,6 +686,363 @@ function ChartGrid({
         <Axis days={days} />
         <DiaperLegend colors={diaperColors} />
       </ChartCard>
+      )}
+    </div>
+  );
+}
+
+// --- sleep charts ---
+
+// formatClockMin renders minutes-from-midnight as "10:05 pm" style short
+// clock labels for the rhythm tooltip.
+function formatClockMin(min: number): string {
+  const h24 = Math.floor(min / 60) % 24;
+  const m = min % 60;
+  const period = h24 >= 12 ? "pm" : "am";
+  let h = h24 % 12;
+  if (h === 0) h = 12;
+  return `${h}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+// SleepChartsSection renders the two sleep cards below the main chart
+// grid, driven by the same range control. Data comes straight from the
+// sleeps list (clipped/aggregated on the FE) — deliberately NOT from
+// chart.go's daily endpoint, which knows nothing about sleep.
+function SleepChartsSection({
+  baby,
+  prefs,
+  sleeps,
+  fromYMD,
+  toYMD,
+  todayYMD,
+  onSelectDay,
+  entryDayKeys,
+}: {
+  baby: Baby;
+  prefs: CombinedPreferences;
+  sleeps: Sleep[];
+  fromYMD: string;
+  toYMD: string;
+  todayYMD: string;
+  onSelectDay?: (date: string) => void;
+  entryDayKeys?: Set<string>;
+}) {
+  const now = new Date();
+  // `new Date()` is taken inside the memo (not the outer `now`) so the
+  // deps stay stable — an open session's clipped end only needs to be
+  // fresh when the inputs change, which any poll refetch triggers.
+  const rhythmDays = useMemo(
+    () => clipSleepToDays(sleeps, fromYMD, toYMD, new Date()),
+    [sleeps, fromYMD, toYMD],
+  );
+  const totals = useMemo(
+    () => dailySleepTotals(sleeps, fromYMD, toYMD),
+    [sleeps, fromYMD, toYMD],
+  );
+  const colors = useMemo(
+    () => resolve(prefs.chart_palette ?? DEFAULT_PALETTE),
+    [prefs.chart_palette],
+  );
+  const range = getDailySleepRange(baby, now);
+  const canSelectDay = (date: string) => !!entryDayKeys?.has(date);
+
+  // Window totals/avg. The average excludes today (partial day) exactly
+  // like summarize() does for the other cards.
+  const totalMin = totals.reduce((s, d) => s + d.minutes, 0);
+  const pastDays = totals.filter((d) => d.date !== todayYMD);
+  const avgDenominator = pastDays.length > 0 ? pastDays.length : totals.length;
+  const avgNumerator =
+    pastDays.length > 0 ? pastDays.reduce((s, d) => s + d.minutes, 0) : totalMin;
+  const avgMin = avgDenominator > 0 ? avgNumerator / avgDenominator : 0;
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <ChartCard
+        title="Sleep rhythm"
+        unit="24h/day"
+        accent="text-indigo-300"
+        primary={`${formatDurationHM(totalMin)} total`}
+        secondary="midnight → midnight"
+      >
+        <SleepRhythmChart
+          days={rhythmDays}
+          nightColor={colors.sleep_night}
+          napColor={colors.sleep_nap}
+          onSelectDay={onSelectDay}
+          canSelectDay={canSelectDay}
+        />
+        <Axis days={rhythmDays} />
+        <div className="flex items-center gap-3 text-[10px] text-white/50">
+          <span className="flex items-center gap-1">
+            <span
+              aria-hidden="true"
+              className="inline-block h-2 w-2 rounded-sm"
+              style={{ backgroundColor: colors.sleep_night }}
+            />
+            Night
+          </span>
+          <span className="flex items-center gap-1">
+            <span
+              aria-hidden="true"
+              className="inline-block h-2 w-2 rounded-sm"
+              style={{ backgroundColor: colors.sleep_nap }}
+            />
+            Nap
+          </span>
+        </div>
+      </ChartCard>
+
+      <ChartCard
+        title="Sleep total"
+        unit="h/day"
+        accent="text-indigo-300"
+        primary={`${formatDurationHM(avgMin)} /day avg`}
+        secondary={
+          range
+            ? `typical ${range.minH}–${range.maxH}h for age — not medical advice`
+            : "add a date of birth to see the typical range"
+        }
+      >
+        <SleepTotalChart
+          totals={totals}
+          range={range}
+          fill={colors.sleep_night}
+          onSelectDay={onSelectDay}
+          canSelectDay={canSelectDay}
+        />
+        <Axis days={totals} />
+      </ChartCard>
+    </div>
+  );
+}
+
+// SleepRhythmChart is the actogram: one column per day, y = the 24 local
+// hours top-to-bottom, each sleep interval a rounded block (already
+// clipped at midnight by clipSleepToDays). Open sessions render dimmed.
+function SleepRhythmChart({
+  days,
+  nightColor,
+  napColor,
+  onSelectDay,
+  canSelectDay,
+}: {
+  days: SleepDay[];
+  nightColor: string;
+  napColor: string;
+  onSelectDay?: (date: string) => void;
+  canSelectDay?: (date: string) => boolean;
+}) {
+  const hover = useChartHover();
+  const n = days.length;
+  const ai = hover.activeIndex;
+  const jumpTo = (i: number) => {
+    if (canSelectDay?.(days[i].date)) {
+      onSelectDay?.(days[i].date);
+      hover.clear();
+    }
+  };
+  const slot = VB_W / Math.max(1, n);
+  const colWidth = slot * 0.7;
+  const pad = (slot - colWidth) / 2;
+  return (
+    <div
+      ref={hover.containerRef}
+      className="relative h-36 w-full"
+      style={{ touchAction: "manipulation" }}
+    >
+      <svg
+        viewBox={`0 0 ${VB_W} ${VB_H}`}
+        preserveAspectRatio="none"
+        className="absolute inset-0 h-full w-full overflow-visible"
+        role="img"
+        aria-label="Sleep rhythm chart: one column per day over 24 hours"
+      >
+        {/* 6h gridlines so the eye can anchor morning / noon / evening. */}
+        {[6, 12, 18].map((h) => (
+          <line
+            key={h}
+            x1={0}
+            x2={VB_W}
+            y1={(h / 24) * VB_H}
+            y2={(h / 24) * VB_H}
+            stroke="white"
+            strokeOpacity={0.08}
+            strokeWidth={0.3}
+          />
+        ))}
+        {days.map((day, i) => {
+          const x = i * slot + pad;
+          const isActive = hover.activeIndex === i;
+          return (
+            <g key={day.date}>
+              {/* Faint full-day track so empty days still read as columns. */}
+              <rect
+                x={x}
+                y={0}
+                width={colWidth}
+                height={VB_H}
+                fill="white"
+                opacity={0.04}
+                rx={0.5}
+              />
+              {day.segments.map((seg, si) => (
+                <rect
+                  key={si}
+                  x={x}
+                  y={(seg.startMin / 1440) * VB_H}
+                  width={colWidth}
+                  height={Math.max(((seg.endMin - seg.startMin) / 1440) * VB_H, 0.4)}
+                  fill={seg.type === "night" ? nightColor : napColor}
+                  opacity={seg.open ? 0.45 : 0.9}
+                  rx={0.5}
+                  stroke={isActive ? "white" : undefined}
+                  strokeWidth={isActive ? 0.4 : 0}
+                  vectorEffect={isActive ? "non-scaling-stroke" : undefined}
+                />
+              ))}
+            </g>
+          );
+        })}
+        <HitOverlays
+          n={n}
+          hover={hover}
+          days={days}
+          ariaValue={(i) => {
+            const min = days[i].segments.reduce((s, x) => s + (x.endMin - x.startMin), 0);
+            return `${days[i].segments.length} sleep ${days[i].segments.length === 1 ? "block" : "blocks"}, ${formatDurationHM(min)}`;
+          }}
+          onSelect={jumpTo}
+        />
+      </svg>
+      {ai != null && (
+        <ChartTooltip xPct={tooltipXPercent(ai, n)}>
+          <TooltipBody date={days[ai].date}>
+            {days[ai].segments.length === 0 && <div>No sleep logged</div>}
+            {days[ai].segments.map((seg, si) => (
+              <div key={si} className="flex items-center justify-between gap-3 text-white/80">
+                <span className="flex items-center gap-1 capitalize">
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-2 w-2 rounded-sm"
+                    style={{ backgroundColor: seg.type === "night" ? nightColor : napColor }}
+                  />
+                  {formatClockMin(seg.startMin)}–{seg.open ? "now" : formatClockMin(seg.endMin)}
+                </span>
+                <span>{formatDurationHM(seg.endMin - seg.startMin)}</span>
+              </div>
+            ))}
+            {days[ai].segments.length > 0 && (
+              <div className="mt-0.5 border-t border-white/10 pt-0.5 font-medium text-white">
+                {formatDurationHM(
+                  days[ai].segments.reduce((s, x) => s + (x.endMin - x.startMin), 0),
+                )}{" "}
+                in day
+              </div>
+            )}
+          </TooltipBody>
+          {canSelectDay?.(days[ai].date) && <TooltipJumpLink onClick={() => jumpTo(ai)} />}
+        </ChartTooltip>
+      )}
+    </div>
+  );
+}
+
+// SleepTotalChart renders bar-per-day total sleep with the age-based
+// recommended band behind the bars. Totals attribute an interval to the
+// day it STARTED (see sleepDays.ts), so this chart agrees with the Today
+// banner and the History roll-ups.
+function SleepTotalChart({
+  totals,
+  range,
+  fill,
+  onSelectDay,
+  canSelectDay,
+}: {
+  totals: { date: string; minutes: number }[];
+  range: { minH: number; maxH: number } | null;
+  fill: string;
+  onSelectDay?: (date: string) => void;
+  canSelectDay?: (date: string) => boolean;
+}) {
+  const hover = useChartHover();
+  const n = totals.length;
+  const ai = hover.activeIndex;
+  const jumpTo = (i: number) => {
+    if (canSelectDay?.(totals[i].date)) {
+      onSelectDay?.(totals[i].date);
+      hover.clear();
+    }
+  };
+  // Scale: the band's top must always be on-chart, so the max is the
+  // larger of the data max and the recommended max (with headroom).
+  const dataMax = Math.max(0, ...totals.map((t) => t.minutes));
+  const scaleMax = Math.max(dataMax, range ? range.maxH * 60 * 1.05 : 0, 1);
+  const slot = VB_W / Math.max(1, n);
+  const barWidth = slot * 0.7;
+  const pad = (slot - barWidth) / 2;
+  return (
+    <div
+      ref={hover.containerRef}
+      className="relative h-20 w-full"
+      style={{ touchAction: "manipulation" }}
+    >
+      <svg
+        viewBox={`0 0 ${VB_W} ${VB_H}`}
+        preserveAspectRatio="none"
+        className="absolute inset-0 h-full w-full overflow-visible"
+        role="img"
+        aria-label="Daily sleep totals against the typical range for age"
+      >
+        {range && (
+          <rect
+            x={0}
+            y={VB_H - (range.maxH * 60 / scaleMax) * VB_H}
+            width={VB_W}
+            height={((range.maxH - range.minH) * 60 / scaleMax) * VB_H}
+            fill={fill}
+            opacity={0.12}
+          />
+        )}
+        {totals.map((t, i) => {
+          const h = (t.minutes / scaleMax) * VB_H;
+          const isActive = hover.activeIndex === i;
+          const belowBand = range != null && t.minutes > 0 && t.minutes < range.minH * 60;
+          return (
+            <rect
+              key={t.date}
+              x={i * slot + pad}
+              y={VB_H - h}
+              width={barWidth}
+              height={Math.max(h, 0.5)}
+              fill={fill}
+              opacity={t.minutes === 0 ? 0.3 : belowBand ? 0.55 : 0.85}
+              rx={0.5}
+              stroke={isActive ? "white" : undefined}
+              strokeWidth={isActive ? 0.5 : 0}
+              vectorEffect={isActive ? "non-scaling-stroke" : undefined}
+            />
+          );
+        })}
+        <HitOverlays
+          n={n}
+          hover={hover}
+          days={totals}
+          ariaValue={(i) => formatDurationHM(totals[i].minutes)}
+          onSelect={jumpTo}
+        />
+      </svg>
+      {ai != null && (
+        <ChartTooltip xPct={tooltipXPercent(ai, n)}>
+          <TooltipBody date={totals[ai].date}>
+            <div>{formatDurationHM(totals[ai].minutes)}</div>
+            {range && (
+              <div className="text-white/60">
+                typical {range.minH}–{range.maxH}h
+              </div>
+            )}
+          </TooltipBody>
+          {canSelectDay?.(totals[ai].date) && <TooltipJumpLink onClick={() => jumpTo(ai)} />}
+        </ChartTooltip>
       )}
     </div>
   );
@@ -1046,7 +1432,8 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-function Axis({ days }: { days: ChartDaily[] }) {
+// Only `.date` is read — widened past ChartDaily for the sleep charts.
+function Axis({ days }: { days: { date: string }[] }) {
   if (days.length === 0) return null;
   // First, middle, and last day. Adding more would crowd at 7d and
   // become illegible at 30d on a phone; deduping handles 1- or 2-day

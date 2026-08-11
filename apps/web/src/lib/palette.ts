@@ -21,6 +21,8 @@ export type SeriesKey =
   | "diaper_wet"
   | "diaper_soiled"
   | "diaper_mixed"
+  | "sleep_night"
+  | "sleep_nap"
   | "weight";
 
 export type PresetName =
@@ -71,6 +73,8 @@ export const SERIES_LABELS: Record<SeriesKey, string> = {
   diaper_wet: "Diapers — wet",
   diaper_soiled: "Diapers — soiled",
   diaper_mixed: "Diapers — mixed",
+  sleep_night: "Sleep — night",
+  sleep_nap: "Sleep — nap",
   weight: "Weight",
 };
 
@@ -90,6 +94,8 @@ export const PRESETS: Record<PresetName, Record<SeriesKey, string>> = {
     diaper_wet: "#fde047", // rgb(253 224 71)  — yellow-300
     diaper_soiled: "#d97706", // rgb(217 119 6)   — amber-600
     diaper_mixed: "#b45309", // rgb(180 83 9)    — amber-700
+    sleep_night: "#6366f1", // indigo-500 — matches the Sleep tile's indigo accent
+    sleep_nap: "#a5b4fc", // indigo-300 — lighter sibling so naps read "less deep"
     weight: "#c4b5fd", // rgb(196 181 253) — violet-300
   },
   // Sunset-y reds / oranges; bottle-breast leans pink-rose so it still
@@ -102,6 +108,8 @@ export const PRESETS: Record<PresetName, Record<SeriesKey, string>> = {
     diaper_wet: "#fde68a",
     diaper_soiled: "#b45309",
     diaper_mixed: "#7c2d12",
+    sleep_night: "#9f1239",
+    sleep_nap: "#fda4af",
     weight: "#fb923c",
   },
   // Soft / desaturated for users who find the default too neon. Keep
@@ -115,6 +123,8 @@ export const PRESETS: Record<PresetName, Record<SeriesKey, string>> = {
     diaper_wet: "#fef08a",
     diaper_soiled: "#fdba74",
     diaper_mixed: "#fcd34d",
+    sleep_night: "#c7d2fe",
+    sleep_nap: "#e0e7ff",
     weight: "#ddd6fe",
   },
   // Pure / saturated, dark-bg safe. For low-vision users; weight is
@@ -127,6 +137,8 @@ export const PRESETS: Record<PresetName, Record<SeriesKey, string>> = {
     diaper_wet: "#ffff00",
     diaper_soiled: "#ff5500",
     diaper_mixed: "#aa00ff",
+    sleep_night: "#5533ff",
+    sleep_nap: "#00ffee",
     weight: "#ffffff",
   },
   // Wong/Okabe-Ito-inspired — distinguishable for protanopia,
@@ -140,6 +152,10 @@ export const PRESETS: Record<PresetName, Record<SeriesKey, string>> = {
     diaper_wet: "#f0e442",
     diaper_soiled: "#d55e00",
     diaper_mixed: "#b06000",
+    // Paul Tol "bright" pair — stays distinguishable alongside the Wong
+    // hues above for the common color-vision deficiencies.
+    sleep_night: "#004488",
+    sleep_nap: "#88ccee",
     weight: "#0072b2",
   },
 };
@@ -158,6 +174,8 @@ const SERIES_KEY_SET: ReadonlySet<string> = new Set<SeriesKey>([
   "diaper_wet",
   "diaper_soiled",
   "diaper_mixed",
+  "sleep_night",
+  "sleep_nap",
   "weight",
 ]);
 
