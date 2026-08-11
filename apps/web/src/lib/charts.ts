@@ -13,13 +13,21 @@ import type { ChartDaily } from "./types";
 // `today` is injected for testability; production callers pass `new
 // Date()`.
 export function dailyWindowEndingToday(today: Date, days: number): { from: string; to: string } {
+  return dailyWindowEndingOn(today, days);
+}
+
+// dailyWindowEndingOn returns YYYY-MM-DD strings for the `days`-day
+// window `[end - (days - 1), end]` inclusive, in local time. Day
+// arithmetic goes through setDate (not MS_PER_DAY offsets) so windows
+// spanning a DST transition still land on wall-clock day boundaries.
+export function dailyWindowEndingOn(end: Date, days: number): { from: string; to: string } {
   if (days < 1) {
     // Defensive — the segmented control only ever sends 7/14/30, but a
     // future caller might. Treat 0/negative as a single-day window.
     days = 1;
   }
-  const to = formatLocalYMD(today);
-  const fromDate = new Date(today);
+  const to = formatLocalYMD(end);
+  const fromDate = new Date(end);
   fromDate.setHours(0, 0, 0, 0);
   fromDate.setDate(fromDate.getDate() - (days - 1));
   return { from: formatLocalYMD(fromDate), to };

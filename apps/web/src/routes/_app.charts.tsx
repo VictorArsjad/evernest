@@ -19,8 +19,9 @@ import { useAuthStore } from "../lib/authStore";
 import { useChartHover, type ChartHover } from "../lib/useChartHover";
 import {
   barLayout,
-  dailyWindowEndingToday,
+  dailyWindowEndingOn,
   formatDayShort,
+  formatLocalYMD,
   stacked2Layout,
   stackedDiaperLayout,
   summarize,
@@ -44,6 +45,7 @@ import {
 import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
 import type { ChartDaily } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
+import { useSwipe } from "../lib/useSwipe";
 import { formatVolume, volumeUnitLabel } from "../lib/units";
 import { type CombinedPreferences, usePreferences } from "../lib/usePreferences";
 
@@ -66,8 +68,6 @@ const BROWSER_TZ =
 // baby blows past the BE's 200-row default cap. `limit: 1000` matches
 // the BE max; `refetchInterval: false` shuts off the 15s/5min polls.
 const HISTORY_HOOK_OPTS = { limit: 1000, refetchInterval: false } as const;
-
-const MS_PER_DAY = 86_400_000;
 
 // Shared inner viewBox for every card. 100 wide gives bars sub-pixel
 // granularity at any reasonable card width; 40 high reads as a
@@ -206,6 +206,11 @@ export const Route = createFileRoute("/_app/charts")({
 function ChartsPage() {
   const user = useAuthStore((s) => s.user);
   const [range, setRange] = useState<WindowDays>(14);
+  // How many whole `range`-day windows back from today the user has
+  // navigated (via swipe or the ‹ › chevrons). 0 = the current window
+  // ending today; the forward clamp below is what guarantees the view
+  // can never move past today.
+  const [offset, setOffset] = useState(0);
   // Per-day expand overrides for the History section. Absence of a key
   // means "fall through to the default", which is `idx === 0` (the
   // newest group is open). Storing overrides instead of an explicit
@@ -248,27 +253,57 @@ function ChartsPage() {
   // Pinning `now` per-render is fine — TanStack only refetches when
   // the queryKey changes, and the YYYY-MM-DD strings only change at
   // local midnight. We don't need to memoize harder than that.
-  const window = useMemo(() => dailyWindowEndingToday(new Date(), range), [range]);
-  const charts = useDailyCharts(babyId, window.from, window.to, BROWSER_TZ);
+  //
+  // `endDate` is the last day of the visible window: today when offset
+  // is 0, otherwise `offset * range` days earlier. setDate arithmetic
+  // (not MS_PER_DAY offsets) keeps windows on wall-clock day boundaries
+  // across DST transitions.
+  const endDate = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - offset * range);
+    return d;
+  }, [range, offset]);
+  const window = useMemo(() => dailyWindowEndingOn(endDate, range), [endDate, range]);
+  const charts = useDailyCharts(babyId, window.from, window.to, BROWSER_TZ, {
+    // Past windows are immutable — polling them every 5 min is waste.
+    refetchInterval: offset > 0 ? false : undefined,
+  });
   const { prefs } = usePreferences(babyId);
 
   // History covers the same range window, but as ISO instants over the
   // raw event feeds (charts read pre-aggregated daily rows). Both
   // sections are driven by the single range control above.
   const historyWindow = useMemo(() => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const fromDate = new Date(start.getTime() - (range - 1) * MS_PER_DAY);
-    const toDate = new Date();
+    const fromDate = new Date(endDate);
+    fromDate.setDate(fromDate.getDate() - (range - 1));
+    const toDate = new Date(endDate);
     toDate.setHours(23, 59, 59, 999);
     return { from: fromDate.toISOString(), to: toDate.toISOString() };
-  }, [range]);
+  }, [endDate, range]);
   const feeds = useBottleFeeds(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const diapers = useDiapers(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const pumpings = usePumpings(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const nursings = useNursings(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const growths = useGrowths(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const notes = useNotes(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
+
+  // Window navigation. `goForward`'s clamp at 0 is the only guard we
+  // need against moving past today. Changing the range snaps back to
+  // the current window — "3 windows back" means something different at
+  // 7d vs 30d, so carrying the offset across would jump confusingly.
+  const goBack = () => setOffset((o) => o + 1);
+  const goForward = () => setOffset((o) => Math.max(0, o - 1));
+  const handleRangeChange = (r: WindowDays) => {
+    setRange(r);
+    setOffset(0);
+  };
+
+  // Swipe anywhere on the page body: finger right → older window,
+  // finger left → newer. Attached to a wrapper div (not PageShell) so
+  // the hook never fights the charts' pointerdown tooltip handlers.
+  const swipeRef = useRef<HTMLDivElement>(null);
+  useSwipe(swipeRef, { onSwipeRight: goBack, onSwipeLeft: goForward });
 
   if (households.isLoading || babies.isLoading) {
     return <PageShell title="Charts & History">Loading…</PageShell>;
@@ -315,11 +350,40 @@ function ChartsPage() {
       title="Charts & History"
       subtitle={user ? `Signed in as ${user.display_name}` : undefined}
     >
+      <div ref={swipeRef} className="flex flex-1 flex-col gap-5">
       <div className="flex items-center justify-between">
-        <div className="text-xs text-white/60">
-          {formatDayShort(window.from)} – {formatDayShort(window.to)} · {BROWSER_TZ}
+        <div className="flex items-center gap-1 text-xs text-white/60">
+          <button
+            type="button"
+            aria-label="Previous period"
+            onClick={goBack}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-base text-white/70 hover:bg-white/5"
+          >
+            ‹
+          </button>
+          <span>
+            {formatDayShort(window.from)} – {formatDayShort(window.to)} · {BROWSER_TZ}
+          </span>
+          <button
+            type="button"
+            aria-label="Next period"
+            onClick={goForward}
+            disabled={offset === 0}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-base text-white/70 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent"
+          >
+            ›
+          </button>
+          {offset > 0 && (
+            <button
+              type="button"
+              onClick={() => setOffset(0)}
+              className="rounded-lg px-2 py-1 text-white/70 hover:bg-white/5"
+            >
+              Today
+            </button>
+          )}
         </div>
-        <SegmentedControl value={range} onChange={setRange} />
+        <SegmentedControl value={range} onChange={handleRangeChange} />
       </div>
 
       {/* Charts — daily totals overview, on top. */}
@@ -331,9 +395,12 @@ function ChartsPage() {
         </p>
       ) : (
         <ChartGrid
+          // Remount on window change: chart hover state is index-based
+          // and would otherwise point at the wrong days after a swipe.
+          key={`${range}-${offset}`}
           days={days}
           prefs={prefs}
-          todayYMD={window.to}
+          todayYMD={formatLocalYMD(new Date())}
           onSelectDay={handleSelectDay}
           entryDayKeys={entryDayKeys}
         />
@@ -368,6 +435,7 @@ function ChartsPage() {
           </div>
         )}
       </section>
+      </div>
     </PageShell>
   );
 }
