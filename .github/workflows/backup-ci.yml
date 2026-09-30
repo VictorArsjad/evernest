@@ -1,0 +1,68 @@
+name: backup-ci
+
+# Self-contained health check for the Postgres backup tooling (the `backup`
+# sidecar in infra/docker-compose.homeserver.yml). It never touches the home
+# server or any cloud remote — it builds the backup image and exercises a full
+# dump -> rotate -> restore round-trip against a throwaway postgres in the
+# runner, so a regression in the backup/restore scripts fails loudly here
+# instead of being discovered the night you actually need a restore.
+#
+# Real nightly backups run on the host via cron; whether last night's run
+# succeeded is monitored separately by the HEALTHCHECK_URL dead-man's-switch.
+#
+# Triggers:
+#   - PRs / master pushes that touch the backup tooling (paths filter)
+#   - a weekly schedule, to catch drift when the alpine base image bumps the
+#     bundled pg_dump / rclone versions
+#   - manual dispatch
+on:
+  push:
+    branches: [master]
+    paths:
+      - "infra/docker/backup*"
+      - "infra/docker-compose.homeserver.yml"
+      - ".github/workflows/backup-ci.yml"
+  pull_request:
+    paths:
+      - "infra/docker/backup*"
+      - "infra/docker-compose.homeserver.yml"
+      - ".github/workflows/backup-ci.yml"
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: shellcheck + compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck backup scripts
+        # shellcheck is preinstalled on GitHub-hosted ubuntu runners.
+        run: |
+          shellcheck infra/docker/backup.sh \
+                     infra/docker/backup-entrypoint.sh \
+                     infra/docker/backup-verify.sh \
+                     infra/docker/backup-smoke-test.sh
+      - name: validate homeserver compose graph
+        # Dummy values satisfy the `${VAR:?...}` guards; we only parse the graph.
+        run: |
+          TS_AUTHKEY=dummy JWT_SECRET=test-only-secret POSTGRES_PASSWORD=test-pw \
+          CORS_ALLOW_ORIGIN=https://example.ts.net PUBLIC_WEB_ORIGIN=https://example.ts.net \
+          docker compose -f infra/docker-compose.homeserver.yml config >/dev/null
+          echo "homeserver compose graph is valid"
+
+  smoke:
+    name: dump → rotate → restore round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: backup smoke test
+        run: ./infra/docker/backup-smoke-test.sh

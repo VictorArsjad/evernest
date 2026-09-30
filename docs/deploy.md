@@ -158,6 +158,9 @@ These only work after a real push to `master`:
 - The Portainer API responds at `PORTAINER_URL` from the tailnet.
 - Portainer can pull the GHCR image and git-pull the repo (if private,
   `PORTAINER_GIT_TOKEN` is set).
+- A real nightly backup reached Google Drive (guarded by `HEALTHCHECK_URL` on
+  the host, not by Actions). The backup *tooling* itself is covered by
+  `.github/workflows/backup-ci.yml` (dump → rotate → restore smoke).
 
 If any of those break, the `deploy-api.yml` job will fail with a clear log
 (it dumps Portainer's HTTP response body on any 4xx/5xx, see
@@ -165,7 +168,28 @@ If any of those break, the `deploy-api.yml` job will fail with a clear log
 The failure is contained: Portainer only flips the running stack once the
 redeploy succeeds end-to-end.
 
+## Postgres backups (home-server)
+
+The homeserver compose stack includes a `backup` sidecar (`infra/docker/backup.*`)
+that dumps Postgres nightly and optionally mirrors encrypted copies to Google
+Drive via `rclone crypt`. See `README.md` § Backups & restore for setup and
+day-to-day commands (`make db-backup`, `make db-backup-test`, `make db-restore`).
+
+**Disk-failure restore (short form):**
+
+1. On a healthy machine with `rclone.conf` + crypt passphrase:
+   `rclone copy gdrive-crypt: ~/evernest-restore`
+2. Stand up a fresh homeserver stack (empty `db-data`).
+3. `docker cp` the dump into `evernest-backup-1:/backups/`, stop the API,
+   `pg_restore --clean --if-exists` into `db`, start the API.
+4. `curl https://<TS_HOSTNAME>.<tail>.ts.net/healthz` and log in.
+
+Portainer: set `RCLONE_CONF_HOST` to an **absolute** host path for
+`rclone.conf` (relative binds resolve from the repo root and can create an
+empty directory). Escrow the crypt passphrase offline of the homelab disk.
+
 ## Reference
 
 - Plan note: `~/obsidian/Everything/Engineering/Evernest/CP7 Deploy Pipeline.md`.
+- Backup / DR runbook: `~/obsidian/Everything/Engineering/Evernest/Backups and Restore.md`.
 - Tailscale + Docker sidecar pattern: <https://tailscale.com/kb/1282/docker>.

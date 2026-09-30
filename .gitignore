@@ -65,3 +65,8 @@ Thumbs.db
 
 # Local docker volumes
 infra/.local-data/
+
+# Backup secrets — rclone.conf holds the Google Drive OAuth token + crypt
+# passphrase. Only the .example template belongs in the repo.
+infra/secrets/*
+!infra/secrets/*.example

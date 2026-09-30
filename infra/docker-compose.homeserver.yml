@@ -95,9 +95,43 @@ services:
       # refresh cookie is first-party (SameSite=lax, Secure via https origin).
       COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
 
+  # Nightly logical backup: pg_dump -> rotated local copies -> encrypted
+  # offsite mirror via rclone crypt (Google Drive). See infra/docker/backup.sh.
+  # One-time setup: create infra/secrets/rclone.conf with a `gdrive-crypt`
+  # remote (see infra/.env.homeserver.example). Without that file the container
+  # still dumps locally; offsite is skipped when RCLONE_REMOTE is unset.
+  # If the mount source is missing, Docker creates an empty *directory* there —
+  # touch an empty file (or copy the .example) before first `up` if offsite
+  # is not configured yet.
+  backup:
+    build:
+      context: ..
+      dockerfile: infra/docker/backup.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-evernest}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-evernest}
+      PGHOST: db
+      BACKUP_CRON: ${BACKUP_CRON:-30 3 * * *}
+      RCLONE_REMOTE: ${RCLONE_REMOTE:-}
+      HEALTHCHECK_URL: ${HEALTHCHECK_URL:-}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - backup-data:/backups
+      # Host path to the rclone config (Google Drive token + crypt passphrase).
+      # CLI/make users: the default resolves to infra/secrets/rclone.conf
+      # (compose-file-relative). Portainer Git stacks set the project dir to
+      # the repo root, so set RCLONE_CONF_HOST to an ABSOLUTE host path there.
+      - ${RCLONE_CONF_HOST:-./secrets/rclone.conf}:/root/.config/rclone/rclone.conf:ro
+
 volumes:
   db-data:
   ts-state:
+  backup-data:
 
 configs:
   tailscale_serve:
