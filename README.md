@@ -85,8 +85,9 @@ apps/
 infra/
   docker-compose.yml            dev (db only by default; `--profile dev` adds api)
   docker-compose.prod.yml       prod overlay used by deploy-api.yml
-  docker-compose.homeserver.yml self-contained home-server stack (api + db + tailscale sidecar)
-  docker/                       api.Dockerfile, api-entrypoint.sh, tailscale-serve.json
+  docker-compose.homeserver.yml self-contained home-server stack (api + db + tailscale + backup)
+  docker/                       api.Dockerfile, api-entrypoint.sh, tailscale-serve.json, backup.*
+  secrets/                      rclone.conf for offsite backups (git-ignored; .example committed)
 docs/
   api.openapi.yaml, schema.md, deploy.md
 Makefile    common dev/CI entrypoints
@@ -110,6 +111,10 @@ Run `make help` for the full target list.
 | Test everything            | `make test`                        |
 | Import BabyPlus export     | `make import-babyplus FILE=... HOUSEHOLD=...` |
 | Regenerate PWA icons       | `cd apps/web && npm run icons`     |
+| Back up the db now         | `make db-backup`                   |
+| Verify latest backup       | `make db-backup-test`              |
+| Restore a dump             | `make db-restore FILE=...`         |
+| Backup smoke test (CI)     | `make backup-smoke`                |
 
 ## Generating PWA icons
 
@@ -166,3 +171,67 @@ Re-running the import is safe: every row's id is a deterministic UUIDv5 of
 (already present)` for every section. Every imported row is tagged with
 `source='import_babyplus'` so you can audit or revert the import with a
 single `DELETE WHERE baby_id=$1 AND source='import_babyplus'`.
+
+## Backups & restore
+
+The home-server stack ships a `backup` sidecar that follows a **3-2-1** strategy
+for the Postgres data: a rotated local copy on the host **and** an encrypted copy
+offsite. It runs `pg_dump` nightly (consistent on the live db — no downtime),
+keeps a grandfather-father-son rotation (7 daily / 4 weekly / 6 monthly), and
+mirrors the encrypted dumps to cloud storage via [`rclone`](https://rclone.org).
+Implementation lives in [`infra/docker/backup.sh`](infra/docker/backup.sh).
+
+Full copy-paste DR steps (disk failure, same-host rollback, verify drills) live in
+Obsidian: `Engineering/Evernest/Backups and Restore.md`.
+
+### One-time setup (offsite copy)
+
+Offsite is optional — with `RCLONE_REMOTE` empty the sidecar still keeps rotated
+local dumps in the `backup-data` volume. To enable the encrypted cloud copy:
+
+1. Install rclone on any machine with a browser and run `rclone config`:
+   - a **`gdrive`** remote of type *Google Drive* (15 GB free, no credit card);
+   - a **`gdrive-crypt`** remote of type *crypt* pointing at `gdrive:evernest`
+     with `filename_encryption = standard` and a strong passphrase. **Keep that
+     passphrase** — it is the only way to decrypt your backups.
+2. Copy the generated `rclone.conf` to `infra/secrets/rclone.conf` on the host
+   (git-ignored; see [`infra/secrets/rclone.conf.example`](infra/secrets/rclone.conf.example)).
+   Under Portainer set `RCLONE_CONF_HOST` to its absolute path instead.
+   If the mount source is missing, Docker creates an empty *directory* there —
+   `touch infra/secrets/rclone.conf` (or copy the example) before first `up`
+   when offsite is not configured yet.
+3. Set `RCLONE_REMOTE=gdrive-crypt:` in `.env` / Portainer env and redeploy
+   (crypt remote already points at Drive folder `evernest`).
+
+Because the offsite copy goes through `rclone crypt`, Google only ever sees
+encrypted blobs with encrypted filenames. Prefer a different card-free provider?
+MEGA (20 GB), pCloud, and Koofr are all rclone-native — just point the remote
+elsewhere and change `RCLONE_REMOTE`; nothing else changes.
+
+### Operating it
+
+```bash
+make db-backup        # run a dump right now (dump + rotate + offsite)
+make db-backup-test   # restore the latest dump into a throwaway db and sanity-check
+make db-restore FILE=/backups/evernest-<stamp>.dump   # restore over the live db
+```
+
+`make db-backup-test` is the important one — run it periodically. A backup you
+have never restored is not a backup: it pulls the newest dump, restores it into
+an ephemeral `postgres:16` container, prints row counts for core tables, and
+tears it down without ever touching production data.
+
+An optional `HEALTHCHECK_URL` (e.g. a free [healthchecks.io](https://healthchecks.io)
+check) is pinged only on a fully successful run, so a silently failing backup
+raises an alert instead of going unnoticed.
+
+### CI coverage
+
+The [`backup-ci`](.github/workflows/backup-ci.yml) workflow guards the backup
+tooling itself: on PRs touching `infra/docker/backup*` (and weekly), it
+shellchecks the scripts, validates the compose graph, and runs a full
+dump → rotate → restore round-trip against a throwaway Postgres, asserting the
+restored row counts. It never touches the home server or any cloud remote —
+that split keeps "does the code still work" (CI) separate from "did last
+night's real backup run" (the `HEALTHCHECK_URL` dead-man's-switch). Run the
+same check locally with `make backup-smoke`.

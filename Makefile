@@ -16,6 +16,7 @@ endif
 DATABASE_URL_LOCAL ?= postgres://evernest:evernest_dev@localhost:5432/evernest?sslmode=disable
 COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env
 COMPOSE_PROD := docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml --env-file .env --profile prod
+COMPOSE_HOME := docker compose -f infra/docker-compose.homeserver.yml --env-file .env
 GHCR_OWNER ?= victorarsjad
 API_IMAGE ?= ghcr.io/$(GHCR_OWNER)/evernest-api
 API_IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
@@ -100,6 +101,24 @@ import-babyplus: ## Import BabyPlus JSON export. Usage: make import-babyplus FIL
 		$(if $(BABY),--baby="$(BABY)") \
 		$(if $(DRY_RUN),--dry-run) \
 		$(if $(VERBOSE),--verbose)
+
+# ---------- backups (home-server stack) ----------
+.PHONY: db-backup db-restore db-backup-test backup-smoke
+
+db-backup: ## Run a Postgres backup now on the home-server stack (dump + rotate + offsite)
+	$(COMPOSE_HOME) exec backup /usr/local/bin/backup.sh
+
+backup-smoke: ## Self-contained backup smoke test (ephemeral db; same as CI backup-ci)
+	./infra/docker/backup-smoke-test.sh
+
+db-restore: ## DESTRUCTIVE: restore a dump into the live db. Usage: make db-restore FILE=/backups/evernest-<stamp>.dump
+	@if [ -z "$(FILE)" ]; then echo "usage: make db-restore FILE=/backups/evernest-<stamp>.dump (path inside the backup container)"; exit 1; fi
+	@read -p "Restore $(FILE) over the LIVE database? [y/N] " ans; [ "$$ans" = "y" ] || exit 1
+	$(COMPOSE_HOME) exec -T backup sh -c \
+		'PGPASSWORD="$$POSTGRES_PASSWORD" pg_restore -h db -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" --clean --if-exists --no-owner "$(FILE)"'
+
+db-backup-test: ## Verify the latest dump restores into a throwaway db (does not touch prod)
+	./infra/docker/backup-verify.sh
 
 # ---------- frontend (apps/web) ----------
 .PHONY: web-install web-dev web-build web-test web-lint
