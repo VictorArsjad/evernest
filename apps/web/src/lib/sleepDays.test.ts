@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { classifySleep, clipSleepToDays, dailySleepTotals } from "./sleepDays";
+import {
+  classifySleep,
+  clipSleepToDays,
+  currentSleepDayBounds,
+  dailySleepTotals,
+  sleepDayBounds,
+  sleepDayKey,
+} from "./sleepDays";
 import type { Sleep } from "./types";
 
 const NOW = new Date(2026, 7, 11, 12, 0); // local Aug 11 2026, noon
@@ -46,6 +53,33 @@ describe("classifySleep", () => {
   });
 });
 
+describe("sleepDayKey / sleepDayBounds", () => {
+  it("matches calendar YMD when hour is 0", () => {
+    const d = new Date(2026, 7, 10, 22);
+    expect(sleepDayKey(d, 0)).toBe("2026-08-10");
+    const { start, end } = sleepDayBounds("2026-08-10", 0);
+    expect(start).toEqual(new Date(2026, 7, 10, 0));
+    expect(end).toEqual(new Date(2026, 7, 11, 0));
+  });
+
+  it("assigns pre-cutover morning hours to the previous sleep-day", () => {
+    // 5am Aug 11 with cutover 6 → still Aug 10's sleep-day.
+    expect(sleepDayKey(new Date(2026, 7, 11, 5), 6)).toBe("2026-08-10");
+    expect(sleepDayKey(new Date(2026, 7, 11, 6), 6)).toBe("2026-08-11");
+    const { start, end } = sleepDayBounds("2026-08-10", 6);
+    expect(start).toEqual(new Date(2026, 7, 10, 6));
+    expect(end).toEqual(new Date(2026, 7, 11, 6));
+  });
+
+  it("currentSleepDayBounds follows the in-progress sleep-day", () => {
+    const beforeCutover = currentSleepDayBounds(new Date(2026, 7, 11, 5), 6);
+    expect(beforeCutover.ymd).toBe("2026-08-10");
+    expect(beforeCutover.start).toEqual(new Date(2026, 7, 10, 6));
+    const afterCutover = currentSleepDayBounds(new Date(2026, 7, 11, 7), 6);
+    expect(afterCutover.ymd).toBe("2026-08-11");
+  });
+});
+
 describe("clipSleepToDays", () => {
   it("renders every window day even when empty", () => {
     const days = clipSleepToDays([], "2026-08-09", "2026-08-11", NOW);
@@ -66,6 +100,25 @@ describe("clipSleepToDays", () => {
     ]);
     expect(days[1].segments).toEqual([
       expect.objectContaining({ startMin: 0, endMin: 6 * 60 + 30, type: "night", open: false }),
+    ]);
+  });
+
+  it("keeps a typical overnight sleep in one column with a 6am cutover", () => {
+    // 22:00 Aug 10 → 06:30 Aug 11 with cutover 6: belongs to sleep-day
+    // Aug 10 (22:00 is after 6am) and ends 30 min into Aug 11's column.
+    const overnight = sleep({
+      id: "n1",
+      sleep_type: "night",
+      started_at: local(2026, 8, 10, 22),
+      ended_at: local(2026, 8, 11, 6, 30),
+    });
+    const days = clipSleepToDays([overnight], "2026-08-10", "2026-08-11", NOW, 6);
+    // Minutes from 6am: 22:00 = 16h = 960; 06:00 next = 1440; 06:30 = 30.
+    expect(days[0].segments).toEqual([
+      expect.objectContaining({ startMin: 16 * 60, endMin: 1440, type: "night", open: false }),
+    ]);
+    expect(days[1].segments).toEqual([
+      expect.objectContaining({ startMin: 0, endMin: 30, type: "night", open: false }),
     ]);
   });
 
@@ -105,6 +158,19 @@ describe("dailySleepTotals", () => {
     const totals = dailySleepTotals([overnight], "2026-08-10", "2026-08-11");
     expect(totals).toEqual([
       { date: "2026-08-10", minutes: 8.5 * 60 },
+      { date: "2026-08-11", minutes: 0 },
+    ]);
+  });
+
+  it("with a 6am cutover, attributes a post-midnight start to the previous sleep-day", () => {
+    // Started 2am Aug 11 → sleep-day Aug 10 when cutover is 6.
+    const late = sleep({
+      started_at: local(2026, 8, 11, 2),
+      ended_at: local(2026, 8, 11, 5),
+    });
+    const totals = dailySleepTotals([late], "2026-08-10", "2026-08-11", 6);
+    expect(totals).toEqual([
+      { date: "2026-08-10", minutes: 3 * 60 },
       { date: "2026-08-11", minutes: 0 },
     ]);
   });

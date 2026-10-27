@@ -33,6 +33,7 @@ import {
   useSleeps,
 } from "../lib/queries";
 import { getDailyTargets, type DailyTargets } from "../lib/recommendations";
+import { currentSleepDayBounds } from "../lib/sleepDays";
 import { getWakeWindow, type WakeWindow } from "../lib/sleepGuidance";
 import { mergeRecent } from "../lib/recentEvents";
 import { submitOnEnter } from "../lib/submitOnEnter";
@@ -117,6 +118,19 @@ function TodayPage() {
     return d.toISOString();
   }, []);
 
+  // Display preferences for the active baby + user. Falls back to
+  // canonical units while the queries hydrate so the tile grid renders
+  // immediately rather than blocking on a settings round-trip. Loaded
+  // before the sleep window so day_start_hour can shape the Today sleep
+  // fetch without waiting on a second render.
+  const { prefs } = usePreferences(baby?.id ?? null);
+  // Sleep "today" follows the baby's sleep-day cutover (e.g. 6am→6am),
+  // independent of the calendar-midnight window used for other metrics.
+  const sleepWindow = useMemo(() => {
+    const { start, end } = currentSleepDayBounds(new Date(), prefs.day_start_hour);
+    return { from: start.toISOString(), to: end.toISOString() };
+  }, [prefs.day_start_hour]);
+
   const feeds = useBottleFeeds(baby?.id ?? null, todayStart, todayEnd);
   const diapers = useDiapers(baby?.id ?? null, todayStart, todayEnd);
   const pumpings = usePumpings(baby?.id ?? null, todayStart, todayEnd);
@@ -130,17 +144,13 @@ function TodayPage() {
   // A small limit (not 1): the newest row could be an open session, which we
   // exclude below; a handful is enough to reach the latest completed one.
   const latestNursings = useNursings(baby?.id ?? null, sinceStart, todayEnd, { limit: 10 });
-  // Display preferences for the active baby + user. Falls back to
-  // canonical units while the queries hydrate so the tile grid renders
-  // immediately rather than blocking on a settings round-trip.
-  const { prefs } = usePreferences(baby?.id ?? null);
   // Cheap "is one running?" check — the BE returns 204 when nothing is
   // open, which the hook normalizes to `null`. We render the in-progress
   // chip in place of the standard Nursing tile when this resolves to a row.
   const openNursing = useOpenNursing(baby?.id ?? null);
   const growthsToday = useGrowths(baby?.id ?? null, todayStart, todayEnd);
   const notesToday = useNotes(baby?.id ?? null, todayStart, todayEnd);
-  const sleepsToday = useSleeps(baby?.id ?? null, todayStart, todayEnd);
+  const sleepsToday = useSleeps(baby?.id ?? null, sleepWindow.from, sleepWindow.to);
   // Same "is one running?" check as nursing — swaps the Sleep tile for
   // the in-progress variant while a session is open.
   const openSleep = useOpenSleep(baby?.id ?? null);
@@ -184,9 +194,9 @@ function TodayPage() {
   // the early return above means we can't add another hook here without
   // tripping rules-of-hooks; the find() over a small list is cheap.
   // Sleep total: closed intervals only (an open session contributes
-  // nothing until it ends), attributed wholly to the local day the sleep
-  // STARTED — same rule the nursing total follows via the todayStart
-  // list filter, and the same grouping History uses.
+  // nothing until it ends), attributed wholly to the sleep-day the sleep
+  // STARTED — same cutover as Charts sleep totals and History sleep
+  // roll-up (prefs.day_start_hour).
   const sleepMin =
     sleepsToday.data?.reduce((sum, s) => {
       if (s.ended_at == null) return sum;

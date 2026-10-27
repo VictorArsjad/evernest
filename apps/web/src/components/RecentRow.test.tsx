@@ -23,14 +23,9 @@ vi.mock("../lib/queries", () => ({
 import { RecentRow } from "./RecentRow";
 import type { RecentEvent } from "../lib/recentEvents";
 import type { Sleep } from "../lib/types";
-import type { CombinedPreferences } from "../lib/usePreferences";
+import { DEFAULT_PREFERENCES } from "../lib/usePreferences";
 
-const prefs = {
-  time_format: "24h",
-  unit_volume: "ml",
-  unit_length: "cm",
-  unit_weight: "kg",
-} as CombinedPreferences;
+const prefs = DEFAULT_PREFERENCES;
 
 function sleepEvent(overrides: Partial<Sleep>): RecentEvent {
   const data: Sleep = {
