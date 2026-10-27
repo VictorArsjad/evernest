@@ -5,7 +5,7 @@
 # ride a first-party cookie iOS won't evict. Build relative: VITE_API_BASE_URL
 # empty -> requests hit /v1 on the serving origin; VITE_BASE_PATH=/ -> assets
 # resolve at the root.
-FROM node:22-alpine AS web
+FROM node:22.23.4-alpine AS web
 WORKDIR /web
 COPY apps/web/package.json apps/web/package-lock.json ./
 RUN npm ci
