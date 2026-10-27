@@ -18,6 +18,10 @@ export interface CombinedPreferences {
   unit_volume: "ml" | "oz";
   unit_length: "cm" | "in";
   unit_weight: "kg" | "lb";
+  // Sleep-day cutover hour (0–23). Lives on baby_settings. Default 0
+  // (local midnight). Drives rhythm clip, sleep totals, Today sleep
+  // banner, and History sleep roll-up.
+  day_start_hour: number;
   // Display flag for the Today banner's per-metric progress bars; lives
   // on user_preferences server-side. Default true.
   show_recommended_targets: boolean;
@@ -41,6 +45,7 @@ export const DEFAULT_PREFERENCES: CombinedPreferences = {
   unit_volume: "ml",
   unit_length: "cm",
   unit_weight: "kg",
+  day_start_hour: 0,
   show_recommended_targets: true,
   chart_palette: DEFAULT_PALETTE,
   feature_visibility: {},
@@ -62,6 +67,7 @@ export function usePreferences(babyId: string | null): {
     unit_volume: baby.data?.unit_volume ?? DEFAULT_PREFERENCES.unit_volume,
     unit_length: baby.data?.unit_length ?? DEFAULT_PREFERENCES.unit_length,
     unit_weight: baby.data?.unit_weight ?? DEFAULT_PREFERENCES.unit_weight,
+    day_start_hour: baby.data?.day_start_hour ?? DEFAULT_PREFERENCES.day_start_hour,
     show_recommended_targets:
       me.data?.show_recommended_targets ?? DEFAULT_PREFERENCES.show_recommended_targets,
     chart_palette: me.data?.chart_palette ?? DEFAULT_PREFERENCES.chart_palette,

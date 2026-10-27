@@ -1,13 +1,14 @@
 // Settings handlers cover the per-baby `baby_settings` row that holds the
-// three unit preferences (volume, length, weight). They live alongside the
-// baby package because the row's lifecycle is bound to the baby's: it's
-// seeded inside the same transaction as the baby insert, and cascades on
-// delete via the FK.
+// three unit preferences (volume, length, weight) plus the sleep-day
+// cutover hour. They live alongside the baby package because the row's
+// lifecycle is bound to the baby's: it's seeded inside the same
+// transaction as the baby insert, and cascades on delete via the FK.
 //
-// PUT is full-replace; the FE settings screen always submits all three
-// fields together. Time-format and other inherently per-user prefs live on
+// PUT is full-replace; the FE settings screen always submits every field
+// together. Time-format and other inherently per-user prefs live on
 // `user_preferences` (see internal/preferences/) — the split is intentional
-// so two babies in the same household can be tracked in different units.
+// so two babies in the same household can be tracked in different units
+// (and different sleep-day cutovers).
 package baby
 
 import (
@@ -25,10 +26,11 @@ import (
 )
 
 type Settings struct {
-	BabyID     uuid.UUID `json:"baby_id"`
-	UnitVolume string    `json:"unit_volume"`
-	UnitLength string    `json:"unit_length"`
-	UnitWeight string    `json:"unit_weight"`
+	BabyID       uuid.UUID `json:"baby_id"`
+	UnitVolume   string    `json:"unit_volume"`
+	UnitLength   string    `json:"unit_length"`
+	UnitWeight   string    `json:"unit_weight"`
+	DayStartHour int       `json:"day_start_hour"`
 }
 
 func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
@@ -53,9 +55,10 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 type settingsReq struct {
-	UnitVolume string `json:"unit_volume" validate:"required,oneof=ml oz"`
-	UnitLength string `json:"unit_length" validate:"required,oneof=cm in"`
-	UnitWeight string `json:"unit_weight" validate:"required,oneof=kg lb"`
+	UnitVolume   string `json:"unit_volume" validate:"required,oneof=ml oz"`
+	UnitLength   string `json:"unit_length" validate:"required,oneof=cm in"`
+	UnitWeight   string `json:"unit_weight" validate:"required,oneof=kg lb"`
+	DayStartHour int    `json:"day_start_hour" validate:"min=0,max=23"`
 }
 
 func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
@@ -82,15 +85,16 @@ func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
 
 	var s Settings
 	err = h.store.Pool.QueryRow(r.Context(), `
-		INSERT INTO baby_settings (baby_id, unit_volume, unit_length, unit_weight)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO baby_settings (baby_id, unit_volume, unit_length, unit_weight, day_start_hour)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (baby_id) DO UPDATE
 		   SET unit_volume = EXCLUDED.unit_volume,
 		       unit_length = EXCLUDED.unit_length,
-		       unit_weight = EXCLUDED.unit_weight
-		RETURNING baby_id, unit_volume, unit_length, unit_weight
-	`, babyID, req.UnitVolume, req.UnitLength, req.UnitWeight).Scan(
-		&s.BabyID, &s.UnitVolume, &s.UnitLength, &s.UnitWeight,
+		       unit_weight = EXCLUDED.unit_weight,
+		       day_start_hour = EXCLUDED.day_start_hour
+		RETURNING baby_id, unit_volume, unit_length, unit_weight, day_start_hour
+	`, babyID, req.UnitVolume, req.UnitLength, req.UnitWeight, req.DayStartHour).Scan(
+		&s.BabyID, &s.UnitVolume, &s.UnitLength, &s.UnitWeight, &s.DayStartHour,
 	)
 	if err != nil {
 		h.logger.Error("upsert baby_settings", "err", err)
@@ -107,9 +111,9 @@ func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
 func loadOrSeedSettings(ctx context.Context, st *store.Store, babyID uuid.UUID) (Settings, error) {
 	var s Settings
 	err := st.Pool.QueryRow(ctx, `
-		SELECT baby_id, unit_volume, unit_length, unit_weight
+		SELECT baby_id, unit_volume, unit_length, unit_weight, day_start_hour
 		FROM baby_settings WHERE baby_id = $1
-	`, babyID).Scan(&s.BabyID, &s.UnitVolume, &s.UnitLength, &s.UnitWeight)
+	`, babyID).Scan(&s.BabyID, &s.UnitVolume, &s.UnitLength, &s.UnitWeight, &s.DayStartHour)
 	if err == nil {
 		return s, nil
 	}
@@ -119,8 +123,8 @@ func loadOrSeedSettings(ctx context.Context, st *store.Store, babyID uuid.UUID) 
 	err = st.Pool.QueryRow(ctx, `
 		INSERT INTO baby_settings (baby_id) VALUES ($1)
 		ON CONFLICT (baby_id) DO UPDATE SET baby_id = EXCLUDED.baby_id
-		RETURNING baby_id, unit_volume, unit_length, unit_weight
-	`, babyID).Scan(&s.BabyID, &s.UnitVolume, &s.UnitLength, &s.UnitWeight)
+		RETURNING baby_id, unit_volume, unit_length, unit_weight, day_start_hour
+	`, babyID).Scan(&s.BabyID, &s.UnitVolume, &s.UnitLength, &s.UnitWeight, &s.DayStartHour)
 	return s, err
 }
 

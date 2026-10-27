@@ -44,7 +44,12 @@ import {
   useSleeps,
 } from "../lib/queries";
 import { mergeRecent, type RecentEvent } from "../lib/recentEvents";
-import { clipSleepToDays, dailySleepTotals, type SleepDay } from "../lib/sleepDays";
+import {
+  clipSleepToDays,
+  dailySleepTotals,
+  sleepDayKey,
+  type SleepDay,
+} from "../lib/sleepDays";
 import { getDailySleepRange } from "../lib/sleepGuidance";
 import type { Baby, ChartDaily, Sleep } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
@@ -433,7 +438,7 @@ function ChartsPage() {
           sleeps={rhythmSleeps.data ?? []}
           fromYMD={window.from}
           toYMD={window.to}
-          todayYMD={formatLocalYMD(new Date())}
+          todayYMD={sleepDayKey(new Date(), prefs.day_start_hour)}
           onSelectDay={(date) => handleSelectDay(date, "sleep")}
           entryDayKeys={entryDayKeys}
         />
@@ -457,6 +462,7 @@ function ChartsPage() {
                   key={g.dayKey}
                   group={g}
                   prefs={prefs}
+                  allEvents={recent}
                   isExpanded={isExpanded}
                   highlightKind={highlight?.dayKey === g.dayKey ? highlight.kind : undefined}
                   onToggle={() =>
@@ -693,15 +699,22 @@ function ChartGrid({
 
 // --- sleep charts ---
 
-// formatClockMin renders minutes-from-midnight as "10:05 pm" style short
-// clock labels for the rhythm tooltip.
-function formatClockMin(min: number): string {
-  const h24 = Math.floor(min / 60) % 24;
+// formatClockMin renders minutes-from-cutover as "10:05 pm" style short
+// clock labels for the rhythm tooltip. `dayStartHour` shifts the origin
+// so a 6am cutover column top reads as 6:00 am, not midnight.
+function formatClockMin(min: number, dayStartHour = 0): string {
+  const h24 = (Math.floor(min / 60) + dayStartHour) % 24;
   const m = min % 60;
   const period = h24 >= 12 ? "pm" : "am";
   let h = h24 % 12;
   if (h === 0) h = 12;
   return `${h}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+function sleepCutoverSecondary(hour: number): string {
+  if (hour === 0) return "midnight → midnight";
+  const label = `${hour}:00`;
+  return `${label} → ${label}`;
 }
 
 // SleepChartsSection renders the two sleep cards below the main chart
@@ -728,16 +741,17 @@ function SleepChartsSection({
   entryDayKeys?: Set<string>;
 }) {
   const now = new Date();
+  const dayStartHour = prefs.day_start_hour;
   // `new Date()` is taken inside the memo (not the outer `now`) so the
   // deps stay stable — an open session's clipped end only needs to be
   // fresh when the inputs change, which any poll refetch triggers.
   const rhythmDays = useMemo(
-    () => clipSleepToDays(sleeps, fromYMD, toYMD, new Date()),
-    [sleeps, fromYMD, toYMD],
+    () => clipSleepToDays(sleeps, fromYMD, toYMD, new Date(), dayStartHour),
+    [sleeps, fromYMD, toYMD, dayStartHour],
   );
   const totals = useMemo(
-    () => dailySleepTotals(sleeps, fromYMD, toYMD),
-    [sleeps, fromYMD, toYMD],
+    () => dailySleepTotals(sleeps, fromYMD, toYMD, dayStartHour),
+    [sleeps, fromYMD, toYMD, dayStartHour],
   );
   const colors = useMemo(
     () => resolve(prefs.chart_palette ?? DEFAULT_PALETTE),
@@ -746,8 +760,8 @@ function SleepChartsSection({
   const range = getDailySleepRange(baby, now);
   const canSelectDay = (date: string) => !!entryDayKeys?.has(date);
 
-  // Window totals/avg. The average excludes today (partial day) exactly
-  // like summarize() does for the other cards.
+  // Window totals/avg. The average excludes today (partial sleep-day)
+  // exactly like summarize() does for the other cards.
   const totalMin = totals.reduce((s, d) => s + d.minutes, 0);
   const pastDays = totals.filter((d) => d.date !== todayYMD);
   const avgDenominator = pastDays.length > 0 ? pastDays.length : totals.length;
@@ -762,10 +776,11 @@ function SleepChartsSection({
         unit="24h/day"
         accent="text-indigo-300"
         primary={`${formatDurationHM(totalMin)} total`}
-        secondary="midnight → midnight"
+        secondary={sleepCutoverSecondary(dayStartHour)}
       >
         <SleepRhythmChart
           days={rhythmDays}
+          dayStartHour={dayStartHour}
           nightColor={colors.sleep_night}
           napColor={colors.sleep_nap}
           onSelectDay={onSelectDay}
@@ -817,16 +832,19 @@ function SleepChartsSection({
 }
 
 // SleepRhythmChart is the actogram: one column per day, y = the 24 local
-// hours top-to-bottom, each sleep interval a rounded block (already
-// clipped at midnight by clipSleepToDays). Open sessions render dimmed.
+// hours top-to-bottom from the sleep-day cutover, each sleep interval a
+// rounded block (already clipped by clipSleepToDays). Open sessions
+// render dimmed.
 function SleepRhythmChart({
   days,
+  dayStartHour,
   nightColor,
   napColor,
   onSelectDay,
   canSelectDay,
 }: {
   days: SleepDay[];
+  dayStartHour: number;
   nightColor: string;
   napColor: string;
   onSelectDay?: (date: string) => void;
@@ -926,7 +944,8 @@ function SleepRhythmChart({
                     className="inline-block h-2 w-2 rounded-sm"
                     style={{ backgroundColor: seg.type === "night" ? nightColor : napColor }}
                   />
-                  {formatClockMin(seg.startMin)}–{seg.open ? "now" : formatClockMin(seg.endMin)}
+                  {formatClockMin(seg.startMin, dayStartHour)}–
+                  {seg.open ? "now" : formatClockMin(seg.endMin, dayStartHour)}
                 </span>
                 <span>{formatDurationHM(seg.endMin - seg.startMin)}</span>
               </div>
@@ -1484,12 +1503,16 @@ function SegmentedControl({
 function DaySection({
   group,
   prefs,
+  allEvents,
   isExpanded,
   onToggle,
   highlightKind,
 }: {
   group: DayGroup;
   prefs: CombinedPreferences;
+  // Flat recent list — sleep minutes are attributed by sleep-day key,
+  // which can differ from the calendar group when day_start_hour ≠ 0.
+  allEvents: RecentEvent[];
   isExpanded: boolean;
   onToggle: () => void;
   // When set, rows of this kind glow (the user jumped here from that
@@ -1501,7 +1524,7 @@ function DaySection({
     : isYesterday(group.date)
       ? "Yesterday"
       : format(group.date, "EEE, MMM d");
-  const summary = formatDaySummary(group.events, prefs);
+  const summary = formatDaySummary(group.events, prefs, group.dayKey, allEvents);
   const contentId = `history-day-${group.dayKey}`;
   return (
     <section
@@ -1563,7 +1586,15 @@ function Chevron({ expanded }: { expanded: boolean }) {
 // Roll up the day's events into a one-line "60 ml · 12 min nursing · …"
 // summary. Zero parts are dropped so a quiet day reads "2 diapers"
 // rather than "0 ml · 0 min nursing · 0 pumped · 2 diapers · 0 growth".
-function formatDaySummary(events: RecentEvent[], prefs: CombinedPreferences): string {
+// Sleep minutes are attributed by sleep-day key (prefs.day_start_hour),
+// matching Today + sleep totals — so they may come from a neighboring
+// calendar group's events when the cutover ≠ midnight.
+function formatDaySummary(
+  events: RecentEvent[],
+  prefs: CombinedPreferences,
+  dayKey: string,
+  allEvents: RecentEvent[],
+): string {
   let bottleMl = 0;
   let nursingMin = 0;
   let pumpedMl = 0;
@@ -1590,23 +1621,21 @@ function formatDaySummary(events: RecentEvent[], prefs: CombinedPreferences): st
       case "growth":
         growthCount += 1;
         break;
-      case "sleep":
-        // Closed intervals only — an open session has no duration yet.
-        if (ev.data.ended_at != null) {
-          sleepMin += Math.max(
-            0,
-            Math.round(
-              (new Date(ev.data.ended_at).getTime() -
-                new Date(ev.data.started_at).getTime()) /
-                60_000,
-            ),
-          );
-        }
-        break;
       case "note":
         noteCount += 1;
         break;
+      // sleep handled below via sleep-day key across allEvents
     }
+  }
+  for (const ev of allEvents) {
+    if (ev.kind !== "sleep" || ev.data.ended_at == null) continue;
+    if (sleepDayKey(new Date(ev.data.started_at), prefs.day_start_hour) !== dayKey) continue;
+    sleepMin += Math.max(
+      0,
+      Math.round(
+        (new Date(ev.data.ended_at).getTime() - new Date(ev.data.started_at).getTime()) / 60_000,
+      ),
+    );
   }
   const parts: string[] = [];
   if (bottleMl > 0) parts.push(formatVolume(bottleMl, prefs.unit_volume));

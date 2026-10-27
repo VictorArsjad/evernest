@@ -632,10 +632,11 @@ func TestUserPreferences_Unauthenticated(t *testing.T) {
 // --- /v1/babies/{id}/settings ---
 
 type settingsResp struct {
-	BabyID     uuid.UUID `json:"baby_id"`
-	UnitVolume string    `json:"unit_volume"`
-	UnitLength string    `json:"unit_length"`
-	UnitWeight string    `json:"unit_weight"`
+	BabyID       uuid.UUID `json:"baby_id"`
+	UnitVolume   string    `json:"unit_volume"`
+	UnitLength   string    `json:"unit_length"`
+	UnitWeight   string    `json:"unit_weight"`
+	DayStartHour int       `json:"day_start_hour"`
 }
 
 func TestBabySettings_GetReturnsSeededDefaults(t *testing.T) {
@@ -649,7 +650,7 @@ func TestBabySettings_GetReturnsSeededDefaults(t *testing.T) {
 	if got.BabyID != te.baby {
 		t.Fatalf("baby id mismatch: %s != %s", got.BabyID, te.baby)
 	}
-	if got.UnitVolume != "ml" || got.UnitLength != "cm" || got.UnitWeight != "kg" {
+	if got.UnitVolume != "ml" || got.UnitLength != "cm" || got.UnitWeight != "kg" || got.DayStartHour != 0 {
 		t.Fatalf("default settings mismatch: %+v", got)
 	}
 }
@@ -657,23 +658,24 @@ func TestBabySettings_GetReturnsSeededDefaults(t *testing.T) {
 func TestBabySettings_PutPersists(t *testing.T) {
 	te := newTestEnv(t)
 	res := te.do(t, "PUT", "/v1/babies/"+te.baby.String()+"/settings", map[string]any{
-		"unit_volume": "oz",
-		"unit_length": "in",
-		"unit_weight": "lb",
+		"unit_volume":    "oz",
+		"unit_length":    "in",
+		"unit_weight":    "lb",
+		"day_start_hour": 6,
 	}, te.token)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("put settings: %d %s", res.StatusCode, readBody(res))
 	}
 	var got settingsResp
 	decodeJSON(t, res, &got)
-	if got.UnitVolume != "oz" || got.UnitLength != "in" || got.UnitWeight != "lb" {
+	if got.UnitVolume != "oz" || got.UnitLength != "in" || got.UnitWeight != "lb" || got.DayStartHour != 6 {
 		t.Fatalf("put response mismatch: %+v", got)
 	}
 
 	res = te.do(t, "GET", "/v1/babies/"+te.baby.String()+"/settings", nil, te.token)
 	var refetched settingsResp
 	decodeJSON(t, res, &refetched)
-	if refetched.UnitVolume != "oz" || refetched.UnitLength != "in" || refetched.UnitWeight != "lb" {
+	if refetched.UnitVolume != "oz" || refetched.UnitLength != "in" || refetched.UnitWeight != "lb" || refetched.DayStartHour != 6 {
 		t.Fatalf("refetched mismatch: %+v", refetched)
 	}
 }
@@ -684,10 +686,12 @@ func TestBabySettings_RejectsBadEnum(t *testing.T) {
 		name string
 		body map[string]any
 	}{
-		{"bad volume", map[string]any{"unit_volume": "L", "unit_length": "cm", "unit_weight": "kg"}},
-		{"bad length", map[string]any{"unit_volume": "ml", "unit_length": "ft", "unit_weight": "kg"}},
-		{"bad weight", map[string]any{"unit_volume": "ml", "unit_length": "cm", "unit_weight": "g"}}, // 'g' is the canonical storage unit, not a valid display pref
+		{"bad volume", map[string]any{"unit_volume": "L", "unit_length": "cm", "unit_weight": "kg", "day_start_hour": 0}},
+		{"bad length", map[string]any{"unit_volume": "ml", "unit_length": "ft", "unit_weight": "kg", "day_start_hour": 0}},
+		{"bad weight", map[string]any{"unit_volume": "ml", "unit_length": "cm", "unit_weight": "g", "day_start_hour": 0}}, // 'g' is the canonical storage unit, not a valid display pref
 		{"missing field", map[string]any{"unit_volume": "ml", "unit_length": "cm"}},
+		{"day start hour too high", map[string]any{"unit_volume": "ml", "unit_length": "cm", "unit_weight": "kg", "day_start_hour": 24}},
+		{"day start hour negative", map[string]any{"unit_volume": "ml", "unit_length": "cm", "unit_weight": "kg", "day_start_hour": -1}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

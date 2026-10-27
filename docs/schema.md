@@ -62,8 +62,12 @@ Display preferences live in two tables on purpose:
   columns (`chart_palette`, `feature_visibility`) that the FE always
   round-trips on every save.
 - `baby_settings` (one row per baby) — `unit_volume`, `unit_length`,
-  `unit_weight`. Units are per-baby because siblings can be tracked in
-  different systems (e.g. metric vs imperial during a transition).
+  `unit_weight`, `day_start_hour`. Units are per-baby because siblings can
+  be tracked in different systems (e.g. metric vs imperial during a
+  transition). `day_start_hour` (0–23, default 0 = local midnight; added
+  in migration 000014) is the sleep-day cutover shared by caregivers for
+  that baby: rhythm clip, sleep totals, Today sleep banner, and History
+  sleep roll-up all use it. Non-sleep metrics stay on calendar midnight.
 
 The two JSONB columns follow the same **sparse-storage** convention: only
 non-default values appear on disk. `chart_palette.overrides` only stores

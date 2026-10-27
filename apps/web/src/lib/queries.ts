@@ -1652,6 +1652,7 @@ export function useUpdateBabySettings() {
       unit_volume: "ml" | "oz";
       unit_length: "cm" | "in";
       unit_weight: "kg" | "lb";
+      day_start_hour: number;
     }) =>
       api<BabySettings>(`/babies/${vars.babyId}/settings`, {
         method: "PUT",
@@ -1659,6 +1660,7 @@ export function useUpdateBabySettings() {
           unit_volume: vars.unit_volume,
           unit_length: vars.unit_length,
           unit_weight: vars.unit_weight,
+          day_start_hour: vars.day_start_hour,
         },
       }),
     onSuccess: (data, vars) => qc.setQueryData(qk.babySettings(vars.babyId), data),

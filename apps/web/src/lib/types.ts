@@ -230,11 +230,14 @@ export interface UserPreferences {
 // Per-baby unit preferences. Lives in `baby_settings` on the BE; one row
 // per baby keyed by baby_id. The split (units per-baby, time-format
 // per-user) is intentional — see apps/api/migrations/000004 commentary.
+// day_start_hour (0–23, default 0) is the sleep-day cutover shared by
+// caregivers for this baby.
 export interface BabySettings {
   baby_id: string;
   unit_volume: "ml" | "oz";
   unit_length: "cm" | "in";
   unit_weight: "kg" | "lb";
+  day_start_hour: number;
 }
 
 // --- charts ---

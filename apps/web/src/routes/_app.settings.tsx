@@ -84,7 +84,7 @@ function SettingsPage() {
     >
       <section className="card flex flex-col gap-4 p-5">
         <header className="flex items-baseline justify-between">
-          <h2 className="text-base font-semibold">Units</h2>
+          <h2 className="text-base font-semibold">Units & sleep day</h2>
           <span className="text-xs text-white/40">{baby.name}</span>
         </header>
         {settings.isError ? (
@@ -453,54 +453,86 @@ function BabyUnitFields({
     return () => window.clearTimeout(id);
   }, [savedTick]);
 
-  const onChange = (
+  const payload = (overrides: Partial<{
+    unit_volume: "ml" | "oz";
+    unit_length: "cm" | "in";
+    unit_weight: "kg" | "lb";
+    day_start_hour: number;
+  }>) => {
+    if (!settings) return null;
+    return {
+      babyId,
+      unit_volume: overrides.unit_volume ?? settings.unit_volume,
+      unit_length: overrides.unit_length ?? settings.unit_length,
+      unit_weight: overrides.unit_weight ?? settings.unit_weight,
+      day_start_hour: overrides.day_start_hour ?? settings.day_start_hour ?? 0,
+    };
+  };
+
+  const onUnitChange = (
     field: "unit_volume" | "unit_length" | "unit_weight",
     value: string,
   ) => {
-    if (!settings) return;
-    update.mutate(
-      {
-        babyId,
-        unit_volume: field === "unit_volume" ? (value as "ml" | "oz") : settings.unit_volume,
-        unit_length: field === "unit_length" ? (value as "cm" | "in") : settings.unit_length,
-        unit_weight: field === "unit_weight" ? (value as "kg" | "lb") : settings.unit_weight,
-      },
-      { onSuccess: () => setSavedTick((t) => t + 1) },
-    );
+    const next = payload({
+      unit_volume: field === "unit_volume" ? (value as "ml" | "oz") : undefined,
+      unit_length: field === "unit_length" ? (value as "cm" | "in") : undefined,
+      unit_weight: field === "unit_weight" ? (value as "kg" | "lb") : undefined,
+    });
+    if (!next) return;
+    update.mutate(next, { onSuccess: () => setSavedTick((t) => t + 1) });
+  };
+
+  const onDayStartChange = (value: string) => {
+    const next = payload({ day_start_hour: Number.parseInt(value, 10) });
+    if (!next) return;
+    update.mutate(next, { onSuccess: () => setSavedTick((t) => t + 1) });
   };
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <SelectField
+          label="Volume"
+          value={settings?.unit_volume ?? "ml"}
+          disabled={disabled}
+          onChange={(v) => onUnitChange("unit_volume", v)}
+          options={[
+            { value: "ml", label: "Millilitres (ml)" },
+            { value: "oz", label: "Fluid ounces (oz)" },
+          ]}
+        />
+        <SelectField
+          label="Length"
+          value={settings?.unit_length ?? "cm"}
+          disabled={disabled}
+          onChange={(v) => onUnitChange("unit_length", v)}
+          options={[
+            { value: "cm", label: "Centimetres (cm)" },
+            { value: "in", label: "Inches (in)" },
+          ]}
+        />
+        <SelectField
+          label="Weight"
+          value={settings?.unit_weight ?? "kg"}
+          disabled={disabled}
+          onChange={(v) => onUnitChange("unit_weight", v)}
+          options={[
+            { value: "kg", label: "Kilograms (kg)" },
+            { value: "lb", label: "Pounds (lb)" },
+          ]}
+        />
+      </div>
       <SelectField
-        label="Volume"
-        value={settings?.unit_volume ?? "ml"}
+        label="Sleep day starts at"
+        value={String(settings?.day_start_hour ?? 0)}
         disabled={disabled}
-        onChange={(v) => onChange("unit_volume", v)}
-        options={[
-          { value: "ml", label: "Millilitres (ml)" },
-          { value: "oz", label: "Fluid ounces (oz)" },
-        ]}
+        onChange={onDayStartChange}
+        options={DAY_START_HOUR_OPTIONS}
       />
-      <SelectField
-        label="Length"
-        value={settings?.unit_length ?? "cm"}
-        disabled={disabled}
-        onChange={(v) => onChange("unit_length", v)}
-        options={[
-          { value: "cm", label: "Centimetres (cm)" },
-          { value: "in", label: "Inches (in)" },
-        ]}
-      />
-      <SelectField
-        label="Weight"
-        value={settings?.unit_weight ?? "kg"}
-        disabled={disabled}
-        onChange={(v) => onChange("unit_weight", v)}
-        options={[
-          { value: "kg", label: "Kilograms (kg)" },
-          { value: "lb", label: "Pounds (lb)" },
-        ]}
-      />
+      <p className="text-xs text-white/45">
+        Rhythm, sleep totals, Today sleep, and History sleep minutes use this
+        cutover. Other metrics stay on midnight.
+      </p>
       <SaveAffordance
         show={showSaved}
         pending={update.isPending}
@@ -509,6 +541,16 @@ function BabyUnitFields({
     </div>
   );
 }
+
+const DAY_START_HOUR_OPTIONS: { value: string; label: string }[] = [
+  { value: "0", label: "Midnight (12:00 AM)" },
+  ...Array.from({ length: 23 }, (_, i) => {
+    const h = i + 1;
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    const period = h < 12 ? "AM" : "PM";
+    return { value: String(h), label: `${h12}:00 ${period}` };
+  }),
+];
 
 // --- per-user time-format select ---
 
