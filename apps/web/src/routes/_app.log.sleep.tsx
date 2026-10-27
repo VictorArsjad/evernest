@@ -154,16 +154,16 @@ function LogSleepPage() {
     );
   };
 
-  // Start now: submit an open session (no ended_at). Always uses the live
-  // `now()` so the user doesn't have to round-trip through the datetime
-  // input — the BE rejects multiple open sessions per baby, so the
-  // failure mode is a clean 409 surfaced inline.
+  // Start now: submit an open session (no ended_at) using the Fell asleep
+  // field so backdating (baby fell asleep 20 min ago) is respected by the
+  // Today elapsed timer. The BE rejects multiple open sessions per baby,
+  // so the failure mode is a clean 409 surfaced inline.
   const onStartNow = () => {
     if (!babyId) return;
     create.mutate(
       {
         babyId,
-        started_at: new Date().toISOString(),
+        started_at: localToISO(startedLocal),
         sleep_type: sleepType ?? undefined,
         location: location.trim() || undefined,
         notes: notes.trim() || undefined,
