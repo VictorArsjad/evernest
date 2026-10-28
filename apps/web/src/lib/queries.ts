@@ -96,13 +96,18 @@ const OPEN_NURSING_REFETCH_MS = 10_000;
 const HEAVY_REFETCH_MS = 5 * 60_000;
 
 // Per-kind list hooks (useBottleFeeds / useDiapers / usePumpings /
-// useNursings / useGrowths) accept an optional fourth `opts` arg so
-// the History view can request `{ limit: 1000, refetchInterval: false }`
-// without spawning a parallel query key per consumer. The default 200
-// row cap on the BE would silently truncate a 30-day window for an
-// active baby, and polling past data buys nothing — it doesn't change.
-// Today / Charts continue to call the hooks with three args and inherit
-// the live-poll defaults unchanged.
+// useNursings / useGrowths / useSleeps / useNotes) accept an optional
+// fourth `opts` arg so History / Charts can request
+// `{ limit: 1000, refetchInterval: false }`. The default 200-row BE cap
+// would silently truncate a 30-day window for an active baby, and
+// polling past data buys nothing — it doesn't change.
+//
+// `limit` is part of the query key. Today's "latest event" lookups use
+// the same from/to window as Charts' 30d rhythm fetch but a tiny
+// limit (e.g. sleeps limit:10 vs limit:1000). Omitting limit from the
+// key made TanStack reuse the truncated response under staleTime and
+// blank out all but ~3 days of the sleep charts. Empty-string sentinel
+// keeps the legacy "no limit param → BE default 200" callers distinct.
 export interface ListHookOpts {
   limit?: number;
   refetchInterval?: number | false;
@@ -112,22 +117,22 @@ export const qk = {
   me: ["me"] as const,
   households: ["households"] as const,
   babies: (householdId: string) => ["households", householdId, "babies"] as const,
-  bottleFeeds: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "bottle-feeds", from ?? "", to ?? ""] as const,
-  diapers: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "diapers", from ?? "", to ?? ""] as const,
-  pumpings: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "pumpings", from ?? "", to ?? ""] as const,
-  nursings: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "nursing-sessions", from ?? "", to ?? ""] as const,
+  bottleFeeds: (babyId: string, from?: string, to?: string, limit?: number) =>
+    ["babies", babyId, "bottle-feeds", from ?? "", to ?? "", limit ?? ""] as const,
+  diapers: (babyId: string, from?: string, to?: string, limit?: number) =>
+    ["babies", babyId, "diapers", from ?? "", to ?? "", limit ?? ""] as const,
+  pumpings: (babyId: string, from?: string, to?: string, limit?: number) =>
+    ["babies", babyId, "pumpings", from ?? "", to ?? "", limit ?? ""] as const,
+  nursings: (babyId: string, from?: string, to?: string, limit?: number) =>
+    ["babies", babyId, "nursing-sessions", from ?? "", to ?? "", limit ?? ""] as const,
   openNursing: (babyId: string) => ["babies", babyId, "nursing-sessions", "open"] as const,
-  growths: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "growths", from ?? "", to ?? ""] as const,
-  sleeps: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "sleeps", from ?? "", to ?? ""] as const,
+  growths: (babyId: string, from?: string, to?: string, limit?: number) =>
+    ["babies", babyId, "growths", from ?? "", to ?? "", limit ?? ""] as const,
+  sleeps: (babyId: string, from?: string, to?: string, limit?: number) =>
+    ["babies", babyId, "sleeps", from ?? "", to ?? "", limit ?? ""] as const,
   openSleep: (babyId: string) => ["babies", babyId, "sleeps", "open"] as const,
-  notes: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "notes", from ?? "", to ?? ""] as const,
+  notes: (babyId: string, from?: string, to?: string, limit?: number) =>
+    ["babies", babyId, "notes", from ?? "", to ?? "", limit ?? ""] as const,
   chartsDaily: (babyId: string, from: string, to: string, tz: string) =>
     ["babies", babyId, "charts", "daily", from, to, tz] as const,
   myPreferences: ["me", "preferences"] as const,
@@ -308,7 +313,9 @@ export function useBottleFeeds(
   opts?: ListHookOpts,
 ) {
   return useQuery({
-    queryKey: babyId ? qk.bottleFeeds(babyId, from, to) : ["babies", "none", "bottle-feeds"],
+    queryKey: babyId
+      ? qk.bottleFeeds(babyId, from, to, opts?.limit)
+      : ["babies", "none", "bottle-feeds"],
     enabled: !!babyId,
     refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
     queryFn: () => {
@@ -449,7 +456,9 @@ export function useDiapers(
   opts?: ListHookOpts,
 ) {
   return useQuery({
-    queryKey: babyId ? qk.diapers(babyId, from, to) : ["babies", "none", "diapers"],
+    queryKey: babyId
+      ? qk.diapers(babyId, from, to, opts?.limit)
+      : ["babies", "none", "diapers"],
     enabled: !!babyId,
     refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
     queryFn: () => {
@@ -657,7 +666,9 @@ export function useNotes(
   opts?: ListHookOpts,
 ) {
   return useQuery({
-    queryKey: babyId ? qk.notes(babyId, from, to) : ["babies", "none", "notes"],
+    queryKey: babyId
+      ? qk.notes(babyId, from, to, opts?.limit)
+      : ["babies", "none", "notes"],
     enabled: !!babyId,
     refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
     queryFn: () => {
@@ -837,7 +848,9 @@ export function usePumpings(
   opts?: ListHookOpts,
 ) {
   return useQuery({
-    queryKey: babyId ? qk.pumpings(babyId, from, to) : ["babies", "none", "pumpings"],
+    queryKey: babyId
+      ? qk.pumpings(babyId, from, to, opts?.limit)
+      : ["babies", "none", "pumpings"],
     enabled: !!babyId,
     refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
     queryFn: () => {
@@ -969,7 +982,9 @@ export function useNursings(
   opts?: ListHookOpts,
 ) {
   return useQuery({
-    queryKey: babyId ? qk.nursings(babyId, from, to) : ["babies", "none", "nursing-sessions"],
+    queryKey: babyId
+      ? qk.nursings(babyId, from, to, opts?.limit)
+      : ["babies", "none", "nursing-sessions"],
     enabled: !!babyId,
     refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
     queryFn: () => {
@@ -1221,7 +1236,9 @@ export function useSleeps(
   opts?: ListHookOpts,
 ) {
   return useQuery({
-    queryKey: babyId ? qk.sleeps(babyId, from, to) : ["babies", "none", "sleeps"],
+    queryKey: babyId
+      ? qk.sleeps(babyId, from, to, opts?.limit)
+      : ["babies", "none", "sleeps"],
     enabled: !!babyId,
     refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
     queryFn: () => {
@@ -1446,7 +1463,9 @@ export function useGrowths(
   opts?: ListHookOpts,
 ) {
   return useQuery({
-    queryKey: babyId ? qk.growths(babyId, from, to) : ["babies", "none", "growths"],
+    queryKey: babyId
+      ? qk.growths(babyId, from, to, opts?.limit)
+      : ["babies", "none", "growths"],
     enabled: !!babyId,
     refetchInterval: opts?.refetchInterval ?? HEAVY_REFETCH_MS,
     queryFn: () => {
