@@ -7,7 +7,7 @@ import { Link } from "@tanstack/react-router";
 import { format, isToday, parseISO } from "date-fns";
 import { useState } from "react";
 
-import { useDiaperPhotoUrl, useNotePhotoUrl } from "../lib/queries";
+import { useDiaperPhotoUrl, useNotePhotoUrl, useSolidMealPhotoUrl } from "../lib/queries";
 import type { RecentEvent } from "../lib/recentEvents";
 import {
   formatDurationHM,
@@ -78,7 +78,8 @@ export function RecentRow({
   // are enabled-gated, so the non-matching one no-ops.
   const isDiaperWithPhoto = ev.kind === "diaper" && !!ev.data.has_photo;
   const isNoteWithPhoto = ev.kind === "note" && !!ev.data.has_photo;
-  const hasPhoto = isDiaperWithPhoto || isNoteWithPhoto;
+  const isSolidsWithPhoto = ev.kind === "solids" && !!ev.data.has_photo;
+  const hasPhoto = isDiaperWithPhoto || isNoteWithPhoto || isSolidsWithPhoto;
   const [photoExpanded, setPhotoExpanded] = useState(false);
   const diaperPhotoUrl = useDiaperPhotoUrl(
     isDiaperWithPhoto ? ev.data.id : null,
@@ -88,21 +89,31 @@ export function RecentRow({
     isNoteWithPhoto ? ev.data.id : null,
     isNoteWithPhoto && photoExpanded,
   );
-  const photoUrl = isNoteWithPhoto ? notePhotoUrl : diaperPhotoUrl;
+  const solidsPhotoUrl = useSolidMealPhotoUrl(
+    isSolidsWithPhoto ? ev.data.id : null,
+    isSolidsWithPhoto && photoExpanded,
+  );
+  const photoUrl = isNoteWithPhoto
+    ? notePhotoUrl
+    : isSolidsWithPhoto
+      ? solidsPhotoUrl
+      : diaperPhotoUrl;
   const icon =
     ev.kind === "bottle"
       ? "🍼"
       : ev.kind === "diaper"
         ? "🧷"
-        : ev.kind === "pumping"
-          ? "💧"
-          : ev.kind === "growth"
-            ? "📏"
-            : ev.kind === "sleep"
-              ? "😴"
-              : ev.kind === "note"
-                ? "📝"
-                : "👶";
+        : ev.kind === "solids"
+          ? "🥣"
+          : ev.kind === "pumping"
+            ? "💧"
+            : ev.kind === "growth"
+              ? "📏"
+              : ev.kind === "sleep"
+                ? "😴"
+                : ev.kind === "note"
+                  ? "📝"
+                  : "👶";
   // Tap target: the row body links to the matching /log/<kind>?edit=<id>
   // form so users can correct mistyped values. Open nursing and sleep
   // sessions are intentionally NOT editable from here — those flow
@@ -199,6 +210,26 @@ export function RecentRow({
           {ev.data.body}
         </div>
       )}
+      {ev.kind === "solids" && (
+        <>
+          <div className="text-base font-medium">
+            {ev.data.foods.join(", ")}
+            {ev.data.reaction && (
+              <span className="ml-2 text-xs font-normal capitalize text-white/50">
+                · {ev.data.reaction}
+              </span>
+            )}
+            {ev.data.amount_g != null && (
+              <span className="ml-2 text-xs font-normal text-white/50">
+                · {formatWeight(Number(ev.data.amount_g), prefs.unit_weight)}
+              </span>
+            )}
+          </div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+      )}
       {!isToday(at) && (
         <div className="text-xs text-white/40">{format(at, "MMM d")}</div>
       )}
@@ -266,7 +297,13 @@ export function RecentRow({
           {photoUrl ? (
             <img
               src={photoUrl}
-              alt={ev.kind === "note" ? "Note photo" : "Diaper photo"}
+              alt={
+                ev.kind === "note"
+                  ? "Note photo"
+                  : ev.kind === "solids"
+                    ? "Solids photo"
+                    : "Diaper photo"
+              }
               className="max-h-48 rounded-xl border border-white/10 object-contain"
             />
           ) : (

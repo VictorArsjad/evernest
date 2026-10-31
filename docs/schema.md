@@ -79,8 +79,8 @@ hasn't touched it yet". The FE mirrors the same convention via small leaf
 modules (`apps/web/src/lib/palette.ts`, `apps/web/src/lib/featureVisibility.ts`).
 
 `feature_visibility` (added in migration 000009) lets a caregiver hide
-event kinds — bottle / nursing / pumping / diaper / growth / sleep / note —
-from the
+event kinds — bottle / nursing / pumping / diaper / solids / growth / sleep /
+note — from the
 Today banner stats, the action tile grid, and the /charts page **without**
 touching the underlying data. Past entries remain in their tables; this
 column only gates UI surfaces. The closed allowlist is enforced
@@ -116,6 +116,16 @@ which streams the raw image with a 5-minute private cache header. Postgres
 TOAST handles out-of-line storage automatically, so list scans only read the
 main heap row's TOAST pointer — adding photos does not regress the existing
 `diapers_baby_occurred_idx`-driven plan.
+
+## Solid meals (migration 000015)
+
+`solid_meals` logs a complementary-food sitting (Glow-ish meal event, not a
+per-food introduction catalog). Required: `foods text[]` with
+`cardinality(foods) >= 1`. Optional: meal-level `reaction`
+(`liked` | `neutral` | `refused` | `reaction`), `amount_g` (canonical grams),
+`notes`, and the same inline photo pair as diapers (`photo` / `photo_mime`
+with pair + mime CHECKs). List endpoints project `has_photo` only; bytes
+stream from `GET /v1/solid-meals/{id}/photo`.
 
 ## Sleep sessions (migration 000013)
 

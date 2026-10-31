@@ -1,8 +1,8 @@
 // Per-user "feature visibility" map. Lets the user hide event kinds
-// (bottle / nursing / pumping / diaper / growth / sleep / note) from the Today banner
-// stats, the action tile grid, and the Charts page WITHOUT touching the
-// underlying data. Past entries remain in their tables; this helper only
-// gates UI surfaces.
+// (bottle / nursing / pumping / diaper / solids / growth / sleep / note)
+// from the Today banner stats, the action tile grid, and the Charts page
+// WITHOUT touching the underlying data. Past entries remain in their
+// tables; this helper only gates UI surfaces.
 //
 // Shape on the wire: a sparse map where a key only appears when the user
 // explicitly hid that feature. Missing key ⇒ visible. The default value
@@ -15,6 +15,7 @@ export type FeatureKey =
   | "nursing"
   | "pumping"
   | "diaper"
+  | "solids"
   | "growth"
   | "sleep"
   | "note";
@@ -26,6 +27,7 @@ export const FEATURE_KEYS: FeatureKey[] = [
   "nursing",
   "pumping",
   "diaper",
+  "solids",
   "growth",
   "sleep",
   "note",
@@ -36,6 +38,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   nursing: "Nursing",
   pumping: "Pumping",
   diaper: "Diaper",
+  solids: "Solids",
   growth: "Growth",
   sleep: "Sleep",
   note: "Note",

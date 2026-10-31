@@ -31,6 +31,7 @@ import {
   useOpenSleep,
   usePumpings,
   useSleeps,
+  useSolidMeals,
 } from "../lib/queries";
 import { getDailyTargets, type DailyTargets } from "../lib/recommendations";
 import { currentSleepDayBounds } from "../lib/sleepDays";
@@ -133,14 +134,16 @@ function TodayPage() {
 
   const feeds = useBottleFeeds(baby?.id ?? null, todayStart, todayEnd);
   const diapers = useDiapers(baby?.id ?? null, todayStart, todayEnd);
+  const solidMeals = useSolidMeals(baby?.id ?? null, todayStart, todayEnd);
   const pumpings = usePumpings(baby?.id ?? null, todayStart, todayEnd);
   const nursings = useNursings(baby?.id ?? null, todayStart, todayEnd);
-  // Most-recent-event queries powering the banner's "last fed / last diaper"
-  // labels. Separate from the today-scoped lists above so the totals and the
-  // "Recent — today" list stay bound to today; these look back 30 days and
-  // cap at a tiny limit (server returns newest-first).
+  // Most-recent-event queries powering the banner's "last fed / last diaper /
+  // last solids" labels. Separate from the today-scoped lists above so the
+  // totals and the "Recent — today" list stay bound to today; these look
+  // back 30 days and cap at a tiny limit (server returns newest-first).
   const latestFeeds = useBottleFeeds(baby?.id ?? null, sinceStart, todayEnd, { limit: 1 });
   const latestDiapers = useDiapers(baby?.id ?? null, sinceStart, todayEnd, { limit: 1 });
+  const latestSolids = useSolidMeals(baby?.id ?? null, sinceStart, todayEnd, { limit: 1 });
   // A small limit (not 1): the newest row could be an open session, which we
   // exclude below; a handful is enough to reach the latest completed one.
   const latestNursings = useNursings(baby?.id ?? null, sinceStart, todayEnd, { limit: 10 });
@@ -226,6 +229,7 @@ function TodayPage() {
     ...((latestNursings.data ?? []).filter((n) => n.ended_at != null)),
   ]);
   const lastDiaperAt = lastEventAt(latestDiapers.data ?? []);
+  const lastSolidsAt = lastEventAt(latestSolids.data ?? []);
 
   // Wake-window inputs: the most recent CLOSED sleep's wake-up time and
   // the age-typical window. Both gated below; either being null hides
@@ -248,6 +252,7 @@ function TodayPage() {
     growths: growthsToday.data,
     sleeps: sleepsToday.data,
     notes: notesToday.data,
+    solidMeals: solidMeals.data,
   });
 
   return (
@@ -274,6 +279,9 @@ function TodayPage() {
         diaperCount={diaperCount}
         latestWeightG={latestWeightG}
         lastFedAt={lastFedAt}
+        lastSolidsAt={
+          isFeatureVisible(prefs.feature_visibility, "solids") ? lastSolidsAt : null
+        }
         lastDiaperAt={lastDiaperAt}
         openNursing={openNursing.data ?? null}
         now={now}
@@ -313,6 +321,9 @@ function TodayPage() {
         )}
         {isFeatureVisible(prefs.feature_visibility, "diaper") && (
           <Tile to="/log/diaper" babyId={baby.id} icon="🧷" label="Diaper" accent="lemon" />
+        )}
+        {isFeatureVisible(prefs.feature_visibility, "solids") && (
+          <Tile to="/log/solids" babyId={baby.id} icon="🥣" label="Solids" accent="mint" />
         )}
         {isFeatureVisible(prefs.feature_visibility, "growth") && (
           <Tile to="/log/growth" babyId={baby.id} icon="📏" label="Growth" accent="lilac" />
@@ -844,6 +855,7 @@ function TodayBanner({
   diaperCount,
   latestWeightG,
   lastFedAt,
+  lastSolidsAt,
   lastDiaperAt,
   openNursing,
   now,
@@ -858,6 +870,7 @@ function TodayBanner({
   diaperCount: number;
   latestWeightG: number | null;
   lastFedAt: string | null;
+  lastSolidsAt: string | null;
   lastDiaperAt: string | null;
   openNursing: Nursing | null;
   now: Date;
@@ -893,6 +906,11 @@ function TodayBanner({
           ) : (
             <div className="mt-1 text-lg font-semibold leading-tight text-white/60">
               No feeds yet
+            </div>
+          )}
+          {lastSolidsAt && (
+            <div className="text-xs text-white/60">
+              Last solids {formatTimeSince(lastSolidsAt, now)}
             </div>
           )}
           {lastDiaperAt && (

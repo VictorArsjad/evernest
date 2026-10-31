@@ -25,6 +25,8 @@ import type {
   Pumping,
   Sleep,
   SleepType,
+  SolidMeal,
+  SolidMealReaction,
   StartingBreast,
   TokenResponse,
   User,
@@ -128,6 +130,8 @@ export const qk = {
   openSleep: (babyId: string) => ["babies", babyId, "sleeps", "open"] as const,
   notes: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "notes", from ?? "", to ?? ""] as const,
+  solidMeals: (babyId: string, from?: string, to?: string) =>
+    ["babies", babyId, "solid-meals", from ?? "", to ?? ""] as const,
   chartsDaily: (babyId: string, from: string, to: string, tz: string) =>
     ["babies", babyId, "charts", "daily", from, to, tz] as const,
   myPreferences: ["me", "preferences"] as const,
@@ -630,6 +634,217 @@ export function useDiaperPhotoUrl(
     queryFn: () => apiBlob(`/diapers/${id}/photo`),
     // Photos are write-once-per-edit; cache for 5 min before refetch.
     // Matches the BE's `Cache-Control: private, max-age=300`.
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
+  });
+
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const blob = query.data;
+    if (!blob) {
+      setUrl(null);
+      return;
+    }
+    const next = URL.createObjectURL(blob);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [query.data]);
+  return url;
+}
+
+// --- solid meals ---
+
+export function useSolidMeals(
+  babyId: string | null,
+  from?: string,
+  to?: string,
+  opts?: ListHookOpts,
+) {
+  return useQuery({
+    queryKey: babyId ? qk.solidMeals(babyId, from, to) : ["babies", "none", "solid-meals"],
+    enabled: !!babyId,
+    refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      if (opts?.limit != null) params.set("limit", String(opts.limit));
+      const qs = params.toString();
+      return api<SolidMeal[]>(`/babies/${babyId}/solid-meals${qs ? `?${qs}` : ""}`);
+    },
+  });
+}
+
+export function useCreateSolidMeal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      babyId: string;
+      occurred_at: string;
+      foods: string[];
+      reaction?: SolidMealReaction | null;
+      amount_g?: number | null;
+      notes?: string;
+      photoBase64?: string;
+      photoMime?: DiaperPhotoMime;
+    }) => {
+      const id = makeId();
+      const hasPhoto = !!vars.photoBase64;
+      const synthetic: SolidMeal = {
+        id,
+        baby_id: vars.babyId,
+        occurred_at: vars.occurred_at,
+        foods: vars.foods,
+        reaction: vars.reaction ?? null,
+        amount_g: vars.amount_g ?? null,
+        notes: vars.notes ?? null,
+        has_photo: hasPhoto,
+        photo_mime: hasPhoto ? vars.photoMime ?? null : null,
+        source: "manual",
+        created_at: new Date().toISOString(),
+      };
+      const body: Record<string, unknown> = {
+        id,
+        occurred_at: vars.occurred_at,
+        foods: vars.foods,
+      };
+      if (vars.reaction) body.reaction = vars.reaction;
+      if (vars.amount_g != null) body.amount_g = vars.amount_g;
+      if (vars.notes) body.notes = vars.notes;
+      if (vars.photoBase64) {
+        body.photo = vars.photoBase64;
+        body.photo_mime = vars.photoMime;
+      }
+      return apiQueued<SolidMeal>(`/babies/${vars.babyId}/solid-meals`, {
+        method: "POST",
+        body,
+        idempotencyKey: id,
+        synthesize: () => synthetic,
+      });
+    },
+    onSuccess: (data, vars) => {
+      upsertList<SolidMeal>(qc, ["babies", vars.babyId, "solid-meals"], data);
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "solid-meals"] });
+    },
+  });
+}
+
+export function useDeleteSolidMeal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; babyId: string }) =>
+      apiQueued<void>(`/solid-meals/${vars.id}`, {
+        method: "DELETE",
+        idempotencyKey: `del-solid-meal-${vars.id}`,
+        synthesize: () => undefined as unknown as void,
+      }),
+    onSuccess: (_data, vars) => {
+      removeFromList<SolidMeal>(qc, ["babies", vars.babyId, "solid-meals"], vars.id);
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "solid-meals"] });
+    },
+  });
+}
+
+export function useUpdateSolidMeal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      id: string;
+      babyId: string;
+      occurred_at?: string;
+      foods?: string[];
+      // undefined = leave; null / "" = clear
+      reaction?: SolidMealReaction | null | "";
+      amount_g?: number | null;
+      clear_amount_g?: boolean;
+      notes?: string;
+      photoBase64?: string;
+      photoMime?: DiaperPhotoMime;
+    }) => {
+      const lists = qc.getQueriesData<SolidMeal[] | undefined>({
+        queryKey: ["babies", vars.babyId, "solid-meals"],
+      }) as Array<[unknown, SolidMeal[] | undefined]>;
+      const existing = lists
+        .flatMap(([, list]) => list ?? [])
+        .find((r) => r.id === vars.id);
+
+      let syntheticHasPhoto = existing?.has_photo ?? false;
+      let syntheticMime: DiaperPhotoMime | null | undefined = existing?.photo_mime ?? null;
+      if (vars.photoBase64 === "") {
+        syntheticHasPhoto = false;
+        syntheticMime = null;
+      } else if (vars.photoBase64 !== undefined) {
+        syntheticHasPhoto = true;
+        syntheticMime = vars.photoMime ?? syntheticMime ?? null;
+      }
+
+      let syntheticReaction: SolidMealReaction | null | undefined = existing?.reaction ?? null;
+      if (vars.reaction === "" || vars.reaction === null) {
+        syntheticReaction = null;
+      } else if (vars.reaction !== undefined) {
+        syntheticReaction = vars.reaction;
+      }
+
+      let syntheticAmount: number | null | undefined = existing?.amount_g ?? null;
+      if (vars.clear_amount_g) {
+        syntheticAmount = null;
+      } else if (vars.amount_g !== undefined) {
+        syntheticAmount = vars.amount_g;
+      }
+
+      const synthetic: SolidMeal = {
+        id: vars.id,
+        baby_id: existing?.baby_id ?? vars.babyId,
+        occurred_at: vars.occurred_at ?? existing?.occurred_at ?? new Date().toISOString(),
+        foods: vars.foods ?? existing?.foods ?? [],
+        reaction: syntheticReaction ?? null,
+        amount_g: syntheticAmount ?? null,
+        notes:
+          vars.notes === undefined
+            ? existing?.notes ?? null
+            : vars.notes === ""
+              ? null
+              : vars.notes,
+        has_photo: syntheticHasPhoto,
+        photo_mime: syntheticMime ?? null,
+        source: existing?.source ?? "manual",
+        created_at: existing?.created_at ?? new Date().toISOString(),
+      };
+      const body: Record<string, unknown> = {};
+      if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
+      if (vars.foods !== undefined) body.foods = vars.foods;
+      if (vars.reaction !== undefined) body.reaction = vars.reaction === null ? "" : vars.reaction;
+      if (vars.clear_amount_g) body.clear_amount_g = true;
+      else if (vars.amount_g !== undefined && vars.amount_g !== null) body.amount_g = vars.amount_g;
+      if (vars.notes !== undefined) body.notes = vars.notes;
+      if (vars.photoBase64 !== undefined) {
+        body.photo = vars.photoBase64;
+        if (vars.photoBase64 !== "" && vars.photoMime) {
+          body.photo_mime = vars.photoMime;
+        }
+      }
+      return apiQueued<SolidMeal>(`/solid-meals/${vars.id}`, {
+        method: "PATCH",
+        body,
+        idempotencyKey: vars.id,
+        synthesize: () => synthetic,
+      });
+    },
+    onSuccess: (data, vars) => {
+      upsertList<SolidMeal>(qc, ["babies", vars.babyId, "solid-meals"], data);
+      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "solid-meals"] });
+    },
+  });
+}
+
+export function useSolidMealPhotoUrl(
+  id: string | null,
+  hasPhoto: boolean | undefined,
+): string | null {
+  const query = useQuery({
+    queryKey: ["solid-meals", id ?? "none", "photo"],
+    enabled: !!id && !!hasPhoto,
+    queryFn: () => apiBlob(`/solid-meals/${id}/photo`),
     staleTime: 5 * 60_000,
     gcTime: 10 * 60_000,
   });

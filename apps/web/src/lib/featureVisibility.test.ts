@@ -11,12 +11,13 @@ describe("FEATURE_KEYS", () => {
   // The array order drives the Settings toggle list, which mirrors the
   // Today tile grid left-to-right. Sleep sits between Growth and Note by
   // design — a reorder here is a UI change, not a refactor.
-  it("keeps the Today-grid order with sleep between growth and note", () => {
+  it("keeps the Today-grid order with solids after diaper and sleep between growth and note", () => {
     expect(FEATURE_KEYS).toEqual([
       "bottle",
       "nursing",
       "pumping",
       "diaper",
+      "solids",
       "growth",
       "sleep",
       "note",
