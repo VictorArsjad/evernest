@@ -921,9 +921,12 @@ function TodayBanner({
 // BannerStatRow renders the row of inline stats below the banner headline.
 // Each cell is gated by feature_visibility; the grid template is computed
 // from the visible-cell count so 3 visible features fill the row at 1/3
-// each rather than leaving empty grid tracks. When zero features are
-// visible the whole row collapses (separator included) so the banner
-// shrinks to just the "Last fed" headline + sparkline.
+// each rather than leaving empty grid tracks. Four or fewer cells stay on
+// one row; five or more wrap onto two rows (ceil(n/2) columns) so values
+// like "11h 55m" / "8.90 kg" don't crush into neighbors on a phone-width
+// banner. When zero features are visible the whole row collapses
+// (separator included) so the banner shrinks to just the "Last fed"
+// headline + sparkline.
 function BannerStatRow({
   prefs,
   totalMl,
@@ -1016,12 +1019,14 @@ function BannerStatRow({
     );
   }
   if (cells.length === 0) return null;
+  // ≤4: one row. ≥5: two rows with ceil(n/2) columns (5→3+2, 6→3+3).
+  const cols = cells.length <= 4 ? cells.length : Math.ceil(cells.length / 2);
   return (
     <div className="mt-3 border-t border-white/10 pt-3">
       <div
-        className="grid gap-2"
+        className="grid gap-x-5 gap-y-4"
         style={{
-          gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))`,
+          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
         }}
       >
         {cells}
@@ -1066,8 +1071,8 @@ function BannerStat({
       ? null
       : Math.max(0, Math.min(1, Number.isFinite(barFill) ? barFill : 0));
   return (
-    <div className="flex flex-col items-start gap-1">
-      <div className="flex items-baseline gap-1">
+    <div className="flex min-w-0 flex-col items-start gap-1 pr-2">
+      <div className="flex items-baseline gap-1 whitespace-nowrap">
         <span className="text-xs leading-none">{icon}</span>
         <span className="text-base font-semibold tabular-nums">{head}</span>
         {tail && <span className="text-[10px] text-white/60">{tail}</span>}
