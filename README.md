@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/screenshots/logo.png" alt="Evernest logo" width="96" />
+</p>
+
 # Evernest
 
 A baby tracker for households — feedings, sleep, diapers, growth, and charts,
@@ -12,6 +16,12 @@ shared across caregivers.
 ## Features
 
 ### Today
+
+<p align="center">
+  <img src="docs/screenshots/today-banner.png" alt="Today banner with two-row daily totals" width="420" />
+</p>
+
+<p align="center"><em>Busy day? Daily totals wrap to two rows instead of crowding one line.</em></p>
 
 See when baby last ate or had a diaper change, today's totals, and a recent
 activity list. Log bottle, nursing, pumping, diaper, growth, sleep, or a note
