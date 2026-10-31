@@ -18,6 +18,7 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../lib/queries", () => ({
   useDiaperPhotoUrl: () => null,
   useNotePhotoUrl: () => null,
+  useSolidMealPhotoUrl: () => null,
 }));
 
 import { RecentRow } from "./RecentRow";
