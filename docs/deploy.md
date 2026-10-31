@@ -172,8 +172,9 @@ redeploy succeeds end-to-end.
 
 The homeserver compose stack includes a `backup` sidecar (`infra/docker/backup.*`)
 that dumps Postgres nightly and optionally mirrors encrypted copies to Google
-Drive via `rclone crypt`. See `README.md` § Backups & restore for setup and
-day-to-day commands (`make db-backup`, `make db-backup-test`, `make db-restore`).
+Drive via `rclone crypt`. Day-to-day commands: `make db-backup`,
+`make db-backup-test`, `make db-restore`. Full DR steps live in Obsidian:
+`Engineering/Evernest/Backups and Restore.md`.
 
 **Disk-failure restore (short form):**
 
