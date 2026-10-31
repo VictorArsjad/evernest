@@ -39,6 +39,7 @@ import {
   useGrowths,
   useHouseholds,
   useNotes,
+  useSolidMeals,
   useNursings,
   usePumpings,
   useSleeps,
@@ -299,6 +300,12 @@ function ChartsPage() {
   const growths = useGrowths(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const sleeps = useSleeps(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const notes = useNotes(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
+  const solidMeals = useSolidMeals(
+    babyId,
+    historyWindow.from,
+    historyWindow.to,
+    HISTORY_HOOK_OPTS,
+  );
   // The rhythm chart needs one extra lookback day: an overnight sleep
   // that STARTED before the window still paints the window's first
   // morning once clipped at midnight. Kept as its own query (separate
@@ -344,6 +351,7 @@ function ChartsPage() {
     growths: growths.data,
     sleeps: sleeps.data,
     notes: notes.data,
+    solidMeals: solidMeals.data,
   });
   const groups = groupByLocalDay(recent);
   const historyLoading =
@@ -353,7 +361,8 @@ function ChartsPage() {
     nursings.isLoading ||
     growths.isLoading ||
     sleeps.isLoading ||
-    notes.isLoading;
+    notes.isLoading ||
+    solidMeals.isLoading;
 
   // Which local days actually have History entries — so a chart bar for
   // an empty day offers no "jump" (no link, and a mouse click no-ops).

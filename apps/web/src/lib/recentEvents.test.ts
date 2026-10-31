@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compareRecentDesc, mergeRecent, type RecentEvent } from "./recentEvents";
-import type { BottleFeed, Diaper, Growth, Nursing, Pumping, Sleep } from "./types";
+import type { BottleFeed, Diaper, Growth, Nursing, Pumping, Sleep, SolidMeal } from "./types";
 
 // Convenience factories — each returns a minimally-populated record; tests
 // only depend on `id`, `occurred_at`, `created_at`.
@@ -83,6 +83,21 @@ function sleep(id: string, startedAt: string, createdAt = startedAt): Sleep {
     sleep_type: null,
     location: null,
     notes: null,
+    source: "manual",
+    created_at: createdAt,
+  };
+}
+
+function solidMeal(id: string, occurredAt: string, createdAt = occurredAt): SolidMeal {
+  return {
+    id,
+    baby_id: "b1",
+    occurred_at: occurredAt,
+    foods: ["avocado"],
+    reaction: null,
+    amount_g: null,
+    notes: null,
+    has_photo: false,
     source: "manual",
     created_at: createdAt,
   };
@@ -215,5 +230,15 @@ describe("mergeRecent", () => {
     expect(mergeRecent({ nursings: [nursing("nx", "2026-05-22T08:00:00Z")] })).toHaveLength(1);
     expect(mergeRecent({ growths: [growth("gx", "2026-05-22T08:00:00Z")] })).toHaveLength(1);
     expect(mergeRecent({ sleeps: [sleep("sx", "2026-05-22T08:00:00Z")] })).toHaveLength(1);
+    expect(mergeRecent({ solidMeals: [solidMeal("sm", "2026-05-22T08:00:00Z")] })).toHaveLength(1);
+  });
+
+  it("merges solid meals by occurred_at", () => {
+    const merged = mergeRecent({
+      bottleFeeds: [bottle("b-mid", "2026-05-22T09:00:00Z")],
+      solidMeals: [solidMeal("sm-late", "2026-05-22T10:00:00Z")],
+    });
+    expect(merged.map((e) => e.data.id)).toEqual(["sm-late", "b-mid"]);
+    expect(merged[0]?.kind).toBe("solids");
   });
 });

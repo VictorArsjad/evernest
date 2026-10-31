@@ -29,6 +29,7 @@ import (
 	"github.com/varsjad/evernest/apps/api/internal/preferences"
 	"github.com/varsjad/evernest/apps/api/internal/pumping"
 	"github.com/varsjad/evernest/apps/api/internal/sleep"
+	"github.com/varsjad/evernest/apps/api/internal/solidmeal"
 	"github.com/varsjad/evernest/apps/api/internal/spa"
 	"github.com/varsjad/evernest/apps/api/internal/store"
 )
@@ -94,6 +95,7 @@ func mountV1(r chi.Router, cfg *config.Config, st *store.Store, logger *slog.Log
 	growthH := growth.NewHandler(st, logger)
 	sleepH := sleep.NewHandler(st, logger)
 	noteH := note.NewHandler(st, logger)
+	solidH := solidmeal.NewHandler(st, logger)
 	chartH := chart.NewHandler(st, logger)
 	prefsH := preferences.NewHandler(st, logger)
 
@@ -134,6 +136,7 @@ func mountV1(r chi.Router, cfg *config.Config, st *store.Store, logger *slog.Log
 			growthH.BabyRoutes(r)
 			sleepH.BabyRoutes(r)
 			noteH.BabyRoutes(r)
+			solidH.BabyRoutes(r)
 			chartH.BabyRoutes(r)
 		})
 		r.Route("/bottle-feeds/{id}", bottleH.ItemRoutes)
@@ -143,5 +146,6 @@ func mountV1(r chi.Router, cfg *config.Config, st *store.Store, logger *slog.Log
 		r.Route("/growths/{id}", growthH.ItemRoutes)
 		r.Route("/sleeps/{id}", sleepH.ItemRoutes)
 		r.Route("/notes/{id}", noteH.ItemRoutes)
+		r.Route("/solid-meals/{id}", solidH.ItemRoutes)
 	})
 }

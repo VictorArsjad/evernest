@@ -57,6 +57,10 @@ tags:
     description: Logged bottle feeds (expressed breastmilk or formula). Volume in mL.
   - name: Diapers
     description: Diaper changes (wet / soiled / mixed).
+  - name: Solid Meals
+    description: |
+      Complementary-food sittings. Required `foods[]`; optional meal-level
+      reaction, amount (grams), notes, and a single diaper-style photo.
   - name: Pumpings
     description: Pumping sessions (mother expressing milk). Volume in mL, optional duration.
   - name: Nursing Sessions
@@ -854,6 +858,173 @@ paths:
                 format: binary
         "204":
           description: The diaper exists but has no photo attached.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/babies/{babyID}/solid-meals:
+    parameters:
+      - $ref: "#/components/parameters/BabyIDPath"
+    post:
+      tags: [Solid Meals]
+      operationId: createSolidMeal
+      summary: Log a solid meal
+      description: Idempotent on the request body's `id` field.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSolidMealRequest"
+      responses:
+        "201":
+          description: Solid meal created (or returned unchanged on idempotent replay).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SolidMeal"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          description: Photo exceeds the size limit (2 MB raw / 3 MB body).
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Solid Meals]
+      operationId: listSolidMeals
+      summary: List solid meals for a baby
+      parameters:
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: Solid meals in the [from, to) window, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SolidMeal"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/solid-meals/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    patch:
+      tags: [Solid Meals]
+      operationId: updateSolidMeal
+      summary: Update a solid meal
+      description: |
+        Partial update. Same photo clear/replace contract as diapers.
+        Send `reaction: ""` to clear reaction; `clear_amount_g: true` to
+        clear amount. `foods` when present must contain at least one
+        non-empty item after trim.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSolidMealRequest"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SolidMeal"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          description: Photo exceeds the size limit (2 MB raw / 3 MB body).
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Solid Meals]
+      operationId: deleteSolidMeal
+      summary: Delete a solid meal
+      description: Idempotent.
+      responses:
+        "204":
+          description: Deleted (or no row matched).
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/solid-meals/{id}/photo:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    get:
+      tags: [Solid Meals]
+      operationId: getSolidMealPhoto
+      summary: Fetch the photo bytes attached to a solid meal
+      description: |
+        Streams the raw image (JPEG / PNG / WebP). Same auth and cache
+        headers as `GET /v1/diapers/{id}/photo`.
+      responses:
+        "200":
+          description: Image bytes; `Content-Type` matches the stored `photo_mime`.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Always `private, max-age=300`.
+            Content-Type:
+              schema:
+                type: string
+                enum: [image/jpeg, image/png, image/webp]
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "204":
+          description: The solid meal exists but has no photo attached.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -2057,6 +2228,149 @@ components:
             Base64-encoded image bytes. Empty string (`""`) clears the
             stored photo. Same 2 MB raw / 3 MB body caps as the create
             endpoint.
+        photo_mime:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+          description: Required when `photo` is set to a non-empty string.
+
+    SolidMeal:
+      type: object
+      required: [id, baby_id, occurred_at, foods, has_photo, source, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 01919b89-2d3e-7f4a-b5c6-d7e8f9a0b1c3
+        baby_id:
+          type: string
+          format: uuid
+          example: 01919b87-9a8c-7f2d-b1c3-4d5e6f7a8b9c
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T12:00:00Z"
+        foods:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          example: [avocado, banana]
+        reaction:
+          type: string
+          enum: [liked, neutral, refused, reaction]
+          example: liked
+        amount_g:
+          type: number
+          format: float
+          minimum: 0
+          description: Optional amount eaten, canonical grams.
+          example: 40.5
+        notes:
+          type: string
+          example: "first try"
+        has_photo:
+          type: boolean
+          description: |
+            True when the row has an attached photo. Bytes via
+            `GET /v1/solid-meals/{id}/photo`.
+          example: false
+        photo_mime:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+          description: MIME of the attached photo. Omitted when `has_photo` is false.
+          example: image/jpeg
+        source:
+          type: string
+          example: manual
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T12:00:01Z"
+
+    CreateSolidMealRequest:
+      type: object
+      required: [occurred_at, foods]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Optional client-supplied UUIDv7 for idempotency.
+          example: 01919b89-2d3e-7f4a-b5c6-d7e8f9a0b1c3
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T12:00:00Z"
+        foods:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          description: At least one non-empty food after trim.
+          example: [avocado, banana]
+        reaction:
+          type: string
+          enum: [liked, neutral, refused, reaction]
+          example: liked
+        amount_g:
+          type: number
+          format: float
+          minimum: 0
+          example: 40.5
+        notes:
+          type: string
+          example: "first try"
+        photo:
+          type: string
+          format: byte
+          description: |
+            Optional photo bytes, base64-encoded (no `data:` prefix). Same
+            size caps as diaper photos.
+        photo_mime:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+          description: Required when `photo` is set.
+
+    UpdateSolidMealRequest:
+      type: object
+      description: |
+        All fields optional. Omitted fields are left unchanged. Send an
+        empty string for `notes`, `reaction`, or `photo` to clear; send
+        `clear_amount_g: true` to clear amount; send fresh `photo` +
+        `photo_mime` to replace.
+      properties:
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-05-26T12:00:00Z"
+        foods:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          example: [avocado, banana]
+        reaction:
+          type: string
+          enum: [liked, neutral, refused, reaction]
+          description: Empty string clears the stored reaction.
+          example: liked
+        amount_g:
+          type: number
+          format: float
+          minimum: 0
+          example: 40.5
+        clear_amount_g:
+          type: boolean
+          description: When true, clears `amount_g` regardless of `amount_g`.
+          example: true
+        notes:
+          type: string
+          example: "first try"
+        photo:
+          type: string
+          format: byte
+          description: |
+            Base64-encoded image bytes. Empty string (`""`) clears the
+            stored photo.
         photo_mime:
           type: string
           enum: [image/jpeg, image/png, image/webp]

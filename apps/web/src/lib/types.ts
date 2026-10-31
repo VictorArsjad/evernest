@@ -109,6 +109,25 @@ export interface Diaper {
   created_at: string;
 }
 
+export type SolidMealReaction = "liked" | "neutral" | "refused" | "reaction";
+
+// SolidMeal: a complementary-food sitting. foods[] is required; reaction,
+// amount_g, notes, and photo are optional. Photo reuses the diaper
+// pipeline (has_photo canary + GET /v1/solid-meals/{id}/photo).
+export interface SolidMeal {
+  id: string;
+  baby_id: string;
+  occurred_at: string;
+  foods: string[];
+  reaction?: SolidMealReaction | null;
+  amount_g?: number | null;
+  notes?: string | null;
+  has_photo: boolean;
+  photo_mime?: DiaperPhotoMime | null;
+  source: string;
+  created_at: string;
+}
+
 // Note: a free-form caregiver observation ("had a small rash on hand"). The
 // free text IS the entry, so `body` is required (unlike the optional `notes`
 // column the other kinds carry). Reuses the diaper photo pipeline — has_photo
@@ -210,12 +229,12 @@ export interface UserPreferences {
   // flattens (preset, overrides) into a concrete color per series.
   chart_palette: ChartPalette;
   // feature_visibility lets the user hide event kinds (bottle / nursing /
-  // pumping / diaper / growth) from the Today banner stats, the action
-  // tile grid, and the /charts cards. Stored sparsely as JSONB on
-  // user_preferences (migration 000009): a key only appears when
-  // explicitly hidden, e.g. {"bottle": false}. Missing key ⇒ visible.
-  // See lib/featureVisibility.ts for the helper used at every render
-  // surface.
+  // pumping / diaper / solids / growth / sleep / note) from the Today
+  // banner stats, the action tile grid, and the /charts cards. Stored
+  // sparsely as JSONB on user_preferences (migration 000009): a key only
+  // appears when explicitly hidden, e.g. {"bottle": false}. Missing key
+  // ⇒ visible. See lib/featureVisibility.ts for the helper used at every
+  // render surface.
   feature_visibility: FeatureVisibilityMap;
   // autofill_bottle_amount gates the bottle-feed log form's "prefill the
   // Amount field from recent feeds" convenience. Bottle amounts are

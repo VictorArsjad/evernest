@@ -130,6 +130,7 @@ var allowedFeatureKeys = map[string]struct{}{
 	"nursing": {},
 	"pumping": {},
 	"diaper":  {},
+	"solids":  {},
 	"growth":  {},
 	"sleep":   {},
 	"note":    {},
