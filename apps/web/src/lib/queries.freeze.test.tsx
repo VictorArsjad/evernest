@@ -1272,7 +1272,7 @@ describe.each(SESSIONS)("$kind: open session + end", (s) => {
   // list prefix, so removeFromList's setQueriesData also hits the open entry
   // (an object, not an array) and `.filter` throws inside onSuccess. The
   // open-clear step never runs, so the open session stays cached.
-  it("delete with a cached open session throws in onSuccess and leaves it cached", async () => {
+  it("KNOWN BUG (approved fix): delete with a cached open session throws in onSuccess and leaves it cached", async () => {
     stubFetch(() => noContent());
     const { qc, wrapper } = setup();
     qc.setQueryData(s.openKey(BABY), s.openRow);
