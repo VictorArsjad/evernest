@@ -1,37 +1,26 @@
 // Quick-log form for solid meals. Foods as chips (enter/comma to add),
 // optional meal-level reaction, optional amount (baby unit_weight ↔ grams),
 // optional notes + diaper-style photo. Edit mode via `?edit=<uuid>`.
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
 
-import { DeleteEntryButton } from "../components/DeleteEntryButton";
+import { LogFormLayout } from "../components/LogFormLayout";
 import { isoToLocalDatetimeInput, localToISO, nowLocalDatetimeInput } from "../lib/datetime";
 import { MAX_PHOTO_BYTES, compressForUpload } from "../lib/image";
 import {
-  useBabies,
   useCreateSolidMeal,
   useDeleteSolidMeal,
-  useHouseholds,
   useSolidMealPhotoUrl,
   useSolidMeals,
   useUpdateSolidMeal,
 } from "../lib/queries";
-import { submitOnEnter } from "../lib/submitOnEnter";
-import { useActiveBaby } from "../lib/useActiveBaby";
-import type { DiaperPhotoMime, SolidMeal, SolidMealReaction } from "../lib/types";
-import { useEscapeKey } from "../lib/useEscapeKey";
+import { logSearchSchema, useLogForm } from "../lib/logForm";
+import type { DiaperPhotoMime, SolidMealReaction } from "../lib/types";
 import { displayWeightToG, gToDisplayWeight, weightUnitLabel } from "../lib/units";
 import { usePreferences } from "../lib/usePreferences";
 
-const search = z.object({
-  babyId: z.string().uuid().optional(),
-  edit: z.string().uuid().optional(),
-});
-
 export const Route = createFileRoute("/_app/log/solids")({
-  validateSearch: search,
+  validateSearch: logSearchSchema,
   component: LogSolidsPage,
 });
 
@@ -60,27 +49,21 @@ function base64ToBlob(base64: string, mime: string): Blob {
 }
 
 function LogSolidsPage() {
-  const nav = useNavigate();
-  useEscapeKey(() => nav({ to: "/" }));
-  const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
-  const households = useHouseholds();
-  const householdId = households.data?.[0]?.id ?? null;
-  const babies = useBabies(householdId);
-  const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
-  const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
+  const create = useCreateSolidMeal();
+  const update = useUpdateSolidMeal();
+  const del = useDeleteSolidMeal();
+  // Solids reads create AND update for pending/error state, not just the
+  // mutation matching the mode.
+  const form = useLogForm({
+    segment: "solid-meals",
+    search: Route.useSearch(),
+    create,
+    update,
+    del,
+    errorScope: "either",
+  });
+  const { babyId, isEditMode, editId, existing } = form;
   const { prefs } = usePreferences(babyId);
-
-  const isEditMode = !!editId;
-  const qc = useQueryClient();
-  const existing: SolidMeal | null = useMemo(() => {
-    if (!editId || !babyId) return null;
-    const lists = qc.getQueriesData<SolidMeal[] | undefined>({
-      queryKey: ["babies", babyId, "solid-meals"],
-    }) as Array<[unknown, SolidMeal[] | undefined]>;
-    return (
-      lists.flatMap(([, list]) => list ?? []).find((r) => r.id === editId) ?? null
-    );
-  }, [qc, editId, babyId]);
 
   // Recent meals for food-name suggestions (last ~14 days).
   const suggestFrom = useMemo(() => {
@@ -119,10 +102,6 @@ function LogSolidsPage() {
   const [photoBusy, setPhotoBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const create = useCreateSolidMeal();
-  const update = useUpdateSolidMeal();
-  const del = useDeleteSolidMeal();
 
   const existingPhotoUrl = useSolidMealPhotoUrl(
     isEditMode ? editId ?? null : null,
@@ -224,9 +203,7 @@ function LogSolidsPage() {
     return displayWeightToG(n, prefs.unit_weight);
   };
 
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!babyId) return;
+  const onSubmit = () => {
     setFormError(null);
     if (foods.length === 0) {
       setFormError("Add at least one food");
@@ -235,36 +212,17 @@ function LogSolidsPage() {
     const amountG = parseAmountG();
     if (amountG === undefined) return;
 
-    if (isEditMode && editId) {
-      let photoBase64: string | undefined;
-      let photoMime: DiaperPhotoMime | undefined;
-      if (pendingPhoto) {
-        photoBase64 = pendingPhoto.base64;
-        photoMime = pendingPhoto.mime;
-      } else if (existingCleared) {
-        photoBase64 = "";
-      }
-      const hadAmount = existing?.amount_g != null;
-      update.mutate(
-        {
-          id: editId,
-          babyId,
-          occurred_at: localToISO(occurredLocal),
-          foods,
-          reaction: reaction ?? "",
-          amount_g: amountG,
-          clear_amount_g: amountG === null && hadAmount,
-          notes: notes.trim(),
-          photoBase64,
-          photoMime,
-        },
-        { onSuccess: () => nav({ to: "/" }) },
-      );
-      return;
+    let photoBase64: string | undefined;
+    let photoMime: DiaperPhotoMime | undefined;
+    if (pendingPhoto) {
+      photoBase64 = pendingPhoto.base64;
+      photoMime = pendingPhoto.mime;
+    } else if (existingCleared) {
+      photoBase64 = "";
     }
-    create.mutate(
-      {
-        babyId,
+    const hadAmount = existing?.amount_g != null;
+    form.save({
+      create: {
         occurred_at: localToISO(occurredLocal),
         foods,
         reaction: reaction ?? undefined,
@@ -273,40 +231,32 @@ function LogSolidsPage() {
         photoBase64: pendingPhoto?.base64,
         photoMime: pendingPhoto?.mime,
       },
-      { onSuccess: () => nav({ to: "/" }) },
-    );
+      update: {
+        occurred_at: localToISO(occurredLocal),
+        foods,
+        reaction: reaction ?? "",
+        amount_g: amountG,
+        clear_amount_g: amountG === null && hadAmount,
+        notes: notes.trim(),
+        photoBase64,
+        photoMime,
+      },
+    });
   };
 
-  const pending = create.isPending || update.isPending;
-  const hadError = create.isError || update.isError || !!formError;
-  const errorMsg =
-    formError ??
-    ((create.error ?? update.error) as Error | null | undefined)?.message;
   const previewUrl =
     pendingPhoto?.previewUrl ??
     (existingPhotoUrl && !existingCleared ? existingPhotoUrl : null);
   const showExistingBadge = !!existingPhotoUrl && !pendingPhoto && !existingCleared;
 
-  if (!babyId) {
-    return <p className="p-6 text-white/60">No baby selected.</p>;
-  }
-
   return (
-    <main className="flex flex-1 flex-col gap-4 p-5">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">
-          {isEditMode ? "Edit solids" : "Log solids"}
-        </h1>
-        <button onClick={() => nav({ to: "/" })} className="text-sm text-white/60">
-          Cancel
-        </button>
-      </header>
-
-      <form
-        onSubmit={onSubmit}
-        onKeyDown={submitOnEnter}
-        className="card flex flex-col gap-5 p-5"
-      >
+    <LogFormLayout
+      form={form}
+      createTitle="Log solids"
+      editTitle="Edit solids"
+      onSubmit={onSubmit}
+      formError={formError}
+    >
         <div className="flex flex-col gap-2 text-sm">
           <span className="text-xs uppercase tracking-wide text-white/50">Foods</span>
           <div className="flex flex-wrap gap-2 rounded-xl bg-bg-subtle px-3 py-2">
@@ -448,27 +398,6 @@ function LogSolidsPage() {
           {photoBusy && <p className="text-xs text-white/50">Compressing…</p>}
           {photoError && <p className="text-xs text-red-400">{photoError}</p>}
         </div>
-
-        {hadError && (
-          <p className="text-sm text-red-400">{errorMsg ?? "could not save"}</p>
-        )}
-
-        <button type="submit" className="btn-primary text-lg" disabled={pending}>
-          {pending ? "Saving…" : isEditMode ? "Save changes" : "Save"}
-        </button>
-
-        {isEditMode && editId && (
-          <DeleteEntryButton
-            pending={del.isPending}
-            onConfirm={() =>
-              del.mutate(
-                { id: editId, babyId },
-                { onSuccess: () => nav({ to: "/" }) },
-              )
-            }
-          />
-        )}
-      </form>
-    </main>
+    </LogFormLayout>
   );
 }

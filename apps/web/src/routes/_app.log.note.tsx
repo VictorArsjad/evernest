@@ -6,34 +6,23 @@
 //
 // Note: `submitOnEnter` deliberately skips textareas, so Enter inside the body
 // inserts a newline; the Save button (or Enter from the When field) submits.
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
+import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
 
-import { DeleteEntryButton } from "../components/DeleteEntryButton";
+import { LogFormLayout } from "../components/LogFormLayout";
 import { isoToLocalDatetimeInput, localToISO, nowLocalDatetimeInput } from "../lib/datetime";
 import { MAX_PHOTO_BYTES, compressForUpload } from "../lib/image";
 import {
-  useBabies,
   useCreateNote,
   useDeleteNote,
-  useHouseholds,
   useNotePhotoUrl,
   useUpdateNote,
 } from "../lib/queries";
-import { submitOnEnter } from "../lib/submitOnEnter";
-import { useActiveBaby } from "../lib/useActiveBaby";
-import type { DiaperPhotoMime, Note } from "../lib/types";
-import { useEscapeKey } from "../lib/useEscapeKey";
-
-const search = z.object({
-  babyId: z.string().uuid().optional(),
-  edit: z.string().uuid().optional(),
-});
+import { logSearchSchema, useLogForm, usePrefillOnce, useRestampOnFocus } from "../lib/logForm";
+import type { DiaperPhotoMime } from "../lib/types";
 
 export const Route = createFileRoute("/_app/log/note")({
-  validateSearch: search,
+  validateSearch: logSearchSchema,
   component: LogNotePage,
 });
 
@@ -61,26 +50,17 @@ function base64ToBlob(base64: string, mime: string): Blob {
 }
 
 function LogNotePage() {
-  const nav = useNavigate();
-  useEscapeKey(() => nav({ to: "/" }));
-  const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
-  const households = useHouseholds();
-  const householdId = households.data?.[0]?.id ?? null;
-  const babies = useBabies(householdId);
-  const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
-  const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
-
-  const isEditMode = !!editId;
-  const qc = useQueryClient();
-  const existing: Note | null = useMemo(() => {
-    if (!editId || !babyId) return null;
-    const lists = qc.getQueriesData<Note[] | undefined>({
-      queryKey: ["babies", babyId, "notes"],
-    }) as Array<[unknown, Note[] | undefined]>;
-    return (
-      lists.flatMap(([, list]) => list ?? []).find((r) => r.id === editId) ?? null
-    );
-  }, [qc, editId, babyId]);
+  const create = useCreateNote();
+  const update = useUpdateNote();
+  const del = useDeleteNote();
+  const form = useLogForm({
+    segment: "notes",
+    search: Route.useSearch(),
+    create,
+    update,
+    del,
+  });
+  const { isEditMode, editId, existing } = form;
 
   const [body, setBody] = useState("");
   const [occurredLocal, setOccurredLocal] = useState(nowLocalDatetimeInput);
@@ -97,10 +77,6 @@ function LogNotePage() {
   const [photoBusy, setPhotoBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const create = useCreateNote();
-  const update = useUpdateNote();
-  const del = useDeleteNote();
-
   const existingPhotoUrl = useNotePhotoUrl(
     isEditMode ? editId ?? null : null,
     isEditMode && !existingCleared && !!existing?.has_photo,
@@ -110,13 +86,10 @@ function LogNotePage() {
   const showExistingBadge =
     isEditMode && !!existing?.has_photo && !pendingPhoto && !existingCleared;
 
-  const prefilledRef = useRef(false);
-  useEffect(() => {
-    if (!isEditMode || prefilledRef.current || !existing) return;
-    setBody(existing.body);
-    setOccurredLocal(isoToLocalDatetimeInput(existing.occurred_at));
-    prefilledRef.current = true;
-  }, [isEditMode, existing]);
+  usePrefillOnce(isEditMode, existing, (row) => {
+    setBody(row.body);
+    setOccurredLocal(isoToLocalDatetimeInput(row.occurred_at));
+  });
 
   useEffect(() => {
     return () => {
@@ -124,16 +97,7 @@ function LogNotePage() {
     };
   }, [pendingPhoto?.previewUrl]);
 
-  useEffect(() => {
-    if (isEditMode) return;
-    const onFocus = () => setOccurredLocal(nowLocalDatetimeInput());
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [isEditMode]);
-
-  const pending = isEditMode ? update.isPending : create.isPending;
-  const errorMsg = isEditMode ? update.error?.message : create.error?.message;
-  const hadError = isEditMode ? update.isError : create.isError;
+  useRestampOnFocus(isEditMode, setOccurredLocal);
 
   const onPickPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -188,65 +152,41 @@ function LogNotePage() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!babyId) return;
+  const onSubmit = () => {
     const trimmedBody = body.trim();
     if (!trimmedBody) return;
-    if (isEditMode && editId) {
-      let photoBase64: string | undefined;
-      let photoMime: DiaperPhotoMime | undefined;
-      if (pendingPhoto) {
-        photoBase64 = pendingPhoto.base64;
-        photoMime = pendingPhoto.mime;
-      } else if (existingCleared) {
-        photoBase64 = "";
-      }
-      update.mutate(
-        {
-          id: editId,
-          babyId,
-          occurred_at: localToISO(occurredLocal),
-          body: trimmedBody,
-          photoBase64,
-          photoMime,
-        },
-        { onSuccess: () => nav({ to: "/" }) },
-      );
-      return;
+    let photoBase64: string | undefined;
+    let photoMime: DiaperPhotoMime | undefined;
+    if (pendingPhoto) {
+      photoBase64 = pendingPhoto.base64;
+      photoMime = pendingPhoto.mime;
+    } else if (existingCleared) {
+      photoBase64 = "";
     }
-    create.mutate(
-      {
-        babyId,
+    form.save({
+      create: {
         occurred_at: localToISO(occurredLocal),
         body: trimmedBody,
         photoBase64: pendingPhoto?.base64,
         photoMime: pendingPhoto?.mime,
       },
-      { onSuccess: () => nav({ to: "/" }) },
-    );
+      update: {
+        occurred_at: localToISO(occurredLocal),
+        body: trimmedBody,
+        photoBase64,
+        photoMime,
+      },
+    });
   };
 
-  if (!babyId) {
-    return <p className="p-6 text-white/60">No baby selected.</p>;
-  }
-
   return (
-    <main className="flex flex-1 flex-col gap-4 p-5">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">
-          {isEditMode ? "Edit note" : "Add note"}
-        </h1>
-        <button onClick={() => nav({ to: "/" })} className="text-sm text-white/60">
-          Cancel
-        </button>
-      </header>
-
-      <form
-        onSubmit={onSubmit}
-        onKeyDown={submitOnEnter}
-        className="card flex flex-col gap-5 p-5"
-      >
+    <LogFormLayout
+      form={form}
+      createTitle="Add note"
+      editTitle="Edit note"
+      onSubmit={onSubmit}
+      submitDisabled={!body.trim()}
+    >
         <label className="flex flex-col gap-1 text-sm">
           Notes
           <textarea
@@ -306,31 +246,6 @@ function LogNotePage() {
           {photoBusy && <p className="text-xs text-white/50">Compressing…</p>}
           {photoError && <p className="text-xs text-red-400">{photoError}</p>}
         </div>
-
-        {hadError && (
-          <p className="text-sm text-red-400">{errorMsg ?? "could not save"}</p>
-        )}
-
-        <button
-          type="submit"
-          className="btn-primary text-lg"
-          disabled={pending || !body.trim()}
-        >
-          {pending ? "Saving…" : isEditMode ? "Save changes" : "Save"}
-        </button>
-
-        {isEditMode && editId && (
-          <DeleteEntryButton
-            pending={del.isPending}
-            onConfirm={() =>
-              del.mutate(
-                { id: editId, babyId },
-                { onSuccess: () => nav({ to: "/" }) },
-              )
-            }
-          />
-        )}
-      </form>
-    </main>
+    </LogFormLayout>
   );
 }

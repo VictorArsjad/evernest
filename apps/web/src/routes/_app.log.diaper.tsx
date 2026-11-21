@@ -4,34 +4,23 @@
 // bottle log so the muscle memory carries over. In edit mode
 // (`?edit=<uuid>`) the form patches an existing row and exposes a Delete
 // button for accidental double-logs.
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
+import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
 
-import { DeleteEntryButton } from "../components/DeleteEntryButton";
+import { LogFormLayout } from "../components/LogFormLayout";
 import { isoToLocalDatetimeInput, localToISO, nowLocalDatetimeInput } from "../lib/datetime";
 import { MAX_PHOTO_BYTES, compressForUpload } from "../lib/image";
 import {
-  useBabies,
   useCreateDiaper,
   useDeleteDiaper,
   useDiaperPhotoUrl,
-  useHouseholds,
   useUpdateDiaper,
 } from "../lib/queries";
-import { submitOnEnter } from "../lib/submitOnEnter";
-import { useActiveBaby } from "../lib/useActiveBaby";
-import type { Diaper, DiaperPhotoMime, DiaperType } from "../lib/types";
-import { useEscapeKey } from "../lib/useEscapeKey";
-
-const search = z.object({
-  babyId: z.string().uuid().optional(),
-  edit: z.string().uuid().optional(),
-});
+import { logSearchSchema, useLogForm, usePrefillOnce, useRestampOnFocus } from "../lib/logForm";
+import type { DiaperPhotoMime, DiaperType } from "../lib/types";
 
 export const Route = createFileRoute("/_app/log/diaper")({
-  validateSearch: search,
+  validateSearch: logSearchSchema,
   component: LogDiaperPage,
 });
 
@@ -61,26 +50,17 @@ function base64ToBlob(base64: string, mime: string): Blob {
 }
 
 function LogDiaperPage() {
-  const nav = useNavigate();
-  useEscapeKey(() => nav({ to: "/" }));
-  const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
-  const households = useHouseholds();
-  const householdId = households.data?.[0]?.id ?? null;
-  const babies = useBabies(householdId);
-  const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
-  const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
-
-  const isEditMode = !!editId;
-  const qc = useQueryClient();
-  const existing: Diaper | null = useMemo(() => {
-    if (!editId || !babyId) return null;
-    const lists = qc.getQueriesData<Diaper[] | undefined>({
-      queryKey: ["babies", babyId, "diapers"],
-    }) as Array<[unknown, Diaper[] | undefined]>;
-    return (
-      lists.flatMap(([, list]) => list ?? []).find((r) => r.id === editId) ?? null
-    );
-  }, [qc, editId, babyId]);
+  const create = useCreateDiaper();
+  const update = useUpdateDiaper();
+  const del = useDeleteDiaper();
+  const form = useLogForm({
+    segment: "diapers",
+    search: Route.useSearch(),
+    create,
+    update,
+    del,
+  });
+  const { isEditMode, editId, existing } = form;
 
   const [type, setType] = useState<DiaperType>("wet");
   const [occurredLocal, setOccurredLocal] = useState(nowLocalDatetimeInput);
@@ -104,10 +84,6 @@ function LogDiaperPage() {
   const [photoBusy, setPhotoBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const create = useCreateDiaper();
-  const update = useUpdateDiaper();
-  const del = useDeleteDiaper();
-
   // In edit mode, fetch the BE-stored photo lazily so the form shows
   // what's currently saved. The hook is a no-op when has_photo is false
   // or the row isn't loaded yet.
@@ -122,14 +98,11 @@ function LogDiaperPage() {
   const showExistingBadge =
     isEditMode && !!existing?.has_photo && !pendingPhoto && !existingCleared;
 
-  const prefilledRef = useRef(false);
-  useEffect(() => {
-    if (!isEditMode || prefilledRef.current || !existing) return;
-    setType(existing.type);
-    setOccurredLocal(isoToLocalDatetimeInput(existing.occurred_at));
-    setNotes(existing.notes ?? "");
-    prefilledRef.current = true;
-  }, [isEditMode, existing]);
+  usePrefillOnce(isEditMode, existing, (row) => {
+    setType(row.type);
+    setOccurredLocal(isoToLocalDatetimeInput(row.occurred_at));
+    setNotes(row.notes ?? "");
+  });
 
   // Revoke the locally-created blob URL when the user replaces it or
   // navigates away. The BE-fetched URL is managed by useDiaperPhotoUrl
@@ -140,16 +113,7 @@ function LogDiaperPage() {
     };
   }, [pendingPhoto?.previewUrl]);
 
-  useEffect(() => {
-    if (isEditMode) return;
-    const onFocus = () => setOccurredLocal(nowLocalDatetimeInput());
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [isEditMode]);
-
-  const pending = isEditMode ? update.isPending : create.isPending;
-  const errorMsg = isEditMode ? update.error?.message : create.error?.message;
-  const hadError = isEditMode ? update.isError : create.isError;
+  useRestampOnFocus(isEditMode, setOccurredLocal);
 
   // onPickPhoto runs the freshly-picked file through compressForUpload
   // (resize → JPEG q=0.8) and stages it for submit. We hold an object
@@ -234,69 +198,44 @@ function LogDiaperPage() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!babyId) return;
-    if (isEditMode && editId) {
-      // PATCH semantics:
-      //   - new photo picked     → send base64 + mime (replace)
-      //   - existingCleared flag → send "" (clear)
-      //   - neither              → omit, leave column alone
-      let photoBase64: string | undefined;
-      let photoMime: DiaperPhotoMime | undefined;
-      if (pendingPhoto) {
-        photoBase64 = pendingPhoto.base64;
-        photoMime = pendingPhoto.mime;
-      } else if (existingCleared) {
-        photoBase64 = "";
-      }
-      update.mutate(
-        {
-          id: editId,
-          babyId,
-          occurred_at: localToISO(occurredLocal),
-          type,
-          notes: notes.trim(),
-          photoBase64,
-          photoMime,
-        },
-        { onSuccess: () => nav({ to: "/" }) },
-      );
-      return;
+  const onSubmit = () => {
+    // PATCH semantics:
+    //   - new photo picked     → send base64 + mime (replace)
+    //   - existingCleared flag → send "" (clear)
+    //   - neither              → omit, leave column alone
+    let photoBase64: string | undefined;
+    let photoMime: DiaperPhotoMime | undefined;
+    if (pendingPhoto) {
+      photoBase64 = pendingPhoto.base64;
+      photoMime = pendingPhoto.mime;
+    } else if (existingCleared) {
+      photoBase64 = "";
     }
-    create.mutate(
-      {
-        babyId,
+    form.save({
+      create: {
         occurred_at: localToISO(occurredLocal),
         type,
         notes: notes.trim() || undefined,
         photoBase64: pendingPhoto?.base64,
         photoMime: pendingPhoto?.mime,
       },
-      { onSuccess: () => nav({ to: "/" }) },
-    );
+      update: {
+        occurred_at: localToISO(occurredLocal),
+        type,
+        notes: notes.trim(),
+        photoBase64,
+        photoMime,
+      },
+    });
   };
 
-  if (!babyId) {
-    return <p className="p-6 text-white/60">No baby selected.</p>;
-  }
-
   return (
-    <main className="flex flex-1 flex-col gap-4 p-5">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">
-          {isEditMode ? "Edit diaper" : "Log diaper"}
-        </h1>
-        <button onClick={() => nav({ to: "/" })} className="text-sm text-white/60">
-          Cancel
-        </button>
-      </header>
-
-      <form
-        onSubmit={onSubmit}
-        onKeyDown={submitOnEnter}
-        className="card flex flex-col gap-5 p-5"
-      >
+    <LogFormLayout
+      form={form}
+      createTitle="Log diaper"
+      editTitle="Edit diaper"
+      onSubmit={onSubmit}
+    >
         <div>
           <span className="text-xs uppercase tracking-wide text-white/50">Type</span>
           <div className="mt-2 grid grid-cols-3 gap-2">
@@ -369,28 +308,7 @@ function LogDiaperPage() {
           {photoBusy && <p className="text-xs text-white/50">Compressing…</p>}
           {photoError && <p className="text-xs text-red-400">{photoError}</p>}
         </div>
-
-        {hadError && (
-          <p className="text-sm text-red-400">{errorMsg ?? "could not save"}</p>
-        )}
-
-        <button type="submit" className="btn-primary text-lg" disabled={pending}>
-          {pending ? "Saving…" : isEditMode ? "Save changes" : "Save"}
-        </button>
-
-        {isEditMode && editId && (
-          <DeleteEntryButton
-            pending={del.isPending}
-            onConfirm={() =>
-              del.mutate(
-                { id: editId, babyId },
-                { onSuccess: () => nav({ to: "/" }) },
-              )
-            }
-          />
-        )}
-      </form>
-    </main>
+    </LogFormLayout>
   );
 }
 
