@@ -28,6 +28,7 @@ import {
   tooltipXPercent,
   type SparkBar,
 } from "../lib/charts";
+import { chartEndDate, entryDayKeys, historyWindows } from "../lib/daySummary";
 import { isFeatureVisible } from "../lib/featureVisibility";
 import { groupByLocalDay, type DayGroup } from "../lib/groupByDay";
 import { DEFAULT_PALETTE, resolve } from "../lib/palette";
@@ -265,17 +266,7 @@ function ChartsPage() {
   // Pinning `now` per-render is fine — TanStack only refetches when
   // the queryKey changes, and the YYYY-MM-DD strings only change at
   // local midnight. We don't need to memoize harder than that.
-  //
-  // `endDate` is the last day of the visible window: today when offset
-  // is 0, otherwise `offset * range` days earlier. setDate arithmetic
-  // (not MS_PER_DAY offsets) keeps windows on wall-clock day boundaries
-  // across DST transitions.
-  const endDate = useMemo(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - offset * range);
-    return d;
-  }, [range, offset]);
+  const endDate = useMemo(() => chartEndDate(new Date(), range, offset), [range, offset]);
   const window = useMemo(() => dailyWindowEndingOn(endDate, range), [endDate, range]);
   const charts = useDailyCharts(babyId, window.from, window.to, BROWSER_TZ, {
     // Past windows are immutable — polling them every 5 min is waste.
@@ -286,13 +277,10 @@ function ChartsPage() {
   // History covers the same range window, but as ISO instants over the
   // raw event feeds (charts read pre-aggregated daily rows). Both
   // sections are driven by the single range control above.
-  const historyWindow = useMemo(() => {
-    const fromDate = new Date(endDate);
-    fromDate.setDate(fromDate.getDate() - (range - 1));
-    const toDate = new Date(endDate);
-    toDate.setHours(23, 59, 59, 999);
-    return { from: fromDate.toISOString(), to: toDate.toISOString() };
-  }, [endDate, range]);
+  const { history: historyWindow, rhythm: rhythmWindow } = useMemo(
+    () => historyWindows(endDate, range),
+    [endDate, range],
+  );
   const feeds = useBottleFeeds(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const diapers = useDiapers(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const pumpings = usePumpings(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
@@ -306,15 +294,7 @@ function ChartsPage() {
     historyWindow.to,
     HISTORY_HOOK_OPTS,
   );
-  // The rhythm chart needs one extra lookback day: an overnight sleep
-  // that STARTED before the window still paints the window's first
-  // morning once clipped at midnight. Kept as its own query (separate
-  // key) so the History list above never grows a phantom day group.
-  const rhythmWindow = useMemo(() => {
-    const fromDate = new Date(endDate);
-    fromDate.setDate(fromDate.getDate() - range);
-    return { from: fromDate.toISOString(), to: historyWindow.to };
-  }, [endDate, range, historyWindow.to]);
+  // Own query (separate key) so the History list never grows a phantom day group.
   const rhythmSleeps = useSleeps(babyId, rhythmWindow.from, rhythmWindow.to, HISTORY_HOOK_OPTS);
 
   // Window navigation. `goForward`'s clamp at 0 is the only guard we
@@ -366,13 +346,13 @@ function ChartsPage() {
 
   // Which local days actually have History entries — so a chart bar for
   // an empty day offers no "jump" (no link, and a mouse click no-ops).
-  const entryDayKeys = new Set(groups.map((g) => g.dayKey));
+  const entryDays = entryDayKeys(groups);
 
   // Jump from a chart bar (metric `kind`, day `date`) to that day's
   // History: expand it, glow the matching rows, scroll it into view. The
   // null→value reset restarts the CSS glow even on a repeat click.
   const handleSelectDay = (date: string, kind: RecentEvent["kind"]) => {
-    if (!entryDayKeys.has(date)) return;
+    if (!entryDays.has(date)) return;
     setExpandOverrides((prev) => ({ ...prev, [date]: true }));
     setHighlight(null);
     requestAnimationFrame(() => setHighlight({ dayKey: date, kind }));
@@ -435,7 +415,7 @@ function ChartsPage() {
           prefs={prefs}
           todayYMD={formatLocalYMD(new Date())}
           onSelectDay={handleSelectDay}
-          entryDayKeys={entryDayKeys}
+          entryDayKeys={entryDays}
         />
       )}
 
@@ -449,7 +429,7 @@ function ChartsPage() {
           toYMD={window.to}
           todayYMD={sleepDayKey(new Date(), prefs.day_start_hour)}
           onSelectDay={(date) => handleSelectDay(date, "sleep")}
-          entryDayKeys={entryDayKeys}
+          entryDayKeys={entryDays}
         />
       )}
 

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  chartEndDate,
+  entryDayKeys,
+  historyWindows,
   lastEvents,
   lastWokeAtOf,
   latestWeightGrams,
@@ -8,6 +11,7 @@ import {
   todayTotals,
   todayWindows,
 } from "./daySummary";
+import type { DayGroup } from "./groupByDay";
 import type { BottleFeed, Growth, Nursing, Pumping, Sleep } from "./types";
 
 // Local-time builder so the tests are timezone-independent (the module
@@ -172,5 +176,53 @@ describe("lastWokeAtOf", () => {
     expect(
       lastWokeAtOf([s("2026-11-22T01:00:00Z"), s(null), s("2026-11-22T04:00:00Z")]),
     ).toBe("2026-11-22T04:00:00Z");
+  });
+});
+
+describe("chartEndDate", () => {
+  const now = local(2026, 11, 22, 15, 30);
+
+  it("is local midnight today at offset 0", () => {
+    expect(chartEndDate(now, 14, 0).getTime()).toBe(local(2026, 11, 22).getTime());
+  });
+
+  it("steps back offset * range wall-clock days", () => {
+    expect(chartEndDate(now, 7, 2).getTime()).toBe(local(2026, 11, 8).getTime());
+  });
+
+  it("does not mutate its input", () => {
+    const copy = new Date(now);
+    chartEndDate(now, 7, 1);
+    expect(now.getTime()).toBe(copy.getTime());
+  });
+});
+
+describe("historyWindows", () => {
+  const end = local(2026, 11, 22);
+
+  it("history covers `range` days ending at the last ms of endDate", () => {
+    const { history } = historyWindows(end, 7);
+    expect(history.from).toBe(local(2026, 11, 16).toISOString());
+    expect(history.to).toBe(local(2026, 11, 22, 23, 59, 59, 999).toISOString());
+  });
+
+  it("rhythm reaches one extra lookback day and shares the end", () => {
+    const { history, rhythm } = historyWindows(end, 7);
+    expect(rhythm.from).toBe(local(2026, 11, 15).toISOString());
+    expect(rhythm.to).toBe(history.to);
+  });
+
+  it("does not mutate endDate", () => {
+    const copy = new Date(end);
+    historyWindows(end, 30);
+    expect(end.getTime()).toBe(copy.getTime());
+  });
+});
+
+describe("entryDayKeys", () => {
+  it("collects the day keys of the groups", () => {
+    const groups = [{ dayKey: "2026-11-22" }, { dayKey: "2026-11-20" }] as unknown as DayGroup[];
+    expect([...entryDayKeys(groups)].sort()).toEqual(["2026-11-20", "2026-11-22"]);
+    expect(entryDayKeys([]).size).toBe(0);
   });
 });

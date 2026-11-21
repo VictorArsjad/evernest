@@ -2,6 +2,7 @@
 // Charts & History screen — query windows, daily totals, "last X" labels,
 // per-day history rollups and the /day averages. No React; the routes
 // fetch, call these, and render.
+import type { DayGroup } from "./groupByDay";
 import { currentSleepDayBounds } from "./sleepDays";
 import { lastEventAt, type EventLike } from "./timeSince";
 import type { BottleFeed, Growth, Nursing, Pumping, Sleep } from "./types";
@@ -116,4 +117,44 @@ export function lastWokeAtOf(sleeps: readonly Sleep[] | undefined): string | nul
       .sort()
       .at(-1) ?? null
   );
+}
+
+// --- Charts & History windows ---
+
+// chartEndDate is the last day of the visible window: local midnight of
+// today when offset is 0, otherwise `offset * range` days earlier. setDate
+// (not MS_PER_DAY offsets) keeps windows on wall-clock day boundaries
+// across DST transitions.
+export function chartEndDate(now: Date, range: number, offset: number): Date {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - offset * range);
+  return d;
+}
+
+// historyWindows returns the raw-event window (the `range` days ending on
+// `endDate`) and the sleep-rhythm window, which reaches one extra lookback
+// day: an overnight sleep that STARTED before the window still paints the
+// window's first morning once clipped at the cutover.
+export function historyWindows(
+  endDate: Date,
+  range: number,
+): { history: { from: string; to: string }; rhythm: { from: string; to: string } } {
+  const historyFrom = new Date(endDate);
+  historyFrom.setDate(historyFrom.getDate() - (range - 1));
+  const to = new Date(endDate);
+  to.setHours(23, 59, 59, 999);
+  const toIso = to.toISOString();
+  const rhythmFrom = new Date(endDate);
+  rhythmFrom.setDate(rhythmFrom.getDate() - range);
+  return {
+    history: { from: historyFrom.toISOString(), to: toIso },
+    rhythm: { from: rhythmFrom.toISOString(), to: toIso },
+  };
+}
+
+// entryDayKeys: the local days that actually have History entries, so a
+// chart bar for an empty day offers no jump.
+export function entryDayKeys(groups: readonly DayGroup[]): Set<string> {
+  return new Set(groups.map((g) => g.dayKey));
 }
