@@ -362,7 +362,7 @@ func allKinds() []kind {
 				{"amount_ml zero (gt=0)", merge(kindSample("bottlefeed", ts), map[string]any{"amount_ml": 0}), 422, "validation_failed"},
 				{"occurred_at missing", drop(kindSample("bottlefeed", ts), "occurred_at"), 422, "validation_failed"},
 			},
-			bigStatus: 201, bigPatchStatus: 200,
+			bigStatus: 413, bigCode: "payload_too_large", bigPatchStatus: 413, bigPatchCode: "payload_too_large",
 		},
 		{
 			name: "diaper", path: "diapers", timeField: "occurred_at", window: 24 * time.Hour, wantDefault: 1,
@@ -384,7 +384,7 @@ func allKinds() []kind {
 				{"amount_ml above 2000", merge(kindSample("pumping", ts), map[string]any{"amount_ml": 2001}), 422, "validation_failed"},
 				{"duration_seconds above 21600", merge(kindSample("pumping", ts), map[string]any{"duration_seconds": 21601}), 422, "validation_failed"},
 			},
-			bigStatus: 201, bigPatchStatus: 200,
+			bigStatus: 413, bigCode: "payload_too_large", bigPatchStatus: 413, bigPatchCode: "payload_too_large",
 		},
 		{
 			name: "nursing", path: "nursing-sessions", timeField: "started_at", window: 24 * time.Hour, wantDefault: 1,
@@ -402,7 +402,7 @@ func allKinds() []kind {
 				{"ended_at without durations", drop(kindSample("nursing", ts), "left_duration_s", "right_duration_s"), 422, "validation_failed"},
 				{"ended_at before started_at", merge(kindSample("nursing", ts), map[string]any{"ended_at": ts.Add(-time.Hour)}), 422, "validation_failed"},
 			},
-			bigStatus: 201, bigPatchStatus: 200,
+			bigStatus: 413, bigCode: "payload_too_large", bigPatchStatus: 413, bigPatchCode: "payload_too_large",
 		},
 		{
 			name: "growth", path: "growths", timeField: "measured_at", window: 365 * 24 * time.Hour, wantDefault: 2,
@@ -413,7 +413,7 @@ func allKinds() []kind {
 				{"no measurement at all", drop(kindSample("growth", ts), "weight_g", "height_cm", "head_circumference_cm"), 422, "validation_failed"},
 				{"weight_g at limit (lt=30000)", merge(kindSample("growth", ts), map[string]any{"weight_g": 30000}), 422, "validation_failed"},
 			},
-			bigStatus: 201, bigPatchStatus: 200,
+			bigStatus: 413, bigCode: "payload_too_large", bigPatchStatus: 413, bigPatchCode: "payload_too_large",
 		},
 		{
 			name: "sleep", path: "sleeps", timeField: "started_at", window: 24 * time.Hour, wantDefault: 1,
@@ -430,7 +430,7 @@ func allKinds() []kind {
 				{"sleep_type outside enum", merge(kindSample("sleep", ts), map[string]any{"sleep_type": "snooze"}), 422, "validation_failed"},
 				{"ended_at before started_at", merge(kindSample("sleep", ts), map[string]any{"ended_at": ts.Add(-time.Hour)}), 422, "validation_failed"},
 			},
-			bigStatus: 422, bigCode: "validation_failed", bigPatchStatus: 422, bigPatchCode: "validation_failed",
+			bigStatus: 413, bigCode: "payload_too_large", bigPatchStatus: 413, bigPatchCode: "payload_too_large",
 		},
 		{
 			name: "note", path: "notes", timeField: "occurred_at", window: 24 * time.Hour, wantDefault: 1,

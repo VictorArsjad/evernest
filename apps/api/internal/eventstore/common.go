@@ -83,9 +83,7 @@ func (h *Handler[T]) itemScope(w http.ResponseWriter, r *http.Request, idempoten
 func (h *Handler[T]) decodeBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 	// Cap the body BEFORE parsing so a hostile client can't OOM the API by
 	// streaming a multi-GB body.
-	if h.spec.Photo {
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	if err := httpx.DecodeJSON(r, dst); err != nil {
 		if isBodyTooLarge(err) {
 			httpx.WriteError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "request body exceeds limit")
