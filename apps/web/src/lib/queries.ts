@@ -11,6 +11,7 @@ import {
   editedText,
   HEAVY_REFETCH_MS,
   listKeyFor,
+  LIVE_LIST_REFETCH_MS,
   type ListHookOpts,
   newRowBase,
   type PhotoVars,
@@ -106,9 +107,7 @@ function removeFromList<T extends { id: string }>(
 // chip), and lower-urgency / heavier payloads at HEAVY_REFETCH_MS.
 // `refetchIntervalInBackground: false` (set in main.tsx) ensures none
 // of these poll while the tab is hidden.
-const LIVE_LIST_REFETCH_MS = 15_000;
 const OPEN_NURSING_REFETCH_MS = 10_000;
-const HEAVY_REFETCH_MS = 5 * 60_000;
 
 export type { ListHookOpts };
 
