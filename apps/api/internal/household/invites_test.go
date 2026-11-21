@@ -71,6 +71,9 @@ func newTestEnv(t *testing.T) *testEnv {
 	defer cancel()
 	st, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
+		if os.Getenv("CI") == "true" {
+			t.Fatalf("postgres not reachable (%s): %v", cfg.DatabaseURL, err)
+		}
 		t.Skipf("postgres not reachable (%s): %v", cfg.DatabaseURL, err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

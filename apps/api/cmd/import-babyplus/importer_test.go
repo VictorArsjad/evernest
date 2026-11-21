@@ -39,10 +39,16 @@ func newITEnv(t *testing.T) *itEnv {
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
+		if os.Getenv("CI") == "true" {
+			t.Fatalf("postgres not reachable (%s): %v", dsn, err)
+		}
 		t.Skipf("postgres not reachable (%s): %v", dsn, err)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
+		if os.Getenv("CI") == "true" {
+			t.Fatalf("postgres ping failed (%s): %v", dsn, err)
+		}
 		t.Skipf("postgres ping failed (%s): %v", dsn, err)
 	}
 
