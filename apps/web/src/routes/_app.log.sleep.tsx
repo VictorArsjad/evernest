@@ -10,56 +10,36 @@
 //     the End-now modal on Today owns that transition. Delete remains
 //     enabled so "I tapped Start sleep by accident" is still cleanable.
 //   - The "Start now" button is hidden (no relogging while editing).
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
+import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
 
-import { DeleteEntryButton } from "../components/DeleteEntryButton";
+import { LogFormLayout } from "../components/LogFormLayout";
 import { isoToLocalDatetimeInput, localToISO, nowLocalDatetimeInput } from "../lib/datetime";
 import {
-  useBabies,
   useCreateSleep,
   useDeleteSleep,
-  useHouseholds,
   useUpdateSleep,
 } from "../lib/queries";
-import { useActiveBaby } from "../lib/useActiveBaby";
-import { submitOnEnter } from "../lib/submitOnEnter";
-import type { Sleep, SleepType } from "../lib/types";
-import { useEscapeKey } from "../lib/useEscapeKey";
-
-const search = z.object({
-  babyId: z.string().uuid().optional(),
-  edit: z.string().uuid().optional(),
-});
+import { logSearchSchema, useLogForm, usePrefillOnce, useRestampOnFocus } from "../lib/logForm";
+import type { SleepType } from "../lib/types";
 
 export const Route = createFileRoute("/_app/log/sleep")({
-  validateSearch: search,
+  validateSearch: logSearchSchema,
   component: LogSleepPage,
 });
 
 function LogSleepPage() {
-  const nav = useNavigate();
-  useEscapeKey(() => nav({ to: "/" }));
-  const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
-  const households = useHouseholds();
-  const householdId = households.data?.[0]?.id ?? null;
-  const babies = useBabies(householdId);
-  const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
-  const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
-
-  const isEditMode = !!editId;
-  const qc = useQueryClient();
-  const existing: Sleep | null = useMemo(() => {
-    if (!editId || !babyId) return null;
-    const lists = qc.getQueriesData<Sleep[] | undefined>({
-      queryKey: ["babies", babyId, "sleeps"],
-    }) as Array<[unknown, Sleep[] | undefined]>;
-    return (
-      lists.flatMap(([, list]) => list ?? []).find((r) => r.id === editId) ?? null
-    );
-  }, [qc, editId, babyId]);
+  const create = useCreateSleep();
+  const update = useUpdateSleep();
+  const del = useDeleteSleep();
+  const form = useLogForm({
+    segment: "sleeps",
+    search: Route.useSearch(),
+    create,
+    update,
+    del,
+  });
+  const { isEditMode, existing } = form;
   const editingOpenSession = isEditMode && existing != null && existing.ended_at == null;
 
   // null = no type picked (the field is optional; tap the selected chip
@@ -70,27 +50,15 @@ function LogSleepPage() {
   const [location, setLocation] = useState("");
   const [notes, setNotes] = useState("");
 
-  const create = useCreateSleep();
-  const update = useUpdateSleep();
-  const del = useDeleteSleep();
+  usePrefillOnce(isEditMode, existing, (row) => {
+    setSleepType(row.sleep_type ?? null);
+    setStartedLocal(isoToLocalDatetimeInput(row.started_at));
+    setEndedLocal(row.ended_at ? isoToLocalDatetimeInput(row.ended_at) : "");
+    setLocation(row.location ?? "");
+    setNotes(row.notes ?? "");
+  });
 
-  const prefilledRef = useRef(false);
-  useEffect(() => {
-    if (!isEditMode || prefilledRef.current || !existing) return;
-    setSleepType(existing.sleep_type ?? null);
-    setStartedLocal(isoToLocalDatetimeInput(existing.started_at));
-    setEndedLocal(existing.ended_at ? isoToLocalDatetimeInput(existing.ended_at) : "");
-    setLocation(existing.location ?? "");
-    setNotes(existing.notes ?? "");
-    prefilledRef.current = true;
-  }, [isEditMode, existing]);
-
-  useEffect(() => {
-    if (isEditMode) return;
-    const onFocus = () => setStartedLocal(nowLocalDatetimeInput());
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [isEditMode]);
+  useRestampOnFocus(isEditMode, setStartedLocal);
 
   // Manual save needs both times with ended > started; the interval-only
   // check keeps "Start now" (which ignores these fields' emptiness) apart.
@@ -102,41 +70,26 @@ function LogSleepPage() {
   }, [startedLocal, endedLocal]);
   const isValid = intervalValid && !editingOpenSession;
 
-  const pending = isEditMode ? update.isPending : create.isPending;
-  const errorMsg = isEditMode ? update.error?.message : create.error?.message;
-  const hadError = isEditMode ? update.isError : create.isError;
-
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!babyId || !isValid) return;
+  const onSubmit = () => {
+    if (!isValid) return;
     const startedISO = localToISO(startedLocal);
     const endedISO = localToISO(endedLocal);
-    if (isEditMode && editId) {
-      update.mutate(
-        {
-          id: editId,
-          babyId,
-          started_at: startedISO,
-          ended_at: endedISO,
-          ...(sleepType ? { sleep_type: sleepType } : { clear_sleep_type: true }),
-          location: location.trim(),
-          notes: notes.trim(),
-        },
-        { onSuccess: () => nav({ to: "/" }) },
-      );
-      return;
-    }
-    create.mutate(
-      {
-        babyId,
+    form.save({
+      create: {
         started_at: startedISO,
         ended_at: endedISO,
         sleep_type: sleepType ?? undefined,
         location: location.trim() || undefined,
         notes: notes.trim() || undefined,
       },
-      { onSuccess: () => nav({ to: "/" }) },
-    );
+      update: {
+        started_at: startedISO,
+        ended_at: endedISO,
+        ...(sleepType ? { sleep_type: sleepType } : { clear_sleep_type: true }),
+        location: location.trim(),
+        notes: notes.trim(),
+      },
+    });
   };
 
   // Start now: submit an open session (no ended_at) using the Fell asleep
@@ -144,39 +97,49 @@ function LogSleepPage() {
   // Today elapsed timer. The BE rejects multiple open sessions per baby,
   // so the failure mode is a clean 409 surfaced inline.
   const onStartNow = () => {
-    if (!babyId) return;
-    create.mutate(
-      {
-        babyId,
-        started_at: localToISO(startedLocal),
-        sleep_type: sleepType ?? undefined,
-        location: location.trim() || undefined,
-        notes: notes.trim() || undefined,
-      },
-      { onSuccess: () => nav({ to: "/" }) },
-    );
+    form.createAndExit({
+      started_at: localToISO(startedLocal),
+      sleep_type: sleepType ?? undefined,
+      location: location.trim() || undefined,
+      notes: notes.trim() || undefined,
+    });
   };
 
-  if (!babyId) {
-    return <p className="p-6 text-white/60">No baby selected.</p>;
-  }
-
   return (
-    <main className="flex flex-1 flex-col gap-4 p-5">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">
-          {isEditMode ? "Edit sleep" : "Log sleep"}
-        </h1>
-        <button onClick={() => nav({ to: "/" })} className="text-sm text-white/60">
-          Cancel
-        </button>
-      </header>
-
-      <form
-        onSubmit={onSubmit}
-        onKeyDown={submitOnEnter}
-        className="card flex flex-col gap-5 p-5"
-      >
+    <LogFormLayout
+      form={form}
+      createTitle="Log sleep"
+      editTitle="Edit sleep"
+      onSubmit={onSubmit}
+      submitDisabled={!isValid}
+      // Create mode replaces the Save button with Start now + Save. Edit mode
+      // keeps the shell's default Save changes.
+      actions={
+        isEditMode ? undefined : (
+          <div className="grid grid-cols-2 gap-2">
+            {/* "Start now" comes first because it's the lower-friction path
+                ("baby just fell asleep, close it later"), but Save stays the
+                primary visual action so users entering a past interval don't
+                accidentally open a live session. */}
+            <button
+              type="button"
+              onClick={onStartNow}
+              disabled={form.createPending}
+              className="rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 text-base font-medium text-accent transition active:scale-95 disabled:opacity-50"
+            >
+              Start now
+            </button>
+            <button
+              type="submit"
+              className="btn-primary text-lg"
+              disabled={form.createPending || !isValid}
+            >
+              {form.createPending ? "Saving…" : "Save"}
+            </button>
+          </div>
+        )
+      }
+    >
         {editingOpenSession && (
           <p className="rounded-xl border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
             This sleep is still in progress. End it from the Today screen
@@ -249,56 +212,7 @@ function LogSleepPage() {
             className="rounded-xl bg-bg-subtle px-4 py-3 text-base outline-none focus:ring-2 focus:ring-accent"
           />
         </label>
-
-        {hadError && (
-          <p className="text-sm text-red-400">{errorMsg ?? "could not save"}</p>
-        )}
-
-        {isEditMode ? (
-          <button
-            type="submit"
-            className="btn-primary text-lg"
-            disabled={pending || !isValid}
-          >
-            {pending ? "Saving…" : "Save changes"}
-          </button>
-        ) : (
-          <div className="grid grid-cols-2 gap-2">
-            {/* "Start now" comes first because it's the lower-friction path
-                ("baby just fell asleep, close it later"), but Save stays the
-                primary visual action so users entering a past interval don't
-                accidentally open a live session. */}
-            <button
-              type="button"
-              onClick={onStartNow}
-              disabled={create.isPending}
-              className="rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 text-base font-medium text-accent transition active:scale-95 disabled:opacity-50"
-            >
-              Start now
-            </button>
-            <button
-              type="submit"
-              className="btn-primary text-lg"
-              disabled={create.isPending || !isValid}
-            >
-              {create.isPending ? "Saving…" : "Save"}
-            </button>
-          </div>
-        )}
-
-        {isEditMode && editId && (
-          <DeleteEntryButton
-            pending={del.isPending}
-            onConfirm={() =>
-              del.mutate(
-                { id: editId, babyId },
-                { onSuccess: () => nav({ to: "/" }) },
-              )
-            }
-          />
-        )}
-      </form>
-    </main>
+    </LogFormLayout>
   );
 }
 

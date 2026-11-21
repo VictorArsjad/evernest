@@ -9,23 +9,17 @@
 // form patches an existing row and exposes a Delete button for accidental
 // double-logs. Clearing a field that previously held a value sends the
 // matching `clear_*` flag to the BE so the column is set to NULL.
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
+import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
 
-import { DeleteEntryButton } from "../components/DeleteEntryButton";
+import { LogFormLayout } from "../components/LogFormLayout";
 import { isoToLocalDatetimeInput, localToISO, nowLocalDatetimeInput } from "../lib/datetime";
 import {
-  useBabies,
   useCreateGrowth,
   useDeleteGrowth,
-  useHouseholds,
   useUpdateGrowth,
 } from "../lib/queries";
-import { submitOnEnter } from "../lib/submitOnEnter";
-import { useActiveBaby } from "../lib/useActiveBaby";
-import type { Growth } from "../lib/types";
+import { logSearchSchema, useLogForm, usePrefillOnce, useRestampOnFocus } from "../lib/logForm";
 import {
   cmToDisplayLength,
   displayLengthToCm,
@@ -34,16 +28,10 @@ import {
   lengthUnitLabel,
   weightUnitLabel,
 } from "../lib/units";
-import { useEscapeKey } from "../lib/useEscapeKey";
 import { usePreferences } from "../lib/usePreferences";
 
-const search = z.object({
-  babyId: z.string().uuid().optional(),
-  edit: z.string().uuid().optional(),
-});
-
 export const Route = createFileRoute("/_app/log/growth")({
-  validateSearch: search,
+  validateSearch: logSearchSchema,
   component: LogGrowthPage,
 });
 
@@ -59,26 +47,17 @@ function parseOptional(raw: string, max: number): number | undefined {
 }
 
 function LogGrowthPage() {
-  const nav = useNavigate();
-  useEscapeKey(() => nav({ to: "/" }));
-  const { babyId: babyIdFromSearch, edit: editId } = Route.useSearch();
-  const households = useHouseholds();
-  const householdId = households.data?.[0]?.id ?? null;
-  const babies = useBabies(householdId);
-  const { baby: activeBaby } = useActiveBaby(householdId, babies.data);
-  const babyId = babyIdFromSearch ?? activeBaby?.id ?? null;
-
-  const isEditMode = !!editId;
-  const qc = useQueryClient();
-  const existing: Growth | null = useMemo(() => {
-    if (!editId || !babyId) return null;
-    const lists = qc.getQueriesData<Growth[] | undefined>({
-      queryKey: ["babies", babyId, "growths"],
-    }) as Array<[unknown, Growth[] | undefined]>;
-    return (
-      lists.flatMap(([, list]) => list ?? []).find((r) => r.id === editId) ?? null
-    );
-  }, [qc, editId, babyId]);
+  const create = useCreateGrowth();
+  const update = useUpdateGrowth();
+  const del = useDeleteGrowth();
+  const form = useLogForm({
+    segment: "growths",
+    search: Route.useSearch(),
+    create,
+    update,
+    del,
+  });
+  const { babyId, isEditMode, existing } = form;
 
   const [weightStr, setWeightStr] = useState("");
   const [heightStr, setHeightStr] = useState("");
@@ -86,42 +65,31 @@ function LogGrowthPage() {
   const [measuredLocal, setMeasuredLocal] = useState(nowLocalDatetimeInput);
   const [notes, setNotes] = useState("");
 
-  const create = useCreateGrowth();
-  const update = useUpdateGrowth();
-  const del = useDeleteGrowth();
   const { prefs } = usePreferences(babyId);
   const wLabel = weightUnitLabel(prefs.unit_weight);
   const lLabel = lengthUnitLabel(prefs.unit_length);
 
-  const prefilledRef = useRef(false);
-  useEffect(() => {
-    if (!isEditMode || prefilledRef.current || !existing) return;
+  usePrefillOnce(isEditMode, existing, (row) => {
     setWeightStr(
-      existing.weight_g != null
-        ? String(gToDisplayWeight(Number(existing.weight_g), prefs.unit_weight))
+      row.weight_g != null
+        ? String(gToDisplayWeight(Number(row.weight_g), prefs.unit_weight))
         : "",
     );
     setHeightStr(
-      existing.height_cm != null
-        ? String(cmToDisplayLength(Number(existing.height_cm), prefs.unit_length))
+      row.height_cm != null
+        ? String(cmToDisplayLength(Number(row.height_cm), prefs.unit_length))
         : "",
     );
     setHeadStr(
-      existing.head_circumference_cm != null
-        ? String(cmToDisplayLength(Number(existing.head_circumference_cm), prefs.unit_length))
+      row.head_circumference_cm != null
+        ? String(cmToDisplayLength(Number(row.head_circumference_cm), prefs.unit_length))
         : "",
     );
-    setMeasuredLocal(isoToLocalDatetimeInput(existing.measured_at));
-    setNotes(existing.notes ?? "");
-    prefilledRef.current = true;
-  }, [isEditMode, existing, prefs.unit_weight, prefs.unit_length]);
+    setMeasuredLocal(isoToLocalDatetimeInput(row.measured_at));
+    setNotes(row.notes ?? "");
+  });
 
-  useEffect(() => {
-    if (isEditMode) return;
-    const onFocus = () => setMeasuredLocal(nowLocalDatetimeInput());
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [isEditMode]);
+  useRestampOnFocus(isEditMode, setMeasuredLocal);
 
   // Display-unit bounds: ceilings derived from the API's canonical
   // bounds (30,000 g / 200 cm / 80 cm) so we can't accept a value that
@@ -142,76 +110,47 @@ function LogGrowthPage() {
     weightDisp !== undefined || heightDisp !== undefined || headDisp !== undefined;
   const isValid = allFieldsValid && atLeastOnePresent;
 
-  const pending = isEditMode ? update.isPending : create.isPending;
-  const errorMsg = isEditMode ? update.error?.message : create.error?.message;
-  const hadError = isEditMode ? update.isError : create.isError;
-
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!babyId || !isValid) return;
+  const onSubmit = () => {
+    if (!isValid) return;
     const weightG =
       weightDisp !== undefined ? displayWeightToG(weightDisp, prefs.unit_weight) : undefined;
     const heightCM =
       heightDisp !== undefined ? displayLengthToCm(heightDisp, prefs.unit_length) : undefined;
     const headCM =
       headDisp !== undefined ? displayLengthToCm(headDisp, prefs.unit_length) : undefined;
-    if (isEditMode && editId) {
-      // In edit mode: a blank input where there *was* a value means
-      // "clear this column"; a filled input means "replace". A blank
-      // input where there was nothing before is just unchanged.
-      update.mutate(
-        {
-          id: editId,
-          babyId,
-          measured_at: localToISO(measuredLocal),
-          weight_g: weightG,
-          clear_weight_g:
-            weightDisp === undefined && existing?.weight_g != null,
-          height_cm: heightCM,
-          clear_height_cm:
-            heightDisp === undefined && existing?.height_cm != null,
-          head_circumference_cm: headCM,
-          clear_head_circumference_cm:
-            headDisp === undefined && existing?.head_circumference_cm != null,
-          notes: notes.trim(),
-        },
-        { onSuccess: () => nav({ to: "/" }) },
-      );
-      return;
-    }
-    create.mutate(
-      {
-        babyId,
+    form.save({
+      create: {
         measured_at: localToISO(measuredLocal),
         weight_g: weightG,
         height_cm: heightCM,
         head_circumference_cm: headCM,
         notes: notes.trim() || undefined,
       },
-      { onSuccess: () => nav({ to: "/" }) },
-    );
+      // In edit mode: a blank input where there *was* a value means
+      // "clear this column"; a filled input means "replace". A blank
+      // input where there was nothing before is just unchanged.
+      update: {
+        measured_at: localToISO(measuredLocal),
+        weight_g: weightG,
+        clear_weight_g: weightDisp === undefined && existing?.weight_g != null,
+        height_cm: heightCM,
+        clear_height_cm: heightDisp === undefined && existing?.height_cm != null,
+        head_circumference_cm: headCM,
+        clear_head_circumference_cm:
+          headDisp === undefined && existing?.head_circumference_cm != null,
+        notes: notes.trim(),
+      },
+    });
   };
 
-  if (!babyId) {
-    return <p className="p-6 text-white/60">No baby selected.</p>;
-  }
-
   return (
-    <main className="flex flex-1 flex-col gap-4 p-5">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">
-          {isEditMode ? "Edit growth" : "Log growth"}
-        </h1>
-        <button onClick={() => nav({ to: "/" })} className="text-sm text-white/60">
-          Cancel
-        </button>
-      </header>
-
-      <form
-        onSubmit={onSubmit}
-        onKeyDown={submitOnEnter}
-        className="card flex flex-col gap-5 p-5"
-      >
+    <LogFormLayout
+      form={form}
+      createTitle="Log growth"
+      editTitle="Edit growth"
+      onSubmit={onSubmit}
+      submitDisabled={!isValid}
+    >
         <p className="text-xs text-white/50">
           Fill in any combination — at least one is required.
         </p>
@@ -264,32 +203,7 @@ function LogGrowthPage() {
             className="rounded-xl bg-bg-subtle px-4 py-3 text-base outline-none focus:ring-2 focus:ring-accent"
           />
         </label>
-
-        {hadError && (
-          <p className="text-sm text-red-400">{errorMsg ?? "could not save"}</p>
-        )}
-
-        <button
-          type="submit"
-          className="btn-primary text-lg"
-          disabled={pending || !isValid}
-        >
-          {pending ? "Saving…" : isEditMode ? "Save changes" : "Save"}
-        </button>
-
-        {isEditMode && editId && (
-          <DeleteEntryButton
-            pending={del.isPending}
-            onConfirm={() =>
-              del.mutate(
-                { id: editId, babyId },
-                { onSuccess: () => nav({ to: "/" }) },
-              )
-            }
-          />
-        )}
-      </form>
-    </main>
+    </LogFormLayout>
   );
 }
 
