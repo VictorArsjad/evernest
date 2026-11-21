@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  lastEvents,
+  lastWokeAtOf,
   latestWeightGrams,
   todaySleepWindow,
   todayTotals,
@@ -118,5 +120,57 @@ describe("latestWeightGrams", () => {
 
   it("is null when no row has a weight", () => {
     expect(latestWeightGrams([g(null)])).toBeNull();
+  });
+});
+
+describe("lastEvents", () => {
+  const f = (at: string) => ({ occurred_at: at }) as unknown as BottleFeed;
+  const n = (at: string, ended: string | null) =>
+    ({ started_at: at, ended_at: ended }) as unknown as Nursing;
+
+  it("is all null without data", () => {
+    expect(lastEvents({})).toEqual({ lastFedAt: null, lastDiaperAt: null, lastSolidsAt: null });
+  });
+
+  it("picks the newest of bottle feeds and closed nursing sessions", () => {
+    const r = lastEvents({
+      latestFeeds: [f("2026-11-22T01:00:00Z")],
+      latestNursings: [n("2026-11-22T03:00:00Z", "2026-11-22T03:20:00Z")],
+    });
+    expect(r.lastFedAt).toBe("2026-11-22T03:00:00Z");
+  });
+
+  it("ignores an open nursing session", () => {
+    const r = lastEvents({
+      latestFeeds: [f("2026-11-22T01:00:00Z")],
+      latestNursings: [n("2026-11-22T05:00:00Z", null)],
+    });
+    expect(r.lastFedAt).toBe("2026-11-22T01:00:00Z");
+  });
+
+  it("derives diaper and solids labels independently", () => {
+    const r = lastEvents({
+      latestDiapers: [{ occurred_at: "2026-11-22T02:00:00Z" }],
+      latestSolids: [{ occurred_at: "2026-11-21T02:00:00Z" }],
+    });
+    expect(r.lastDiaperAt).toBe("2026-11-22T02:00:00Z");
+    expect(r.lastSolidsAt).toBe("2026-11-21T02:00:00Z");
+    expect(r.lastFedAt).toBeNull();
+  });
+});
+
+describe("lastWokeAtOf", () => {
+  const s = (ended: string | null) => ({ ended_at: ended }) as unknown as Sleep;
+
+  it("is null without closed sleeps", () => {
+    expect(lastWokeAtOf(undefined)).toBeNull();
+    expect(lastWokeAtOf([])).toBeNull();
+    expect(lastWokeAtOf([s(null)])).toBeNull();
+  });
+
+  it("returns the latest end among closed sleeps, ignoring open ones", () => {
+    expect(
+      lastWokeAtOf([s("2026-11-22T01:00:00Z"), s(null), s("2026-11-22T04:00:00Z")]),
+    ).toBe("2026-11-22T04:00:00Z");
   });
 });

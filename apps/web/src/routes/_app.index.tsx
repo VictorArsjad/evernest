@@ -15,6 +15,8 @@ import { SyncStatusBadge } from "../components/SyncStatusBadge";
 import { useAuthStore } from "../lib/authStore";
 import { dailyWindowEndingToday } from "../lib/charts";
 import {
+  lastEvents,
+  lastWokeAtOf,
   latestWeightGrams,
   todaySleepWindow,
   todayTotals,
@@ -43,7 +45,7 @@ import { getDailyTargets, type DailyTargets } from "../lib/recommendations";
 import { getWakeWindow, type WakeWindow } from "../lib/sleepGuidance";
 import { mergeRecent } from "../lib/recentEvents";
 import { submitOnEnter } from "../lib/submitOnEnter";
-import { formatTimeSince, lastEventAt, useNow } from "../lib/timeSince";
+import { formatTimeSince, useNow } from "../lib/timeSince";
 import type { Baby, Nursing, Sleep } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import { useEscapeKey } from "../lib/useEscapeKey";
@@ -190,16 +192,12 @@ function TodayPage() {
   const targets: DailyTargets | null = prefs.show_recommended_targets
     ? getDailyTargets(baby, now)
     : null;
-  // "Last fed" combines bottle feeds and *completed* nursing sessions.
-  // An open nursing session is rendered as "Nursing now" with higher
-  // priority in TodayBanner, so we exclude open sessions here to avoid
-  // double-counting.
-  const lastFedAt = lastEventAt([
-    ...(latestFeeds.data ?? []),
-    ...((latestNursings.data ?? []).filter((n) => n.ended_at != null)),
-  ]);
-  const lastDiaperAt = lastEventAt(latestDiapers.data ?? []);
-  const lastSolidsAt = lastEventAt(latestSolids.data ?? []);
+  const { lastFedAt, lastDiaperAt, lastSolidsAt } = lastEvents({
+    latestFeeds: latestFeeds.data,
+    latestNursings: latestNursings.data,
+    latestDiapers: latestDiapers.data,
+    latestSolids: latestSolids.data,
+  });
 
   // Wake-window inputs: the most recent CLOSED sleep's wake-up time and
   // the age-typical window. Both gated below; either being null hides
@@ -207,12 +205,7 @@ function TodayPage() {
   const wakeWindow: WakeWindow | null = prefs.show_recommended_targets
     ? getWakeWindow(baby, now)
     : null;
-  const lastWokeAt =
-    (latestSleeps.data ?? [])
-      .filter((s) => s.ended_at != null)
-      .map((s) => s.ended_at as string)
-      .sort()
-      .at(-1) ?? null;
+  const lastWokeAt = lastWokeAtOf(latestSleeps.data);
 
   const recent = mergeRecent({
     bottleFeeds: feeds.data,

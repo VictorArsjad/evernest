@@ -2,8 +2,9 @@
 // Charts & History screen — query windows, daily totals, "last X" labels,
 // per-day history rollups and the /day averages. No React; the routes
 // fetch, call these, and render.
-import type { BottleFeed, Growth, Nursing, Pumping, Sleep } from "./types";
 import { currentSleepDayBounds } from "./sleepDays";
+import { lastEventAt, type EventLike } from "./timeSince";
+import type { BottleFeed, Growth, Nursing, Pumping, Sleep } from "./types";
 
 // --- Today windows ---
 
@@ -76,4 +77,43 @@ export function todayTotals(input: TodayTotalsInput): TodayTotals {
 export function latestWeightGrams(growths: readonly Growth[] | undefined): number | null {
   const row = growths?.find((g) => g.weight_g != null);
   return row?.weight_g != null ? Number(row.weight_g) : null;
+}
+
+// --- Last-event labels ---
+
+export interface LastEventsInput {
+  latestFeeds?: readonly BottleFeed[];
+  latestNursings?: readonly Nursing[];
+  latestDiapers?: readonly EventLike[];
+  latestSolids?: readonly EventLike[];
+}
+
+// "Last fed" combines bottle feeds and COMPLETED nursing sessions: an open
+// session is shown as "Nursing now" with higher priority in the banner, so
+// it is excluded here to avoid double-counting.
+export function lastEvents(input: LastEventsInput): {
+  lastFedAt: string | null;
+  lastDiaperAt: string | null;
+  lastSolidsAt: string | null;
+} {
+  return {
+    lastFedAt: lastEventAt([
+      ...(input.latestFeeds ?? []),
+      ...(input.latestNursings ?? []).filter((n) => n.ended_at != null),
+    ]),
+    lastDiaperAt: lastEventAt(input.latestDiapers ?? []),
+    lastSolidsAt: lastEventAt(input.latestSolids ?? []),
+  };
+}
+
+// lastWokeAt is the end of the most recent CLOSED sleep (the wake-window
+// card's anchor), or null when there is none.
+export function lastWokeAtOf(sleeps: readonly Sleep[] | undefined): string | null {
+  return (
+    (sleeps ?? [])
+      .filter((s) => s.ended_at != null)
+      .map((s) => s.ended_at as string)
+      .sort()
+      .at(-1) ?? null
+  );
 }
