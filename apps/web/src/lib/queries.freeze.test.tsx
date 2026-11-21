@@ -1269,21 +1269,20 @@ describe.each(SESSIONS)("$kind: open session + end", (s) => {
     expect(qc.getQueryData(s.listKey(BABY))).toBeUndefined();
   });
 
-  // CURRENT BEHAVIOR (surprising): the open-session key is nested under the
-  // list prefix, so removeFromList's setQueriesData also hits the open entry
-  // (an object, not an array) and `.filter` throws inside onSuccess. The
-  // open-clear step never runs, so the open session stays cached.
-  it("KNOWN BUG (approved fix): delete with a cached open session throws in onSuccess and leaves it cached", async () => {
+  // The open-session key is nested under the list prefix. The list helpers
+  // skip that non-array entry, so delete removes the row from the list and
+  // then clears the open session when it is the deleted row.
+  it("delete with a cached open session removes the row and clears the open session", async () => {
     stubFetch(() => noContent());
     const { qc, wrapper } = setup();
     qc.setQueryData(s.openKey(BABY), s.openRow);
+    qc.setQueryData(s.listKey(BABY), [s.other, s.openRow]);
     const { result } = renderHook(s.useDelete, { wrapper });
     await act(async () => {
-      await expect(result.current({ id: EXISTING_ID, babyId: BABY })).rejects.toThrow(
-        /filter is not a function/,
-      );
+      await result.current({ id: EXISTING_ID, babyId: BABY });
     });
-    expect(qc.getQueryData(s.openKey(BABY))).toEqual(s.openRow);
+    expect(qc.getQueryData(s.listKey(BABY))).toEqual([s.other]);
+    expect(qc.getQueryData(s.openKey(BABY))).toBeNull();
   });
 });
 

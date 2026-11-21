@@ -228,25 +228,23 @@ const UPDATE_SPECS: UpdateSpec[] = [
 ];
 
 describe.each(UPDATE_SPECS)("$kind: update with an open session cached", (s) => {
-  // CURRENT BEHAVIOR (surprising): the open-session key is nested under the
-  // list prefix, so upsertList's setQueriesData also hits the open entry (an
-  // object, not an array) and `.findIndex` throws inside onSuccess. The PATCH
-  // itself succeeded server-side, but the mutation ends in error and the list
-  // cache is never updated.
-  it(`KNOWN BUG (approved fix): updating a closed ${s.kind} while an open ${s.kind} is cached errors`, async () => {
+  // The open-session key is nested under the list prefix. The list helpers
+  // skip that non-array entry, so the update lands in the list cache and the
+  // open session is left untouched.
+  it(`updating a closed ${s.kind} while an open ${s.kind} is cached succeeds`, async () => {
     const calls = stubFetch(() => json(s.serverRow));
     const { qc, wrapper } = setup();
     qc.setQueryData(s.openKey(BABY), s.openRow);
     qc.setQueryData(s.listKey(BABY), [s.closedRow]);
     const { result } = renderHook(s.useUpdate, { wrapper });
+    let out: unknown;
     await act(async () => {
-      await expect(result.current(s.vars)).rejects.toThrow(/findIndex is not a function/);
+      out = await result.current(s.vars);
     });
-    // The server call went through.
+    expect(out).toEqual(s.serverRow);
     expect(calls).toEqual([{ method: "PATCH", url: `/v1${s.item}/${OTHER_ID}`, body: s.body }]);
     expect(await peekQueue()).toEqual([]);
-    // The list cache still holds the stale row; the open session is untouched.
-    expect(qc.getQueryData(s.listKey(BABY))).toEqual([s.closedRow]);
+    expect(qc.getQueryData(s.listKey(BABY))).toEqual([s.serverRow]);
     expect(qc.getQueryData(s.openKey(BABY))).toEqual(s.openRow);
   });
 });

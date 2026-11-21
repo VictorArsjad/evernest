@@ -62,13 +62,17 @@ const prefixFor = (babyId: string, segment: string) => ["babies", babyId, segmen
 // the new (or just-saved) row without waiting on a network refetch.
 // Replace by id when present, prepend otherwise. Keeps the rest of the
 // list in its existing order so the user's view doesn't jump.
+//
+// The open-session keys (["babies", id, "sleeps", "open"]) share the list
+// prefix but hold a single row (or null), not an array, so entries that
+// aren't arrays are left alone.
 function upsertList<T extends { id: string }>(
   qc: QueryClient,
   prefix: readonly unknown[],
   row: T,
 ): void {
   qc.setQueriesData<T[] | undefined>({ queryKey: prefix }, (old) => {
-    if (!old) return old;
+    if (!Array.isArray(old)) return old;
     const idx = old.findIndex((r) => r.id === row.id);
     if (idx >= 0) {
       const next = old.slice();
@@ -86,7 +90,7 @@ function removeFromList<T extends { id: string }>(
   id: string,
 ): void {
   qc.setQueriesData<T[] | undefined>({ queryKey: prefix }, (old) => {
-    if (!old) return old;
+    if (!Array.isArray(old)) return old;
     return old.filter((r) => r.id !== id);
   });
 }
