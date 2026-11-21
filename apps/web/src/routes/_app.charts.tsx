@@ -28,7 +28,7 @@ import {
   tooltipXPercent,
   type SparkBar,
 } from "../lib/charts";
-import { chartEndDate, entryDayKeys, historyWindows } from "../lib/daySummary";
+import { chartEndDate, entryDayKeys, formatDaySummary, historyWindows } from "../lib/daySummary";
 import { isFeatureVisible } from "../lib/featureVisibility";
 import { groupByLocalDay, type DayGroup } from "../lib/groupByDay";
 import { DEFAULT_PALETTE, resolve } from "../lib/palette";
@@ -1570,69 +1570,4 @@ function Chevron({ expanded }: { expanded: boolean }) {
       <path d="M4 2.5 L8 6 L4 9.5" />
     </svg>
   );
-}
-
-// Roll up the day's events into a one-line "60 ml · 12 min nursing · …"
-// summary. Zero parts are dropped so a quiet day reads "2 diapers"
-// rather than "0 ml · 0 min nursing · 0 pumped · 2 diapers · 0 growth".
-// Sleep minutes are attributed by sleep-day key (prefs.day_start_hour),
-// matching Today + sleep totals — so they may come from a neighboring
-// calendar group's events when the cutover ≠ midnight.
-function formatDaySummary(
-  events: RecentEvent[],
-  prefs: CombinedPreferences,
-  dayKey: string,
-  allEvents: RecentEvent[],
-): string {
-  let bottleMl = 0;
-  let nursingMin = 0;
-  let pumpedMl = 0;
-  let diaperCount = 0;
-  let growthCount = 0;
-  let sleepMin = 0;
-  let noteCount = 0;
-  for (const ev of events) {
-    switch (ev.kind) {
-      case "bottle":
-        bottleMl += Number(ev.data.amount_ml) || 0;
-        break;
-      case "nursing":
-        nursingMin += Math.round(
-          (Number(ev.data.left_duration_s) + Number(ev.data.right_duration_s)) / 60,
-        );
-        break;
-      case "pumping":
-        pumpedMl += Number(ev.data.amount_ml) || 0;
-        break;
-      case "diaper":
-        diaperCount += 1;
-        break;
-      case "growth":
-        growthCount += 1;
-        break;
-      case "note":
-        noteCount += 1;
-        break;
-      // sleep handled below via sleep-day key across allEvents
-    }
-  }
-  for (const ev of allEvents) {
-    if (ev.kind !== "sleep" || ev.data.ended_at == null) continue;
-    if (sleepDayKey(new Date(ev.data.started_at), prefs.day_start_hour) !== dayKey) continue;
-    sleepMin += Math.max(
-      0,
-      Math.round(
-        (new Date(ev.data.ended_at).getTime() - new Date(ev.data.started_at).getTime()) / 60_000,
-      ),
-    );
-  }
-  const parts: string[] = [];
-  if (bottleMl > 0) parts.push(formatVolume(bottleMl, prefs.unit_volume));
-  if (nursingMin > 0) parts.push(`${nursingMin} min nursing`);
-  if (pumpedMl > 0) parts.push(`${formatVolume(pumpedMl, prefs.unit_volume)} pumped`);
-  if (diaperCount > 0) parts.push(`${diaperCount} ${diaperCount === 1 ? "diaper" : "diapers"}`);
-  if (growthCount > 0) parts.push(`${growthCount} growth`);
-  if (sleepMin > 0) parts.push(`${formatDurationHM(sleepMin)} sleep`);
-  if (noteCount > 0) parts.push(`${noteCount} ${noteCount === 1 ? "note" : "notes"}`);
-  return parts.join(" · ");
 }

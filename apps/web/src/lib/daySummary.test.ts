@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   chartEndDate,
   entryDayKeys,
+  formatDaySummary,
   historyWindows,
   lastEvents,
   lastWokeAtOf,
@@ -12,6 +13,7 @@ import {
   todayWindows,
 } from "./daySummary";
 import type { DayGroup } from "./groupByDay";
+import type { RecentEvent } from "./recentEvents";
 import type { BottleFeed, Growth, Nursing, Pumping, Sleep } from "./types";
 
 // Local-time builder so the tests are timezone-independent (the module
@@ -224,5 +226,76 @@ describe("entryDayKeys", () => {
     const groups = [{ dayKey: "2026-11-22" }, { dayKey: "2026-11-20" }] as unknown as DayGroup[];
     expect([...entryDayKeys(groups)].sort()).toEqual(["2026-11-20", "2026-11-22"]);
     expect(entryDayKeys([]).size).toBe(0);
+  });
+});
+
+describe("formatDaySummary", () => {
+  const prefs = { unit_volume: "ml", day_start_hour: 0 } as const;
+  const ev = (kind: RecentEvent["kind"], data: object, at = "2026-11-22T05:00:00Z") =>
+    ({ kind, at, data }) as unknown as RecentEvent;
+  const sleepEv = (start: Date, end: Date | null) =>
+    ev("sleep", { started_at: start.toISOString(), ended_at: end?.toISOString() ?? null });
+
+  it("is empty for a day with nothing summarizable", () => {
+    expect(formatDaySummary([], prefs, "2026-11-22", [])).toBe("");
+  });
+
+  it("joins non-zero parts in fixed order", () => {
+    const events = [
+      ev("bottle", { amount_ml: 60 }),
+      ev("bottle", { amount_ml: "40" }),
+      ev("nursing", { left_duration_s: 600, right_duration_s: 620 }),
+      ev("pumping", { amount_ml: 30 }),
+      ev("diaper", {}),
+      ev("diaper", {}),
+      ev("growth", {}),
+      ev("note", {}),
+    ];
+    expect(formatDaySummary(events, prefs, "2026-11-22", events)).toBe(
+      "100 ml · 20 min nursing · 30 ml pumped · 2 diapers · 1 growth · 1 note",
+    );
+  });
+
+  it("singularizes diaper and note, pluralizes otherwise", () => {
+    const events = [ev("diaper", {}), ev("note", {}), ev("note", {})];
+    expect(formatDaySummary(events, prefs, "2026-11-22", events)).toBe("1 diaper · 2 notes");
+  });
+
+  it("rounds nursing minutes per row", () => {
+    const events = [
+      ev("nursing", { left_duration_s: 50, right_duration_s: 50 }),
+      ev("nursing", { left_duration_s: 60, right_duration_s: 40 }),
+    ];
+    expect(formatDaySummary(events, prefs, "2026-11-22", events)).toBe("4 min nursing");
+  });
+
+  it("formats volumes in the preferred unit", () => {
+    const events = [ev("bottle", { amount_ml: 59.147 })];
+    expect(
+      formatDaySummary(events, { unit_volume: "oz", day_start_hour: 0 }, "2026-11-22", events),
+    ).toBe("2.0 oz");
+  });
+
+  it("attributes closed sleep to its sleep-day from the whole event list", () => {
+    // 22:00→06:30 night starts on the 21st. With a midnight cutover it
+    // belongs to the 21st even though it ends on the 22nd.
+    const night = sleepEv(local(2026, 11, 21, 22), local(2026, 11, 22, 6, 30));
+    expect(formatDaySummary([], prefs, "2026-11-21", [night])).toBe("8h 30m sleep");
+    expect(formatDaySummary([], prefs, "2026-11-22", [night])).toBe("");
+  });
+
+  it("uses the cutover hour for attribution", () => {
+    // Started 03:00 on the 22nd: with a 6am cutover that is still the 21st.
+    const nap = sleepEv(local(2026, 11, 22, 3), local(2026, 11, 22, 4));
+    const p6 = { unit_volume: "ml", day_start_hour: 6 } as const;
+    expect(formatDaySummary([], p6, "2026-11-21", [nap])).toBe("1h 0m sleep");
+    expect(formatDaySummary([], p6, "2026-11-22", [nap])).toBe("");
+  });
+
+  it("skips open sleeps and never reads group events for sleep", () => {
+    const open = sleepEv(local(2026, 11, 22, 3), null);
+    const closed = sleepEv(local(2026, 11, 22, 8), local(2026, 11, 22, 9));
+    expect(formatDaySummary([closed], prefs, "2026-11-22", [open])).toBe("");
+    expect(formatDaySummary([], prefs, "2026-11-22", [open, closed])).toBe("1h 0m sleep");
   });
 });
