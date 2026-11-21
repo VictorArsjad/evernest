@@ -298,11 +298,10 @@ func createBaby(t *testing.T, e *env, token, householdID string) string {
 }
 
 type fixture struct {
-	token  string // owner: member of the household that owns baby + baby2
-	baby   string
-	baby2  string // second baby in the same household
-	other  string // token of a user who is NOT a member of owner's household
-	secret string // unused marker to keep the struct explicit about its fields
+	token string // owner: member of the household that owns baby + baby2
+	baby  string
+	baby2 string // second baby in the same household
+	other string // token of a user who is NOT a member of owner's household
 }
 
 func newFixture(t *testing.T, e *env) fixture {
@@ -350,7 +349,6 @@ type kind struct {
 
 func allKinds() []kind {
 	ts := fixedAt
-	const oneMin = time.Minute
 	return []kind{
 		{
 			name: "bottlefeed", path: "bottle-feeds", timeField: "occurred_at", window: 24 * time.Hour, wantDefault: 1,
