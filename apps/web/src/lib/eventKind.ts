@@ -9,8 +9,10 @@
 // synthesized row into every cached list under the baby so the Today list
 // reflects the user's intent immediately. When online the server row replaces
 // the synthetic one and the invalidate refetches in the background.
+import { useEffect, useState } from "react";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, apiQueued } from "./api";
+import { api, apiBlob, apiQueued } from "./api";
+import type { DiaperPhotoMime } from "./types";
 
 // makeId: client-generated row id. crypto.randomUUID is everywhere we
 // ship (modern browsers + the dev runtime). UUIDv7 ordering would be
@@ -139,6 +141,96 @@ export function editedText(
   return next === undefined ? (existing ?? null) : next === "" ? null : next;
 }
 
+// --- optional photo (diaper, solids, note) ---
+
+// Photo create/update vars. photoBase64 must already be the raw base64
+// payload (no `data:` prefix); the caller runs lib/image.compressForUpload
+// first so the cap and re-encode happen before we hit the network. Both
+// fields move as a pair. On update:
+//   - undefined: leave the column alone
+//   - "":        clear the stored photo (sends `"photo": ""`)
+//   - <base64>:  replace; photoMime must be set alongside
+export interface PhotoVars {
+  photoBase64?: string;
+  photoMime?: DiaperPhotoMime;
+}
+
+export interface PhotoFields {
+  has_photo: boolean;
+  photo_mime?: DiaperPhotoMime | null;
+}
+
+export function createdPhoto(vars: PhotoVars): Required<PhotoFields> {
+  const hasPhoto = !!vars.photoBase64;
+  return { has_photo: hasPhoto, photo_mime: hasPhoto ? (vars.photoMime ?? null) : null };
+}
+
+export function createPhotoBody(vars: PhotoVars): Record<string, unknown> {
+  return vars.photoBase64 ? { photo: vars.photoBase64, photo_mime: vars.photoMime } : {};
+}
+
+// Mirrors what the BE will return on replay so the optimistic row in the
+// cache matches.
+export function updatedPhoto(
+  vars: PhotoVars,
+  existing: PhotoFields | undefined,
+): Required<PhotoFields> {
+  let hasPhoto = existing?.has_photo ?? false;
+  let mime: DiaperPhotoMime | null | undefined = existing?.photo_mime ?? null;
+  if (vars.photoBase64 === "") {
+    hasPhoto = false;
+    mime = null;
+  } else if (vars.photoBase64 !== undefined) {
+    hasPhoto = true;
+    mime = vars.photoMime ?? mime ?? null;
+  }
+  return { has_photo: hasPhoto, photo_mime: mime ?? null };
+}
+
+export function updatePhotoBody(vars: PhotoVars): Record<string, unknown> {
+  if (vars.photoBase64 === undefined) return {};
+  const body: Record<string, unknown> = { photo: vars.photoBase64 };
+  // photo_mime accompanies a non-empty replace. The BE ignores it for the
+  // clear case, but sending it doesn't hurt.
+  if (vars.photoBase64 !== "" && vars.photoMime) body.photo_mime = vars.photoMime;
+  return body;
+}
+
+// definePhotoUrl builds the hook that fetches the raw bytes for a row and
+// surfaces them as a blob URL ready to drop into `<img src>`. Lazy: when
+// `hasPhoto` is false (or the id is null) nothing is fetched, so
+// render-on-scroll callers don't pay for rows without photos.
+//
+// Lifecycle: each fetched blob lives behind a unique `blob:` URL the browser
+// keeps alive until we call URL.revokeObjectURL. We revoke on unmount AND
+// when the blob changes (e.g. a PATCH replaced the photo) so we don't leak.
+export function definePhotoUrl(kind: { segment: string; itemPath: string }) {
+  return function usePhotoUrl(id: string | null, hasPhoto: boolean | undefined): string | null {
+    const query = useQuery({
+      queryKey: [kind.segment, id ?? "none", "photo"],
+      enabled: !!id && !!hasPhoto,
+      queryFn: () => apiBlob(`${kind.itemPath}/${id}/photo`),
+      // Photos are write-once-per-edit; cache for 5 min before refetch.
+      // Matches the BE's `Cache-Control: private, max-age=300`.
+      staleTime: 5 * 60_000,
+      gcTime: 10 * 60_000,
+    });
+
+    const [url, setUrl] = useState<string | null>(null);
+    useEffect(() => {
+      const blob = query.data;
+      if (!blob) {
+        setUrl(null);
+        return;
+      }
+      const next = URL.createObjectURL(blob);
+      setUrl(next);
+      return () => URL.revokeObjectURL(next);
+    }, [query.data]);
+    return url;
+  };
+}
+
 export interface EventKindDescriptor<
   Row extends EventRow,
   CreateVars extends { babyId: string },
@@ -240,5 +332,5 @@ export function defineEventKind<
     });
   }
 
-  return { segment: d.segment, listKey, useList, useCreate, useUpdate, useDelete };
+  return { segment: d.segment, itemPath: d.itemPath, listKey, useList, useCreate, useUpdate, useDelete };
 }

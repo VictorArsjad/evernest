@@ -5,12 +5,18 @@ import { api, apiBlob, apiQueued } from "./api";
 import { useAuthStore } from "./authStore";
 import type { FeatureVisibilityMap } from "./featureVisibility";
 import {
+  createdPhoto,
+  createPhotoBody,
   defineEventKind,
+  definePhotoUrl,
   editedText,
   listKeyFor,
   type ListHookOpts,
   newRowBase,
+  type PhotoVars,
+  updatedPhoto,
   updatedRowBase,
+  updatePhotoBody,
 } from "./eventKind";
 import { kickAfterReauth } from "./outbox";
 import type { ChartPalette } from "./palette";
@@ -112,8 +118,7 @@ export const qk = {
   households: ["households"] as const,
   babies: (householdId: string) => ["households", householdId, "babies"] as const,
   bottleFeeds: listKeyFor("bottle-feeds"),
-  diapers: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "diapers", from ?? "", to ?? ""] as const,
+  diapers: listKeyFor("diapers"),
   pumpings: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "pumpings", from ?? "", to ?? ""] as const,
   nursings: (babyId: string, from?: string, to?: string) =>
@@ -364,211 +369,61 @@ export const useDeleteBottleFeed = bottle.useDelete;
 
 // --- diapers ---
 
-export function useDiapers(
-  babyId: string | null,
-  from?: string,
-  to?: string,
-  opts?: ListHookOpts,
-) {
-  return useQuery({
-    queryKey: babyId ? qk.diapers(babyId, from, to) : ["babies", "none", "diapers"],
-    enabled: !!babyId,
-    refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
-    queryFn: () => {
-      const params = new URLSearchParams();
-      if (from) params.set("from", from);
-      if (to) params.set("to", to);
-      if (opts?.limit != null) params.set("limit", String(opts.limit));
-      const qs = params.toString();
-      return api<Diaper[]>(`/babies/${babyId}/diapers${qs ? `?${qs}` : ""}`);
-    },
-  });
+interface CreateDiaperVars extends PhotoVars {
+  babyId: string;
+  occurred_at: string;
+  type: DiaperType;
+  notes?: string;
 }
 
-export function useCreateDiaper() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      babyId: string;
-      occurred_at: string;
-      type: DiaperType;
-      notes?: string;
-      // Optional photo. photoBase64 must already be the raw base64
-      // payload (no `data:` prefix); the caller is expected to have
-      // gone through lib/image.compressForUpload first so the cap and
-      // re-encode happen before we hit the network. Both fields move
-      // as a pair — having one without the other is a programmer
-      // error.
-      photoBase64?: string;
-      photoMime?: DiaperPhotoMime;
-    }) => {
-      const id = makeId();
-      const hasPhoto = !!vars.photoBase64;
-      const synthetic: Diaper = {
-        id,
-        baby_id: vars.babyId,
-        occurred_at: vars.occurred_at,
-        type: vars.type,
-        notes: vars.notes ?? null,
-        has_photo: hasPhoto,
-        photo_mime: hasPhoto ? vars.photoMime ?? null : null,
-        source: "manual",
-        created_at: new Date().toISOString(),
-      };
-      const body: Record<string, unknown> = {
-        id,
-        occurred_at: vars.occurred_at,
-        type: vars.type,
-        notes: vars.notes || undefined,
-      };
-      if (vars.photoBase64) {
-        body.photo = vars.photoBase64;
-        body.photo_mime = vars.photoMime;
-      }
-      return apiQueued<Diaper>(`/babies/${vars.babyId}/diapers`, {
-        method: "POST",
-        body,
-        idempotencyKey: id,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      upsertList<Diaper>(qc, ["babies", vars.babyId, "diapers"], data);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "diapers"] });
-    },
-  });
+interface UpdateDiaperVars extends PhotoVars {
+  id: string;
+  babyId: string;
+  occurred_at?: string;
+  type?: DiaperType;
+  notes?: string;
 }
 
-export function useDeleteDiaper() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: { id: string; babyId: string }) =>
-      apiQueued<void>(`/diapers/${vars.id}`, {
-        method: "DELETE",
-        idempotencyKey: `del-diaper-${vars.id}`,
-        synthesize: () => undefined as unknown as void,
-      }),
-    onSuccess: (_data, vars) => {
-      removeFromList<Diaper>(qc, ["babies", vars.babyId, "diapers"], vars.id);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "diapers"] });
-    },
-  });
-}
+const diaper = defineEventKind<Diaper, CreateDiaperVars, UpdateDiaperVars>({
+  segment: "diapers",
+  itemPath: "/diapers",
+  deleteKeyPrefix: "del-diaper-",
+  refetchMs: LIVE_LIST_REFETCH_MS,
+  createRow: (vars, id) => ({
+    ...newRowBase(id, vars.babyId),
+    occurred_at: vars.occurred_at,
+    type: vars.type,
+    notes: vars.notes ?? null,
+    ...createdPhoto(vars),
+  }),
+  createBody: (vars, id) => ({
+    id,
+    occurred_at: vars.occurred_at,
+    type: vars.type,
+    notes: vars.notes || undefined,
+    ...createPhotoBody(vars),
+  }),
+  updateRow: (vars, existing) => ({
+    ...updatedRowBase(vars.id, vars.babyId, existing),
+    occurred_at: vars.occurred_at ?? existing?.occurred_at ?? new Date().toISOString(),
+    type: vars.type ?? existing?.type ?? "wet",
+    notes: editedText(vars.notes, existing?.notes),
+    ...updatedPhoto(vars, existing),
+  }),
+  updateBody: (vars) => {
+    const body: Record<string, unknown> = {};
+    if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
+    if (vars.type !== undefined) body.type = vars.type;
+    if (vars.notes !== undefined) body.notes = vars.notes;
+    return { ...body, ...updatePhotoBody(vars) };
+  },
+});
 
-export function useUpdateDiaper() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      id: string;
-      babyId: string;
-      occurred_at?: string;
-      type?: DiaperType;
-      notes?: string;
-      // Photo update semantics mirror the BE:
-      //   - undefined: leave the column alone
-      //   - "":        clear the stored photo (sends `"photo": ""`)
-      //   - <base64>:  replace; photoMime must be set alongside
-      photoBase64?: string;
-      photoMime?: DiaperPhotoMime;
-    }) => {
-      const lists = qc.getQueriesData<Diaper[] | undefined>({
-        queryKey: ["babies", vars.babyId, "diapers"],
-      }) as Array<[unknown, Diaper[] | undefined]>;
-      const existing = lists
-        .flatMap(([, list]) => list ?? [])
-        .find((r) => r.id === vars.id);
-
-      // Compute the synthesized has_photo / photo_mime so the optimistic
-      // row in the cache mirrors what the BE will return on replay.
-      let syntheticHasPhoto = existing?.has_photo ?? false;
-      let syntheticMime: DiaperPhotoMime | null | undefined = existing?.photo_mime ?? null;
-      if (vars.photoBase64 === "") {
-        syntheticHasPhoto = false;
-        syntheticMime = null;
-      } else if (vars.photoBase64 !== undefined) {
-        syntheticHasPhoto = true;
-        syntheticMime = vars.photoMime ?? syntheticMime ?? null;
-      }
-
-      const synthetic: Diaper = {
-        id: vars.id,
-        baby_id: existing?.baby_id ?? vars.babyId,
-        occurred_at: vars.occurred_at ?? existing?.occurred_at ?? new Date().toISOString(),
-        type: vars.type ?? existing?.type ?? "wet",
-        notes:
-          vars.notes === undefined
-            ? existing?.notes ?? null
-            : vars.notes === ""
-              ? null
-              : vars.notes,
-        has_photo: syntheticHasPhoto,
-        photo_mime: syntheticMime ?? null,
-        source: existing?.source ?? "manual",
-        created_at: existing?.created_at ?? new Date().toISOString(),
-      };
-      const body: Record<string, unknown> = {};
-      if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
-      if (vars.type !== undefined) body.type = vars.type;
-      if (vars.notes !== undefined) body.notes = vars.notes;
-      if (vars.photoBase64 !== undefined) {
-        body.photo = vars.photoBase64;
-        // photo_mime accompanies a non-empty replace. The BE ignores
-        // it for the clear case, but sending it doesn't hurt.
-        if (vars.photoBase64 !== "" && vars.photoMime) {
-          body.photo_mime = vars.photoMime;
-        }
-      }
-      return apiQueued<Diaper>(`/diapers/${vars.id}`, {
-        method: "PATCH",
-        body,
-        idempotencyKey: vars.id,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      upsertList<Diaper>(qc, ["babies", vars.babyId, "diapers"], data);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "diapers"] });
-    },
-  });
-}
-
-// useDiaperPhotoUrl fetches the raw bytes for a given diaper and
-// surfaces them as a blob URL ready to drop into `<img src>`. The hook
-// is intentionally lazy — when `hasPhoto` is false (or the id is null)
-// nothing is fetched, so render-on-scroll callers don't pay the cost
-// for diapers without photos.
-//
-// Lifecycle: each fetched blob lives behind a unique `blob:` URL that
-// the browser keeps alive until we call URL.revokeObjectURL. We
-// revoke on unmount AND when the URL changes (e.g. a PATCH replaced
-// the photo) so we don't leak per-render.
-export function useDiaperPhotoUrl(
-  id: string | null,
-  hasPhoto: boolean | undefined,
-): string | null {
-  const query = useQuery({
-    queryKey: ["diapers", id ?? "none", "photo"],
-    enabled: !!id && !!hasPhoto,
-    queryFn: () => apiBlob(`/diapers/${id}/photo`),
-    // Photos are write-once-per-edit; cache for 5 min before refetch.
-    // Matches the BE's `Cache-Control: private, max-age=300`.
-    staleTime: 5 * 60_000,
-    gcTime: 10 * 60_000,
-  });
-
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    const blob = query.data;
-    if (!blob) {
-      setUrl(null);
-      return;
-    }
-    const next = URL.createObjectURL(blob);
-    setUrl(next);
-    return () => URL.revokeObjectURL(next);
-  }, [query.data]);
-  return url;
-}
+export const useDiapers = diaper.useList;
+export const useCreateDiaper = diaper.useCreate;
+export const useUpdateDiaper = diaper.useUpdate;
+export const useDeleteDiaper = diaper.useDelete;
+export const useDiaperPhotoUrl = definePhotoUrl(diaper);
 
 // --- solid meals ---
 
