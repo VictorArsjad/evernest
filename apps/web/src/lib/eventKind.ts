@@ -247,6 +247,11 @@ export interface EventKindDescriptor<
   createRow(vars: CreateVars, id: string): Row;
   updateBody(vars: UpdateVars): Record<string, unknown>;
   updateRow(vars: UpdateVars, existing: Row | undefined): Row;
+  // Open-session capability (nursing, sleep): rows may be created without
+  // ended_at, which opens an "in progress" session cached under the open key.
+  // Create primes that cache and delete clears it. Pair with defineOpenSession
+  // for the open query and the end mutation.
+  openSession?: boolean;
 }
 
 export function defineEventKind<
@@ -255,6 +260,7 @@ export function defineEventKind<
   UpdateVars extends { id: string; babyId: string },
 >(d: EventKindDescriptor<Row, CreateVars, UpdateVars>) {
   const listKey = listKeyFor(d.segment);
+  const openKey = openKeyFor(d.segment);
 
   function useList(babyId: string | null, from?: string, to?: string, opts?: ListHookOpts) {
     return useQuery({
@@ -291,6 +297,12 @@ export function defineEventKind<
         // offline. invalidate triggers a background refetch when online
         // (no-op when offline).
         upsertList<Row>(qc, prefixFor(vars.babyId, d.segment), data);
+        // If we just opened an in-progress session (no ended_at), prime the
+        // open query so the in-progress tile shows up immediately even
+        // before the next refetch.
+        if (d.openSession && !(data as unknown as { ended_at?: string | null }).ended_at) {
+          qc.setQueryData(openKey(vars.babyId), data);
+        }
         qc.invalidateQueries({ queryKey: prefixFor(vars.babyId, d.segment) });
       },
     });
@@ -328,9 +340,91 @@ export function defineEventKind<
       onSuccess: (_data, vars) => {
         removeFromList<Row>(qc, prefixFor(vars.babyId, d.segment), vars.id);
         qc.invalidateQueries({ queryKey: prefixFor(vars.babyId, d.segment) });
+        if (d.openSession) {
+          // If the deleted row was the currently-open session, drop it.
+          const open = qc.getQueryData<Row | null>(openKey(vars.babyId));
+          if (open && open.id === vars.id) {
+            qc.setQueryData(openKey(vars.babyId), null);
+          }
+        }
       },
     });
   }
 
-  return { segment: d.segment, itemPath: d.itemPath, listKey, useList, useCreate, useUpdate, useDelete };
+  return { segment: d.segment, itemPath: d.itemPath, listKey, openKey, useList, useCreate, useUpdate, useDelete };
+}
+
+// --- open session (nursing, sleep) ---
+
+export interface OpenSessionDescriptor<
+  Row extends EventRow,
+  EndVars extends { id: string; babyId: string; ended_at: string },
+> {
+  // Idempotency key prefix of the end hook: `${endKeyPrefix}${id}`. Re-ending
+  // the same session is a no-op server-side (the row is already ended) and the
+  // outbox dedupes the second PATCH against the first.
+  endKeyPrefix: string;
+  endBody(vars: EndVars): Record<string, unknown>;
+  // `base` is whichever cached row (list, else open) carries this id. When
+  // offline we may have no complete row cached; the BE response replaces the
+  // synthesized one once sync drains.
+  endRow(vars: EndVars, base: Row | null): Row;
+}
+
+// useOpen polls /open for a single in-progress session. The endpoint returns
+// 204 when nothing is running (which our api wrapper surfaces as `undefined`);
+// we normalize that to `null` so consumers can use a simple `data ?? null`
+// check instead of distinguishing undefined-while-loading from
+// undefined-because-empty.
+export function defineOpenSession<
+  Row extends EventRow,
+  EndVars extends { id: string; babyId: string; ended_at: string },
+>(
+  kind: {
+    segment: string;
+    itemPath: string;
+    openKey: (babyId: string) => readonly unknown[];
+  },
+  d: OpenSessionDescriptor<Row, EndVars>,
+) {
+  function useOpen(babyId: string | null) {
+    return useQuery({
+      queryKey: babyId ? kind.openKey(babyId) : ["babies", "none", kind.segment, "open"],
+      enabled: !!babyId,
+      // Kept faster than the list refetch so a partner ending the session on
+      // another device clears the in-progress tile quickly.
+      refetchInterval: OPEN_SESSION_REFETCH_MS,
+      queryFn: async () => {
+        const data = await api<Row | undefined>(`/babies/${babyId}/${kind.segment}/open`);
+        return data ?? null;
+      },
+    });
+  }
+
+  function useEnd() {
+    const qc = useQueryClient();
+    return useMutation({
+      mutationFn: (vars: EndVars) => {
+        const fromOpen = qc.getQueryData<Row | null>(kind.openKey(vars.babyId));
+        const fromList = findCached<Row>(qc, prefixFor(vars.babyId, kind.segment), vars.id);
+        const synthetic = d.endRow(vars, fromList ?? fromOpen ?? null);
+        return apiQueued<Row>(`${kind.itemPath}/${vars.id}`, {
+          method: "PATCH",
+          body: d.endBody(vars),
+          idempotencyKey: `${d.endKeyPrefix}${vars.id}`,
+          synthesize: () => synthetic,
+        });
+      },
+      onSuccess: (data, vars) => {
+        // The in-progress tile should disappear immediately once we've
+        // recorded an ended_at, so clear the open query and replace the row
+        // in the list cache.
+        qc.setQueryData(kind.openKey(vars.babyId), null);
+        upsertList<Row>(qc, prefixFor(vars.babyId, kind.segment), data);
+        qc.invalidateQueries({ queryKey: prefixFor(vars.babyId, kind.segment) });
+      },
+    });
+  }
+
+  return { useOpen, useEnd };
 }

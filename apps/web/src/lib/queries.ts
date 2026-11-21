@@ -1,17 +1,19 @@
 // TanStack Query keys + mutations.
-import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, apiQueued } from "./api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "./api";
 import { useAuthStore } from "./authStore";
 import type { FeatureVisibilityMap } from "./featureVisibility";
 import {
   createdPhoto,
   createPhotoBody,
   defineEventKind,
+  defineOpenSession,
   definePhotoUrl,
   editedText,
   HEAVY_REFETCH_MS,
   listKeyFor,
   LIVE_LIST_REFETCH_MS,
+  openKeyFor,
   type ListHookOpts,
   newRowBase,
   type PhotoVars,
@@ -47,67 +49,10 @@ import type {
   UserPreferences,
 } from "./types";
 
-// CP6b note: write mutations on the per-baby event kinds use apiQueued
-// so they survive an offline window. The hooks generate the row id
-// client-side (UUIDv7-shaped via crypto.randomUUID — the BE accepts a
-// client-provided id and ON CONFLICT (id) DO NOTHING makes replay
-// idempotent) and inject a synthesized row into the cache via
-// upsertList so the Today list reflects the user's intent immediately
-// even when the network request is queued. When online, the real
-// server response replaces the synthetic row on the same id and
-// invalidate triggers a refetch in the background; when offline, the
-// synthetic row stays until sync() drains and the cache settles.
-
-// makeId: client-generated row id. crypto.randomUUID is everywhere we
-// ship (modern browsers + the dev runtime). UUIDv7 ordering would be
-// nicer for chart-axis sorting but isn't load-bearing — sorts use
-// occurred_at / measured_at / started_at, never the id.
-function makeId(): string {
-  return crypto.randomUUID();
-}
-
-// upsertList — apply a single row update to every cached list query
-// whose key has the given prefix. Used by mutation onSuccess to inject
-// the new (or just-saved) row without waiting on a network refetch.
-// Replace by id when present, prepend otherwise. Keeps the rest of the
-// list in its existing order so the user's view doesn't jump.
-function upsertList<T extends { id: string }>(
-  qc: QueryClient,
-  prefix: readonly unknown[],
-  row: T,
-): void {
-  qc.setQueriesData<T[] | undefined>({ queryKey: prefix }, (old) => {
-    if (!old) return old;
-    const idx = old.findIndex((r) => r.id === row.id);
-    if (idx >= 0) {
-      const next = old.slice();
-      next[idx] = row;
-      return next;
-    }
-    return [row, ...old];
-  });
-}
-
-// removeFromList — symmetric helper for delete mutations.
-function removeFromList<T extends { id: string }>(
-  qc: QueryClient,
-  prefix: readonly unknown[],
-  id: string,
-): void {
-  qc.setQueriesData<T[] | undefined>({ queryKey: prefix }, (old) => {
-    if (!old) return old;
-    return old.filter((r) => r.id !== id);
-  });
-}
-
-// Multi-device sync cadence. Same account on N devices => caregivers
-// want a recent edit to show up across phones without manual reload.
-// We poll the per-baby lists at LIVE_LIST_REFETCH_MS, the open-nursing
-// single-row endpoint a touch faster (it drives a live "in progress"
-// chip), and lower-urgency / heavier payloads at HEAVY_REFETCH_MS.
-// `refetchIntervalInBackground: false` (set in main.tsx) ensures none
-// of these poll while the tab is hidden.
-const OPEN_NURSING_REFETCH_MS = 10_000;
+// TanStack Query keys + hooks. The per-baby event kinds (bottle, diaper,
+// solids, note, pumping, nursing, sleep, growth) are descriptors fed to
+// defineEventKind in lib/eventKind.ts; the hooks below are its output, kept
+// under the names the routes import.
 
 export type { ListHookOpts };
 
@@ -118,13 +63,11 @@ export const qk = {
   bottleFeeds: listKeyFor("bottle-feeds"),
   diapers: listKeyFor("diapers"),
   pumpings: listKeyFor("pumpings"),
-  nursings: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "nursing-sessions", from ?? "", to ?? ""] as const,
-  openNursing: (babyId: string) => ["babies", babyId, "nursing-sessions", "open"] as const,
+  nursings: listKeyFor("nursing-sessions"),
+  openNursing: openKeyFor("nursing-sessions"),
   growths: listKeyFor("growths"),
-  sleeps: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "sleeps", from ?? "", to ?? ""] as const,
-  openSleep: (babyId: string) => ["babies", babyId, "sleeps", "open"] as const,
+  sleeps: listKeyFor("sleeps"),
+  openSleep: openKeyFor("sleeps"),
   notes: listKeyFor("notes"),
   solidMeals: listKeyFor("solid-meals"),
   chartsDaily: (babyId: string, from: string, to: string, tz: string) =>
@@ -624,480 +567,217 @@ export const useDeletePumping = pumping.useDelete;
 
 // --- nursing sessions ---
 
-export function useNursings(
-  babyId: string | null,
-  from?: string,
-  to?: string,
-  opts?: ListHookOpts,
-) {
-  return useQuery({
-    queryKey: babyId ? qk.nursings(babyId, from, to) : ["babies", "none", "nursing-sessions"],
-    enabled: !!babyId,
-    refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
-    queryFn: () => {
-      const params = new URLSearchParams();
-      if (from) params.set("from", from);
-      if (to) params.set("to", to);
-      if (opts?.limit != null) params.set("limit", String(opts.limit));
-      const qs = params.toString();
-      return api<Nursing[]>(`/babies/${babyId}/nursing-sessions${qs ? `?${qs}` : ""}`);
-    },
-  });
+interface CreateNursingVars {
+  babyId: string;
+  started_at: string;
+  // ended_at + per-side durations are all optional now: omitting all three
+  // opens an "in progress" session that the FE later closes via
+  // useEndNursing. The server enforces "all three together or none."
+  ended_at?: string;
+  starting_breast?: StartingBreast;
+  nursing_side: NursingSide;
+  left_duration_s?: number;
+  right_duration_s?: number;
+  notes?: string;
 }
 
-export function useCreateNursing() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      babyId: string;
-      started_at: string;
-      // ended_at + per-side durations are all optional now: omitting all
-      // three opens an "in progress" session that the FE later closes via
-      // useEndNursing. The server enforces "all three together or none."
-      ended_at?: string;
-      starting_breast?: StartingBreast;
-      nursing_side: NursingSide;
-      left_duration_s?: number;
-      right_duration_s?: number;
-      notes?: string;
-    }) => {
-      const id = makeId();
-      const synthetic: Nursing = {
-        id,
-        baby_id: vars.babyId,
-        started_at: vars.started_at,
-        ended_at: vars.ended_at ?? null,
-        starting_breast: vars.starting_breast ?? null,
-        nursing_side: vars.nursing_side,
-        left_duration_s: vars.left_duration_s ?? 0,
-        right_duration_s: vars.right_duration_s ?? 0,
-        notes: vars.notes ?? null,
-        source: "manual",
-        created_at: new Date().toISOString(),
-      };
-      return apiQueued<Nursing>(`/babies/${vars.babyId}/nursing-sessions`, {
-        method: "POST",
-        body: {
-          id,
-          started_at: vars.started_at,
-          ended_at: vars.ended_at,
-          starting_breast: vars.starting_breast,
-          nursing_side: vars.nursing_side,
-          left_duration_s: vars.left_duration_s,
-          right_duration_s: vars.right_duration_s,
-          notes: vars.notes || undefined,
-        },
-        idempotencyKey: id,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      upsertList<Nursing>(qc, ["babies", vars.babyId, "nursing-sessions"], data);
-      // If we just opened an in-progress session (no ended_at), prime
-      // the open-nursing query so the in-progress tile shows up
-      // immediately even before the next refetch.
-      if (!data.ended_at) {
-        qc.setQueryData(qk.openNursing(vars.babyId), data);
-      }
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "nursing-sessions"] });
-    },
-  });
+// Patches a CLOSED nursing session. The BE refuses to touch open sessions on
+// the edit path (the close-session PATCH owns that transition via
+// useEndNursing). The form should hide the edit affordance for open rows, and
+// caller code can assume ended_at is non-null here.
+interface UpdateNursingVars {
+  id: string;
+  babyId: string;
+  started_at?: string;
+  ended_at?: string;
+  starting_breast?: StartingBreast;
+  clear_starting_breast?: boolean;
+  nursing_side?: NursingSide;
+  left_duration_s?: number;
+  right_duration_s?: number;
+  notes?: string;
 }
 
-// useOpenNursing polls /open for a single in-progress session. The endpoint
-// returns 204 when nothing is running (which our api wrapper surfaces as
-// `undefined`); we normalize that to `null` so consumers can use a simple
-// `data ?? null` check instead of distinguishing undefined-while-loading
-// from undefined-because-empty.
-export function useOpenNursing(babyId: string | null) {
-  return useQuery({
-    queryKey: babyId ? qk.openNursing(babyId) : ["babies", "none", "nursing-sessions", "open"],
-    enabled: !!babyId,
-    // Kept faster than the list refetch so a partner ending the
-    // session on another device clears the in-progress tile quickly.
-    refetchInterval: OPEN_NURSING_REFETCH_MS,
-    queryFn: async () => {
-      const data = await api<Nursing | undefined>(`/babies/${babyId}/nursing-sessions/open`);
-      return data ?? null;
-    },
-  });
+interface EndNursingVars {
+  id: string;
+  babyId: string;
+  ended_at: string;
+  left_duration_s: number;
+  right_duration_s: number;
 }
 
-export function useEndNursing() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      id: string;
-      babyId: string;
-      ended_at: string;
-      left_duration_s: number;
-      right_duration_s: number;
-    }) => {
-      // Best-effort synthesize by patching whichever cached open-nursing
-      // (or list) row carries this id. The fallback covers offline use
-      // where we may not have a complete row in cache; the BE response
-      // will replace it once sync drains.
-      const fromOpen = qc.getQueryData<Nursing | null>(qk.openNursing(vars.babyId));
-      const fromList = (
-        qc.getQueriesData<Nursing[] | undefined>({
-          queryKey: ["babies", vars.babyId, "nursing-sessions"],
-        }) as Array<[unknown, Nursing[] | undefined]>
-      )
-        .flatMap(([, list]) => list ?? [])
-        .find((n) => n.id === vars.id);
-      const base = fromList ?? fromOpen ?? null;
-      const synthetic: Nursing = {
-        id: vars.id,
-        baby_id: base?.baby_id ?? vars.babyId,
-        started_at: base?.started_at ?? new Date().toISOString(),
-        ended_at: vars.ended_at,
-        starting_breast: base?.starting_breast ?? null,
-        nursing_side: base?.nursing_side ?? "both",
-        left_duration_s: vars.left_duration_s,
-        right_duration_s: vars.right_duration_s,
-        notes: base?.notes ?? null,
-        source: base?.source ?? "manual",
-        created_at: base?.created_at ?? new Date().toISOString(),
-      };
-      return apiQueued<Nursing>(`/nursing-sessions/${vars.id}`, {
-        method: "PATCH",
-        body: {
-          ended_at: vars.ended_at,
-          left_duration_s: vars.left_duration_s,
-          right_duration_s: vars.right_duration_s,
-        },
-        // Use the same row id as the key — re-ending the same session
-        // is a no-op server-side (the row is already ended) and the
-        // outbox dedupes the second PATCH against the first.
-        idempotencyKey: `end-nursing-${vars.id}`,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      // The open-nursing chip should disappear immediately once we've
-      // recorded an ended_at, so clear that query and replace the row
-      // in the list cache.
-      qc.setQueryData(qk.openNursing(vars.babyId), null);
-      upsertList<Nursing>(qc, ["babies", vars.babyId, "nursing-sessions"], data);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "nursing-sessions"] });
-    },
-  });
-}
+const nursing = defineEventKind<Nursing, CreateNursingVars, UpdateNursingVars>({
+  segment: "nursing-sessions",
+  itemPath: "/nursing-sessions",
+  deleteKeyPrefix: "del-nursing-",
+  refetchMs: LIVE_LIST_REFETCH_MS,
+  openSession: true,
+  createRow: (vars, id) => ({
+    ...newRowBase(id, vars.babyId),
+    started_at: vars.started_at,
+    ended_at: vars.ended_at ?? null,
+    starting_breast: vars.starting_breast ?? null,
+    nursing_side: vars.nursing_side,
+    left_duration_s: vars.left_duration_s ?? 0,
+    right_duration_s: vars.right_duration_s ?? 0,
+    notes: vars.notes ?? null,
+  }),
+  createBody: (vars, id) => ({
+    id,
+    started_at: vars.started_at,
+    ended_at: vars.ended_at,
+    starting_breast: vars.starting_breast,
+    nursing_side: vars.nursing_side,
+    left_duration_s: vars.left_duration_s,
+    right_duration_s: vars.right_duration_s,
+    notes: vars.notes || undefined,
+  }),
+  updateRow: (vars, existing) => ({
+    ...updatedRowBase(vars.id, vars.babyId, existing),
+    started_at: vars.started_at ?? existing?.started_at ?? new Date().toISOString(),
+    ended_at: vars.ended_at ?? existing?.ended_at ?? null,
+    starting_breast: vars.clear_starting_breast
+      ? null
+      : (vars.starting_breast ?? existing?.starting_breast ?? null),
+    nursing_side: vars.nursing_side ?? existing?.nursing_side ?? "both",
+    left_duration_s: vars.left_duration_s ?? existing?.left_duration_s ?? 0,
+    right_duration_s: vars.right_duration_s ?? existing?.right_duration_s ?? 0,
+    notes: editedText(vars.notes, existing?.notes),
+  }),
+  updateBody: (vars) => {
+    const body: Record<string, unknown> = {};
+    if (vars.started_at !== undefined) body.started_at = vars.started_at;
+    if (vars.ended_at !== undefined) body.ended_at = vars.ended_at;
+    if (vars.starting_breast !== undefined) body.starting_breast = vars.starting_breast;
+    if (vars.clear_starting_breast) body.clear_starting_breast = true;
+    if (vars.nursing_side !== undefined) body.nursing_side = vars.nursing_side;
+    if (vars.left_duration_s !== undefined) body.left_duration_s = vars.left_duration_s;
+    if (vars.right_duration_s !== undefined) body.right_duration_s = vars.right_duration_s;
+    if (vars.notes !== undefined) body.notes = vars.notes;
+    return body;
+  },
+});
 
-export function useDeleteNursing() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: { id: string; babyId: string }) =>
-      apiQueued<void>(`/nursing-sessions/${vars.id}`, {
-        method: "DELETE",
-        idempotencyKey: `del-nursing-${vars.id}`,
-        synthesize: () => undefined as unknown as void,
-      }),
-    onSuccess: (_data, vars) => {
-      removeFromList<Nursing>(qc, ["babies", vars.babyId, "nursing-sessions"], vars.id);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "nursing-sessions"] });
-      // If the deleted row was the currently-open session, drop it.
-      const open = qc.getQueryData<Nursing | null>(qk.openNursing(vars.babyId));
-      if (open && open.id === vars.id) {
-        qc.setQueryData(qk.openNursing(vars.babyId), null);
-      }
-    },
-  });
-}
+const nursingSession = defineOpenSession<Nursing, EndNursingVars>(nursing, {
+  endKeyPrefix: "end-nursing-",
+  endBody: (vars) => ({
+    ended_at: vars.ended_at,
+    left_duration_s: vars.left_duration_s,
+    right_duration_s: vars.right_duration_s,
+  }),
+  endRow: (vars, base) => ({
+    ...updatedRowBase(vars.id, vars.babyId, base ?? undefined),
+    started_at: base?.started_at ?? new Date().toISOString(),
+    ended_at: vars.ended_at,
+    starting_breast: base?.starting_breast ?? null,
+    nursing_side: base?.nursing_side ?? "both",
+    left_duration_s: vars.left_duration_s,
+    right_duration_s: vars.right_duration_s,
+    notes: base?.notes ?? null,
+  }),
+});
 
-// useUpdateNursing patches a CLOSED nursing session. The BE refuses to
-// touch open sessions on the edit path (the close-session PATCH owns
-// that transition via useEndNursing). The form should hide the edit
-// affordance for open rows, and useNursing-derived caller code can
-// assume ended_at is non-null here.
-export function useUpdateNursing() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      id: string;
-      babyId: string;
-      started_at?: string;
-      ended_at?: string;
-      starting_breast?: StartingBreast;
-      clear_starting_breast?: boolean;
-      nursing_side?: NursingSide;
-      left_duration_s?: number;
-      right_duration_s?: number;
-      notes?: string;
-    }) => {
-      const lists = qc.getQueriesData<Nursing[] | undefined>({
-        queryKey: ["babies", vars.babyId, "nursing-sessions"],
-      }) as Array<[unknown, Nursing[] | undefined]>;
-      const existing = lists
-        .flatMap(([, list]) => list ?? [])
-        .find((r) => r.id === vars.id);
-      const synthetic: Nursing = {
-        id: vars.id,
-        baby_id: existing?.baby_id ?? vars.babyId,
-        started_at: vars.started_at ?? existing?.started_at ?? new Date().toISOString(),
-        ended_at: vars.ended_at ?? existing?.ended_at ?? null,
-        starting_breast: vars.clear_starting_breast
-          ? null
-          : vars.starting_breast ?? existing?.starting_breast ?? null,
-        nursing_side: vars.nursing_side ?? existing?.nursing_side ?? "both",
-        left_duration_s: vars.left_duration_s ?? existing?.left_duration_s ?? 0,
-        right_duration_s: vars.right_duration_s ?? existing?.right_duration_s ?? 0,
-        notes:
-          vars.notes === undefined
-            ? existing?.notes ?? null
-            : vars.notes === ""
-              ? null
-              : vars.notes,
-        source: existing?.source ?? "manual",
-        created_at: existing?.created_at ?? new Date().toISOString(),
-      };
-      const body: Record<string, unknown> = {};
-      if (vars.started_at !== undefined) body.started_at = vars.started_at;
-      if (vars.ended_at !== undefined) body.ended_at = vars.ended_at;
-      if (vars.starting_breast !== undefined) body.starting_breast = vars.starting_breast;
-      if (vars.clear_starting_breast) body.clear_starting_breast = true;
-      if (vars.nursing_side !== undefined) body.nursing_side = vars.nursing_side;
-      if (vars.left_duration_s !== undefined) body.left_duration_s = vars.left_duration_s;
-      if (vars.right_duration_s !== undefined) body.right_duration_s = vars.right_duration_s;
-      if (vars.notes !== undefined) body.notes = vars.notes;
-      return apiQueued<Nursing>(`/nursing-sessions/${vars.id}`, {
-        method: "PATCH",
-        body,
-        idempotencyKey: vars.id,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      upsertList<Nursing>(qc, ["babies", vars.babyId, "nursing-sessions"], data);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "nursing-sessions"] });
-    },
-  });
-}
+export const useNursings = nursing.useList;
+export const useCreateNursing = nursing.useCreate;
+export const useUpdateNursing = nursing.useUpdate;
+export const useDeleteNursing = nursing.useDelete;
+export const useOpenNursing = nursingSession.useOpen;
+export const useEndNursing = nursingSession.useEnd;
 
 // --- sleeps ---
 
-export function useSleeps(
-  babyId: string | null,
-  from?: string,
-  to?: string,
-  opts?: ListHookOpts,
-) {
-  return useQuery({
-    queryKey: babyId ? qk.sleeps(babyId, from, to) : ["babies", "none", "sleeps"],
-    enabled: !!babyId,
-    refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
-    queryFn: () => {
-      const params = new URLSearchParams();
-      if (from) params.set("from", from);
-      if (to) params.set("to", to);
-      if (opts?.limit != null) params.set("limit", String(opts.limit));
-      const qs = params.toString();
-      return api<Sleep[]>(`/babies/${babyId}/sleeps${qs ? `?${qs}` : ""}`);
-    },
-  });
+interface CreateSleepVars {
+  babyId: string;
+  started_at: string;
+  // Omitting ended_at opens an "in progress" session that the FE later closes
+  // via useEndSleep.
+  ended_at?: string;
+  sleep_type?: SleepType;
+  location?: string;
+  notes?: string;
 }
 
-export function useCreateSleep() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      babyId: string;
-      started_at: string;
-      // Omitting ended_at opens an "in progress" session that the FE
-      // later closes via useEndSleep.
-      ended_at?: string;
-      sleep_type?: SleepType;
-      location?: string;
-      notes?: string;
-    }) => {
-      const id = makeId();
-      const synthetic: Sleep = {
-        id,
-        baby_id: vars.babyId,
-        started_at: vars.started_at,
-        ended_at: vars.ended_at ?? null,
-        sleep_type: vars.sleep_type ?? null,
-        location: vars.location ?? null,
-        notes: vars.notes ?? null,
-        source: "manual",
-        created_at: new Date().toISOString(),
-      };
-      return apiQueued<Sleep>(`/babies/${vars.babyId}/sleeps`, {
-        method: "POST",
-        body: {
-          id,
-          started_at: vars.started_at,
-          ended_at: vars.ended_at,
-          sleep_type: vars.sleep_type,
-          location: vars.location || undefined,
-          notes: vars.notes || undefined,
-        },
-        idempotencyKey: id,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      upsertList<Sleep>(qc, ["babies", vars.babyId, "sleeps"], data);
-      // If we just opened an in-progress session (no ended_at), prime
-      // the open-sleep query so the in-progress tile shows up
-      // immediately even before the next refetch.
-      if (!data.ended_at) {
-        qc.setQueryData(qk.openSleep(vars.babyId), data);
-      }
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "sleeps"] });
-    },
-  });
+// Patches a CLOSED sleep session. The BE refuses to touch open sessions on
+// the edit path (the close-session PATCH owns that transition via
+// useEndSleep). The form hides the edit affordance for open rows.
+interface UpdateSleepVars {
+  id: string;
+  babyId: string;
+  started_at?: string;
+  ended_at?: string;
+  sleep_type?: SleepType;
+  clear_sleep_type?: boolean;
+  location?: string;
+  notes?: string;
 }
 
-// useOpenSleep polls /open for a single in-progress session. Same
-// 204→null normalization as useOpenNursing.
-export function useOpenSleep(babyId: string | null) {
-  return useQuery({
-    queryKey: babyId ? qk.openSleep(babyId) : ["babies", "none", "sleeps", "open"],
-    enabled: !!babyId,
-    // Kept faster than the list refetch so a partner ending the
-    // session on another device clears the in-progress tile quickly.
-    refetchInterval: OPEN_NURSING_REFETCH_MS,
-    queryFn: async () => {
-      const data = await api<Sleep | undefined>(`/babies/${babyId}/sleeps/open`);
-      return data ?? null;
-    },
-  });
+interface EndSleepVars {
+  id: string;
+  babyId: string;
+  ended_at: string;
 }
 
-export function useEndSleep() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: { id: string; babyId: string; ended_at: string }) => {
-      // Best-effort synthesize by patching whichever cached open-sleep
-      // (or list) row carries this id — same fallback logic as
-      // useEndNursing for offline use.
-      const fromOpen = qc.getQueryData<Sleep | null>(qk.openSleep(vars.babyId));
-      const fromList = (
-        qc.getQueriesData<Sleep[] | undefined>({
-          queryKey: ["babies", vars.babyId, "sleeps"],
-        }) as Array<[unknown, Sleep[] | undefined]>
-      )
-        .flatMap(([, list]) => list ?? [])
-        .find((s) => s.id === vars.id);
-      const base = fromList ?? fromOpen ?? null;
-      const synthetic: Sleep = {
-        id: vars.id,
-        baby_id: base?.baby_id ?? vars.babyId,
-        started_at: base?.started_at ?? new Date().toISOString(),
-        ended_at: vars.ended_at,
-        sleep_type: base?.sleep_type ?? null,
-        location: base?.location ?? null,
-        notes: base?.notes ?? null,
-        source: base?.source ?? "manual",
-        created_at: base?.created_at ?? new Date().toISOString(),
-      };
-      return apiQueued<Sleep>(`/sleeps/${vars.id}`, {
-        method: "PATCH",
-        body: { ended_at: vars.ended_at },
-        // Same row id as the key — re-ending the same session is a
-        // no-op server-side and the outbox dedupes the second PATCH.
-        idempotencyKey: `end-sleep-${vars.id}`,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      // The in-progress tile should disappear immediately once we've
-      // recorded an ended_at.
-      qc.setQueryData(qk.openSleep(vars.babyId), null);
-      upsertList<Sleep>(qc, ["babies", vars.babyId, "sleeps"], data);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "sleeps"] });
-    },
-  });
-}
+const sleep = defineEventKind<Sleep, CreateSleepVars, UpdateSleepVars>({
+  segment: "sleeps",
+  itemPath: "/sleeps",
+  deleteKeyPrefix: "del-sleep-",
+  refetchMs: LIVE_LIST_REFETCH_MS,
+  openSession: true,
+  createRow: (vars, id) => ({
+    ...newRowBase(id, vars.babyId),
+    started_at: vars.started_at,
+    ended_at: vars.ended_at ?? null,
+    sleep_type: vars.sleep_type ?? null,
+    location: vars.location ?? null,
+    notes: vars.notes ?? null,
+  }),
+  createBody: (vars, id) => ({
+    id,
+    started_at: vars.started_at,
+    ended_at: vars.ended_at,
+    sleep_type: vars.sleep_type,
+    location: vars.location || undefined,
+    notes: vars.notes || undefined,
+  }),
+  updateRow: (vars, existing) => ({
+    ...updatedRowBase(vars.id, vars.babyId, existing),
+    started_at: vars.started_at ?? existing?.started_at ?? new Date().toISOString(),
+    ended_at: vars.ended_at ?? existing?.ended_at ?? null,
+    sleep_type: vars.clear_sleep_type ? null : (vars.sleep_type ?? existing?.sleep_type ?? null),
+    location: editedText(vars.location, existing?.location),
+    notes: editedText(vars.notes, existing?.notes),
+  }),
+  updateBody: (vars) => {
+    const body: Record<string, unknown> = {};
+    if (vars.started_at !== undefined) body.started_at = vars.started_at;
+    if (vars.ended_at !== undefined) body.ended_at = vars.ended_at;
+    if (vars.sleep_type !== undefined) body.sleep_type = vars.sleep_type;
+    if (vars.clear_sleep_type) body.clear_sleep_type = true;
+    if (vars.location !== undefined) body.location = vars.location;
+    if (vars.notes !== undefined) body.notes = vars.notes;
+    return body;
+  },
+});
 
-// useUpdateSleep patches a CLOSED sleep session. The BE refuses to touch
-// open sessions on the edit path (the close-session PATCH owns that
-// transition via useEndSleep). The form hides the edit affordance for
-// open rows.
-export function useUpdateSleep() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      id: string;
-      babyId: string;
-      started_at?: string;
-      ended_at?: string;
-      sleep_type?: SleepType;
-      clear_sleep_type?: boolean;
-      location?: string;
-      notes?: string;
-    }) => {
-      const lists = qc.getQueriesData<Sleep[] | undefined>({
-        queryKey: ["babies", vars.babyId, "sleeps"],
-      }) as Array<[unknown, Sleep[] | undefined]>;
-      const existing = lists
-        .flatMap(([, list]) => list ?? [])
-        .find((r) => r.id === vars.id);
-      const synthetic: Sleep = {
-        id: vars.id,
-        baby_id: existing?.baby_id ?? vars.babyId,
-        started_at: vars.started_at ?? existing?.started_at ?? new Date().toISOString(),
-        ended_at: vars.ended_at ?? existing?.ended_at ?? null,
-        sleep_type: vars.clear_sleep_type
-          ? null
-          : vars.sleep_type ?? existing?.sleep_type ?? null,
-        location:
-          vars.location === undefined
-            ? existing?.location ?? null
-            : vars.location === ""
-              ? null
-              : vars.location,
-        notes:
-          vars.notes === undefined
-            ? existing?.notes ?? null
-            : vars.notes === ""
-              ? null
-              : vars.notes,
-        source: existing?.source ?? "manual",
-        created_at: existing?.created_at ?? new Date().toISOString(),
-      };
-      const body: Record<string, unknown> = {};
-      if (vars.started_at !== undefined) body.started_at = vars.started_at;
-      if (vars.ended_at !== undefined) body.ended_at = vars.ended_at;
-      if (vars.sleep_type !== undefined) body.sleep_type = vars.sleep_type;
-      if (vars.clear_sleep_type) body.clear_sleep_type = true;
-      if (vars.location !== undefined) body.location = vars.location;
-      if (vars.notes !== undefined) body.notes = vars.notes;
-      return apiQueued<Sleep>(`/sleeps/${vars.id}`, {
-        method: "PATCH",
-        body,
-        idempotencyKey: vars.id,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      upsertList<Sleep>(qc, ["babies", vars.babyId, "sleeps"], data);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "sleeps"] });
-    },
-  });
-}
+const sleepSession = defineOpenSession<Sleep, EndSleepVars>(sleep, {
+  endKeyPrefix: "end-sleep-",
+  endBody: (vars) => ({ ended_at: vars.ended_at }),
+  endRow: (vars, base) => ({
+    ...updatedRowBase(vars.id, vars.babyId, base ?? undefined),
+    started_at: base?.started_at ?? new Date().toISOString(),
+    ended_at: vars.ended_at,
+    sleep_type: base?.sleep_type ?? null,
+    location: base?.location ?? null,
+    notes: base?.notes ?? null,
+  }),
+});
 
-export function useDeleteSleep() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: { id: string; babyId: string }) =>
-      apiQueued<void>(`/sleeps/${vars.id}`, {
-        method: "DELETE",
-        idempotencyKey: `del-sleep-${vars.id}`,
-        synthesize: () => undefined as unknown as void,
-      }),
-    onSuccess: (_data, vars) => {
-      removeFromList<Sleep>(qc, ["babies", vars.babyId, "sleeps"], vars.id);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "sleeps"] });
-      // If the deleted row was the currently-open session, drop it.
-      const open = qc.getQueryData<Sleep | null>(qk.openSleep(vars.babyId));
-      if (open && open.id === vars.id) {
-        qc.setQueryData(qk.openSleep(vars.babyId), null);
-      }
-    },
-  });
-}
+export const useSleeps = sleep.useList;
+export const useCreateSleep = sleep.useCreate;
+export const useUpdateSleep = sleep.useUpdate;
+export const useDeleteSleep = sleep.useDelete;
+export const useOpenSleep = sleepSession.useOpen;
+export const useEndSleep = sleepSession.useEnd;
 
 // --- growths ---
 
