@@ -1,75 +1,41 @@
-// Package growth implements CRUD for growth measurements (weight / height /
-// head circumference). Mirrors bottlefeed/diaper/pumping/nursing: POST/GET/
-// PATCH/DELETE with UUIDv7 client-id idempotency and baby-membership authz.
+// Package growth is the event-store descriptor for growth measurements
+// (weight / height / head circumference). The HTTP surface lives in
+// internal/eventstore.
 //
 // Growth's quirk vs the other event kinds: every measurement is independently
-// optional (you might just weigh the baby without re-measuring height), but
-// at least one of (weight_g, height_cm, head_circumference_cm) MUST be
-// non-NULL and > 0. The DB enforces "at least one non-NULL" via a CHECK; the
-// >0 floor is enforced here in Go because BabyPlus stores 0 to mean
-// "not measured" and we don't want to silently accept those mistypes from
-// the UI.
+// optional, but at least one of (weight_g, height_cm, head_circumference_cm)
+// MUST be non-NULL and > 0. The DB enforces "at least one non-NULL" via a
+// CHECK; the >0 floor is enforced here because BabyPlus stores 0 to mean
+// "not measured" and we don't want to silently accept those mistypes.
 //
-// Canonical units: grams, cm, UTC. The FE converts for display — see
-// docs/schema.md.
+// Canonical units: grams, cm, UTC. The FE converts for display.
 package growth
 
 import (
-	"errors"
 	"log/slog"
-	"net/http"
-	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
-	"github.com/varsjad/evernest/apps/api/internal/auth"
-	"github.com/varsjad/evernest/apps/api/internal/baby"
-	"github.com/varsjad/evernest/apps/api/internal/httpx"
+	"github.com/varsjad/evernest/apps/api/internal/eventstore"
 	"github.com/varsjad/evernest/apps/api/internal/store"
-	"github.com/varsjad/evernest/apps/api/internal/uuidx"
 )
 
 type Growth struct {
-	ID                  uuid.UUID  `json:"id"`
-	BabyID              uuid.UUID  `json:"baby_id"`
-	MeasuredAt          time.Time  `json:"measured_at"`
-	WeightG             *float64   `json:"weight_g,omitempty"`
-	HeightCM            *float64   `json:"height_cm,omitempty"`
-	HeadCircumferenceCM *float64   `json:"head_circumference_cm,omitempty"`
-	Notes               *string    `json:"notes,omitempty"`
-	Source              string     `json:"source"`
-	CreatedAt           time.Time  `json:"created_at"`
+	ID                  uuid.UUID `json:"id"`
+	BabyID              uuid.UUID `json:"baby_id"`
+	MeasuredAt          time.Time `json:"measured_at"`
+	WeightG             *float64  `json:"weight_g,omitempty"`
+	HeightCM            *float64  `json:"height_cm,omitempty"`
+	HeadCircumferenceCM *float64  `json:"head_circumference_cm,omitempty"`
+	Notes               *string   `json:"notes,omitempty"`
+	Source              string    `json:"source"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
-type Handler struct {
-	store  *store.Store
-	logger *slog.Logger
-	v      *validator.Validate
-}
-
-func NewHandler(st *store.Store, logger *slog.Logger) *Handler {
-	return &Handler{store: st, logger: logger, v: validator.New(validator.WithRequiredStructEnabled())}
-}
-
-// BabyRoutes mounts under /v1/babies/{babyID}.
-func (h *Handler) BabyRoutes(r chi.Router) {
-	r.Post("/growths", h.create)
-	r.Get("/growths", h.list)
-}
-
-// ItemRoutes mounts under /v1/growths/{id}.
-func (h *Handler) ItemRoutes(r chi.Router) {
-	r.Patch("/", h.update)
-	r.Delete("/", h.delete)
-}
-
-// Bounds picked to reject obvious mistypes while accepting any plausible
-// infant/toddler reading. Newborns are ~3kg/50cm/35cm head; the upper bound
-// covers a chunky toddler with margin.
+// Bounds reject obvious mistypes while accepting any plausible infant/toddler
+// reading. Newborns are ~3kg/50cm/35cm head; the upper bound covers a chunky
+// toddler with margin.
 type createReq struct {
 	ID                  *uuid.UUID `json:"id,omitempty"`
 	MeasuredAt          time.Time  `json:"measured_at" validate:"required"`
@@ -79,134 +45,10 @@ type createReq struct {
 	Notes               *string    `json:"notes,omitempty"`
 }
 
-func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	uid := auth.UserIDFrom(r.Context())
-	babyID, err := uuid.Parse(chi.URLParam(r, "babyID"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid baby id")
-		return
-	}
-	if _, err := baby.MustOwnBaby(r.Context(), h.store, uid, babyID); err != nil {
-		writeBabyAuthErr(w, err)
-		return
-	}
-
-	var req createReq
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
-		return
-	}
-	if err := h.v.Struct(req); err != nil {
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
-		return
-	}
-	// At least one of the three measurements must be present. The DB has a
-	// matching CHECK, but enforcing it here gives a structured 422 instead of
-	// a generic 500 on the SQL error.
-	if req.WeightG == nil && req.HeightCM == nil && req.HeadCircumferenceCM == nil {
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed",
-			"at least one of weight_g, height_cm, head_circumference_cm is required")
-		return
-	}
-
-	var id uuid.UUID
-	if req.ID != nil && *req.ID != uuid.Nil {
-		id = *req.ID
-	} else {
-		id = uuidx.NewV7()
-	}
-
-	// Idempotent insert: identical client id returns the existing row.
-	var out Growth
-	err = h.store.Pool.QueryRow(r.Context(), `
-		WITH ins AS (
-			INSERT INTO growths (
-				id, baby_id, measured_at, weight_g, height_cm, head_circumference_cm,
-				notes, source, created_by_user_id
-			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', $8)
-			ON CONFLICT (id) DO NOTHING
-			RETURNING id, baby_id, measured_at, weight_g, height_cm, head_circumference_cm,
-				notes, source, created_at
-		)
-		SELECT id, baby_id, measured_at, weight_g, height_cm, head_circumference_cm,
-			notes, source, created_at FROM ins
-		UNION ALL
-		SELECT id, baby_id, measured_at, weight_g, height_cm, head_circumference_cm,
-			notes, source, created_at
-		FROM growths WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM ins)
-	`, id, babyID, req.MeasuredAt, req.WeightG, req.HeightCM, req.HeadCircumferenceCM,
-		req.Notes, uid).
-		Scan(&out.ID, &out.BabyID, &out.MeasuredAt, &out.WeightG, &out.HeightCM,
-			&out.HeadCircumferenceCM, &out.Notes, &out.Source, &out.CreatedAt)
-	if err != nil {
-		h.logger.Error("insert growth", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not create growth")
-		return
-	}
-	httpx.WriteJSON(w, http.StatusCreated, out)
-}
-
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	uid := auth.UserIDFrom(r.Context())
-	babyID, err := uuid.Parse(chi.URLParam(r, "babyID"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid baby id")
-		return
-	}
-	if _, err := baby.MustOwnBaby(r.Context(), h.store, uid, babyID); err != nil {
-		writeBabyAuthErr(w, err)
-		return
-	}
-
-	from, to, err := parseRange(r)
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_range", err.Error())
-		return
-	}
-	limit := 200
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 1000 {
-			limit = n
-		}
-	}
-
-	rows, err := h.store.Pool.Query(r.Context(), `
-		SELECT id, baby_id, measured_at, weight_g, height_cm, head_circumference_cm,
-			notes, source, created_at
-		FROM growths
-		WHERE baby_id = $1 AND measured_at >= $2 AND measured_at < $3
-		ORDER BY measured_at DESC
-		LIMIT $4
-	`, babyID, from, to, limit)
-	if err != nil {
-		h.logger.Error("list growths", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "list failed")
-		return
-	}
-	defer rows.Close()
-	out := make([]Growth, 0, 32)
-	for rows.Next() {
-		var g Growth
-		if err := rows.Scan(&g.ID, &g.BabyID, &g.MeasuredAt, &g.WeightG, &g.HeightCM,
-			&g.HeadCircumferenceCM, &g.Notes, &g.Source, &g.CreatedAt); err != nil {
-			h.logger.Error("scan growth", "err", err)
-			httpx.WriteError(w, http.StatusInternalServerError, "internal", "scan failed")
-			return
-		}
-		out = append(out, g)
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
-}
-
-// updateReq is the PATCH body. Each measurement supports an explicit
-// "clear" via the *_present companion: send `{"weight_g": null}` to
-// remove a weight from the row. The DB's "at least one non-NULL"
-// CHECK is mirrored in Go so the user gets a structured 422 instead
-// of a generic 500 if a clear would leave the row empty.
-//
-// Notes follows the same "send empty string to clear" convention as
-// the other event kinds.
+// updateReq is the PATCH body. Each measurement has an explicit clear flag
+// (`clear_weight_g: true`) because a *float64 can't tell absent from null.
+// The "at least one non-NULL" CHECK is mirrored in Go on the merged state so
+// the user gets a structured 422 instead of a 500. Notes clear with "".
 type updateReq struct {
 	MeasuredAt          *time.Time `json:"measured_at,omitempty"`
 	WeightG             *float64   `json:"weight_g,omitempty" validate:"omitempty,gt=0,lt=30000"`
@@ -218,178 +60,88 @@ type updateReq struct {
 	Notes               *string    `json:"notes,omitempty"`
 }
 
-func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	uid := auth.UserIDFrom(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
-		return
+// merged is the post-PATCH value of one measurement: clear wins over a new
+// value, which wins over the stored one.
+func merged(cur, next *float64, clear bool) *float64 {
+	if clear {
+		return nil
 	}
-	var (
-		babyID                                                       uuid.UUID
-		curWeightG, curHeightCM, curHeadCM                           *float64
-	)
-	err = h.store.Pool.QueryRow(r.Context(), `
-		SELECT baby_id, weight_g, height_cm, head_circumference_cm
-		FROM growths WHERE id = $1
-	`, id).Scan(&babyID, &curWeightG, &curHeightCM, &curHeadCM)
-	if errors.Is(err, pgx.ErrNoRows) {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "growth not found")
-		return
+	if next != nil {
+		return next
 	}
-	if err != nil {
-		h.logger.Error("lookup growth", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "lookup failed")
-		return
-	}
-	if _, err := baby.MustOwnBaby(r.Context(), h.store, uid, babyID); err != nil {
-		writeBabyAuthErr(w, err)
-		return
-	}
-
-	var req updateReq
-	if err := httpx.DecodeJSON(r, &req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
-		return
-	}
-	if err := h.v.Struct(req); err != nil {
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
-		return
-	}
-
-	// Compute the post-merge state for the three measurements to enforce
-	// the "at least one non-NULL" invariant before hitting the DB.
-	mergedWeight := curWeightG
-	if req.ClearWeight {
-		mergedWeight = nil
-	} else if req.WeightG != nil {
-		mergedWeight = req.WeightG
-	}
-	mergedHeight := curHeightCM
-	if req.ClearHeight {
-		mergedHeight = nil
-	} else if req.HeightCM != nil {
-		mergedHeight = req.HeightCM
-	}
-	mergedHead := curHeadCM
-	if req.ClearHead {
-		mergedHead = nil
-	} else if req.HeadCircumferenceCM != nil {
-		mergedHead = req.HeadCircumferenceCM
-	}
-	if mergedWeight == nil && mergedHeight == nil && mergedHead == nil {
-		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed",
-			"at least one of weight_g, height_cm, head_circumference_cm must be set")
-		return
-	}
-
-	notesPresent := req.Notes != nil
-	var notesValue string
-	if notesPresent {
-		notesValue = *req.Notes
-	}
-
-	// $3/$4 (and pairs) say "if clear flag true OR new value non-null,
-	// replace; else keep". Clear takes precedence over a new value when
-	// both are present, matching the merge logic above.
-	var out Growth
-	err = h.store.Pool.QueryRow(r.Context(), `
-		UPDATE growths SET
-			measured_at           = COALESCE($2, measured_at),
-			weight_g              = CASE WHEN $3::boolean THEN NULL
-			                             WHEN $4::numeric IS NOT NULL THEN $4
-			                             ELSE weight_g END,
-			height_cm             = CASE WHEN $5::boolean THEN NULL
-			                             WHEN $6::numeric IS NOT NULL THEN $6
-			                             ELSE height_cm END,
-			head_circumference_cm = CASE WHEN $7::boolean THEN NULL
-			                             WHEN $8::numeric IS NOT NULL THEN $8
-			                             ELSE head_circumference_cm END,
-			notes                 = CASE WHEN $9::boolean THEN NULLIF($10, '') ELSE notes END
-		WHERE id = $1
-		RETURNING id, baby_id, measured_at, weight_g, height_cm, head_circumference_cm,
-			notes, source, created_at
-	`, id, req.MeasuredAt,
-		req.ClearWeight, req.WeightG,
-		req.ClearHeight, req.HeightCM,
-		req.ClearHead, req.HeadCircumferenceCM,
-		notesPresent, notesValue).
-		Scan(&out.ID, &out.BabyID, &out.MeasuredAt, &out.WeightG, &out.HeightCM,
-			&out.HeadCircumferenceCM, &out.Notes, &out.Source, &out.CreatedAt)
-	if err != nil {
-		h.logger.Error("update growth", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not update growth")
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	return cur
 }
 
-func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	uid := auth.UserIDFrom(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
-		return
-	}
-	var babyID uuid.UUID
-	err = h.store.Pool.QueryRow(r.Context(), `SELECT baby_id FROM growths WHERE id = $1`, id).Scan(&babyID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if err != nil {
-		h.logger.Error("lookup growth", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "lookup failed")
-		return
-	}
-	if _, err := baby.MustOwnBaby(r.Context(), h.store, uid, babyID); err != nil {
-		writeBabyAuthErr(w, err)
-		return
-	}
-	_, err = h.store.Pool.Exec(r.Context(), `DELETE FROM growths WHERE id = $1`, id)
-	if err != nil {
-		h.logger.Error("delete growth", "err", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "delete failed")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
+var spec = eventstore.Spec[Growth]{
+	Table:      "growths",
+	Path:       "growths",
+	Noun:       "growth",
+	TimeCol:    "measured_at",
+	Window:     365 * 24 * time.Hour, // measurements are infrequent
+	Select:     "id, baby_id, measured_at, weight_g, height_cm, head_circumference_cm, notes, source, created_at",
+	InsertCols: "measured_at, weight_g, height_cm, head_circumference_cm, notes",
 
-func parseRange(r *http.Request) (time.Time, time.Time, error) {
-	q := r.URL.Query()
-	now := time.Now().UTC()
-	// Growth measurements are infrequent (weekly at most), so the default
-	// window is wider than the per-day event windows. The Today screen still
-	// passes an explicit `from`/`to` for its own filtering.
-	from := now.Add(-365 * 24 * time.Hour)
-	to := now.Add(24 * time.Hour)
-	if s := q.Get("from"); s != "" {
-		t, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			return time.Time{}, time.Time{}, errors.New("from must be RFC3339")
+	Scan: func(s eventstore.Scanner) (Growth, error) {
+		var g Growth
+		err := s.Scan(&g.ID, &g.BabyID, &g.MeasuredAt, &g.WeightG, &g.HeightCM,
+			&g.HeadCircumferenceCM, &g.Notes, &g.Source, &g.CreatedAt)
+		return g, err
+	},
+
+	NewCreate: func() eventstore.Create {
+		return eventstore.CreateOf(func(req *createReq) (eventstore.Insert, *eventstore.Problem) {
+			// The DB has a matching CHECK; enforcing it here gives a
+			// structured 422 instead of a generic 500.
+			if req.WeightG == nil && req.HeightCM == nil && req.HeadCircumferenceCM == nil {
+				return eventstore.Insert{}, eventstore.Invalid(
+					"at least one of weight_g, height_cm, head_circumference_cm is required")
+			}
+			return eventstore.Insert{
+				ID:   req.ID,
+				Args: []any{req.MeasuredAt, req.WeightG, req.HeightCM, req.HeadCircumferenceCM, req.Notes},
+			}, nil
+		})
+	},
+
+	NewPatch: func() eventstore.Patch {
+		var curWeight, curHeight, curHead *float64
+		req := new(updateReq)
+		return eventstore.Patch{
+			State: "weight_g, height_cm, head_circumference_cm",
+			Dest:  []any{&curWeight, &curHeight, &curHead},
+			Body:  func() any { return req },
+			Build: func() (eventstore.Update, *eventstore.Problem) {
+				if merged(curWeight, req.WeightG, req.ClearWeight) == nil &&
+					merged(curHeight, req.HeightCM, req.ClearHeight) == nil &&
+					merged(curHead, req.HeadCircumferenceCM, req.ClearHead) == nil {
+					return eventstore.Update{}, eventstore.Invalid(
+						"at least one of weight_g, height_cm, head_circumference_cm must be set")
+				}
+				notesPresent, notesValue := eventstore.Text(req.Notes)
+				// Per measurement: clear flag → NULL; new value → replace; else keep.
+				return eventstore.Update{
+					Set: `measured_at           = COALESCE($2, measured_at),
+						weight_g              = CASE WHEN $3::boolean THEN NULL
+						                             WHEN $4::numeric IS NOT NULL THEN $4
+						                             ELSE weight_g END,
+						height_cm             = CASE WHEN $5::boolean THEN NULL
+						                             WHEN $6::numeric IS NOT NULL THEN $6
+						                             ELSE height_cm END,
+						head_circumference_cm = CASE WHEN $7::boolean THEN NULL
+						                             WHEN $8::numeric IS NOT NULL THEN $8
+						                             ELSE head_circumference_cm END,
+						notes                 = CASE WHEN $9::boolean THEN NULLIF($10, '') ELSE notes END`,
+					Args: []any{req.MeasuredAt,
+						req.ClearWeight, req.WeightG,
+						req.ClearHeight, req.HeightCM,
+						req.ClearHead, req.HeadCircumferenceCM,
+						notesPresent, notesValue},
+				}, nil
+			},
 		}
-		from = t
-	}
-	if s := q.Get("to"); s != "" {
-		t, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			return time.Time{}, time.Time{}, errors.New("to must be RFC3339")
-		}
-		to = t
-	}
-	if !from.Before(to) {
-		return time.Time{}, time.Time{}, errors.New("from must be before to")
-	}
-	return from, to, nil
+	},
 }
 
-func writeBabyAuthErr(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, baby.ErrNotFound):
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "baby not found")
-	case errors.Is(err, baby.ErrUnauthorized):
-		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not a member of this household")
-	default:
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
-	}
+func NewHandler(st *store.Store, logger *slog.Logger) *eventstore.Handler[Growth] {
+	return eventstore.New(spec, st, logger)
 }
