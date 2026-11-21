@@ -5,9 +5,9 @@
 // `false` because past events aren't being mutated on that screen.
 import { Link } from "@tanstack/react-router";
 import { format, isToday, parseISO } from "date-fns";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
-import { EVENT_KIND_ROWS } from "../lib/eventKinds";
+import { EVENT_KIND_ROWS, type EventKindName } from "../lib/eventKinds";
 import { useDiaperPhotoUrl, useNotePhotoUrl, useSolidMealPhotoUrl } from "../lib/queries";
 import type { RecentEvent } from "../lib/recentEvents";
 import {
@@ -53,6 +53,120 @@ function minutesBetween(startISO: string, endISO: string): number {
   if (!Number.isFinite(delta) || delta <= 0) return 0;
   return Math.round(delta / 60_000);
 }
+
+// Per-kind row body. Record<EventKindName, …> makes a missing kind a compile
+// error; the shared "MMM d" date line is appended by RecentRow.
+type BodyRenderer<K extends EventKindName> = (
+  ev: Extract<RecentEvent, { kind: K }>,
+  prefs: CombinedPreferences,
+) => ReactNode;
+
+const BODIES: { [K in EventKindName]: BodyRenderer<K> } = {
+  bottle: (ev, prefs) => (
+        <>
+          <div className="text-base font-medium">
+            {formatVolume(Number(ev.data.amount_ml), prefs.unit_volume)}
+            <span className="ml-2 text-xs font-normal text-white/50">
+              {ev.data.milk_source === "breast" ? "expressed" : "formula"}
+            </span>
+          </div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+  ),
+  diaper: (ev) => (
+        <>
+          <div className="text-base font-medium capitalize">{ev.data.type} diaper</div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+  ),
+  pumping: (ev, prefs) => (
+        <>
+          <div className="text-base font-medium">
+            {formatVolume(Number(ev.data.amount_ml), prefs.unit_volume)} pumped
+            {ev.data.duration_seconds != null && (
+              <span className="ml-2 text-xs font-normal text-white/50">
+                · {Math.round(ev.data.duration_seconds / 60)} min
+              </span>
+            )}
+          </div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+  ),
+  nursing: (ev) => (
+        <>
+          <div className="text-base font-medium">
+            Nursed {Math.round((ev.data.left_duration_s + ev.data.right_duration_s) / 60)} min
+            <span className="ml-2 text-xs font-normal capitalize text-white/50">
+              · {ev.data.nursing_side}
+            </span>
+          </div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+  ),
+  growth: (ev, prefs) => (
+        <>
+          <div className="text-base font-medium">{growthSummary(ev.data, prefs)}</div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+  ),
+  sleep: (ev) => (
+        <>
+          <div className="text-base font-medium">
+            {ev.data.ended_at != null ? (
+              <>Slept {formatDurationHM(minutesBetween(ev.data.started_at, ev.data.ended_at))}</>
+            ) : (
+              <>Sleeping</>
+            )}
+            {(ev.data.sleep_type || ev.data.location) && (
+              <span className="ml-2 text-xs font-normal capitalize text-white/50">
+                · {[ev.data.sleep_type, ev.data.location].filter(Boolean).join(" · ")}
+              </span>
+            )}
+            {ev.data.ended_at == null && (
+              <span className="ml-2 text-xs font-normal text-indigo-300">· in progress</span>
+            )}
+          </div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+  ),
+  note: (ev) => (
+        <div className="line-clamp-2 whitespace-pre-wrap break-words text-base font-medium">
+          {ev.data.body}
+        </div>
+  ),
+  solids: (ev, prefs) => (
+        <>
+          <div className="text-base font-medium">
+            {ev.data.foods.join(", ")}
+            {ev.data.reaction && (
+              <span className="ml-2 text-xs font-normal capitalize text-white/50">
+                · {ev.data.reaction}
+              </span>
+            )}
+            {ev.data.amount_g != null && (
+              <span className="ml-2 text-xs font-normal text-white/50">
+                · {formatWeight(Number(ev.data.amount_g), prefs.unit_weight)}
+              </span>
+            )}
+          </div>
+          {ev.data.notes && (
+            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
+          )}
+        </>
+  ),
+};
 
 export function RecentRow({
   ev,
@@ -112,110 +226,7 @@ export function RecentRow({
     !(meta.openSession && (ev.data as { ended_at?: string | null }).ended_at == null);
   const body = (
     <>
-      {ev.kind === "bottle" && (
-        <>
-          <div className="text-base font-medium">
-            {formatVolume(Number(ev.data.amount_ml), prefs.unit_volume)}
-            <span className="ml-2 text-xs font-normal text-white/50">
-              {ev.data.milk_source === "breast" ? "expressed" : "formula"}
-            </span>
-          </div>
-          {ev.data.notes && (
-            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
-          )}
-        </>
-      )}
-      {ev.kind === "diaper" && (
-        <>
-          <div className="text-base font-medium capitalize">{ev.data.type} diaper</div>
-          {ev.data.notes && (
-            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
-          )}
-        </>
-      )}
-      {ev.kind === "pumping" && (
-        <>
-          <div className="text-base font-medium">
-            {formatVolume(Number(ev.data.amount_ml), prefs.unit_volume)} pumped
-            {ev.data.duration_seconds != null && (
-              <span className="ml-2 text-xs font-normal text-white/50">
-                · {Math.round(ev.data.duration_seconds / 60)} min
-              </span>
-            )}
-          </div>
-          {ev.data.notes && (
-            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
-          )}
-        </>
-      )}
-      {ev.kind === "nursing" && (
-        <>
-          <div className="text-base font-medium">
-            Nursed {Math.round((ev.data.left_duration_s + ev.data.right_duration_s) / 60)} min
-            <span className="ml-2 text-xs font-normal capitalize text-white/50">
-              · {ev.data.nursing_side}
-            </span>
-          </div>
-          {ev.data.notes && (
-            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
-          )}
-        </>
-      )}
-      {ev.kind === "growth" && (
-        <>
-          <div className="text-base font-medium">{growthSummary(ev.data, prefs)}</div>
-          {ev.data.notes && (
-            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
-          )}
-        </>
-      )}
-      {ev.kind === "sleep" && (
-        <>
-          <div className="text-base font-medium">
-            {ev.data.ended_at != null ? (
-              <>Slept {formatDurationHM(minutesBetween(ev.data.started_at, ev.data.ended_at))}</>
-            ) : (
-              <>Sleeping</>
-            )}
-            {(ev.data.sleep_type || ev.data.location) && (
-              <span className="ml-2 text-xs font-normal capitalize text-white/50">
-                · {[ev.data.sleep_type, ev.data.location].filter(Boolean).join(" · ")}
-              </span>
-            )}
-            {ev.data.ended_at == null && (
-              <span className="ml-2 text-xs font-normal text-indigo-300">· in progress</span>
-            )}
-          </div>
-          {ev.data.notes && (
-            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
-          )}
-        </>
-      )}
-      {ev.kind === "note" && (
-        <div className="line-clamp-2 whitespace-pre-wrap break-words text-base font-medium">
-          {ev.data.body}
-        </div>
-      )}
-      {ev.kind === "solids" && (
-        <>
-          <div className="text-base font-medium">
-            {ev.data.foods.join(", ")}
-            {ev.data.reaction && (
-              <span className="ml-2 text-xs font-normal capitalize text-white/50">
-                · {ev.data.reaction}
-              </span>
-            )}
-            {ev.data.amount_g != null && (
-              <span className="ml-2 text-xs font-normal text-white/50">
-                · {formatWeight(Number(ev.data.amount_g), prefs.unit_weight)}
-              </span>
-            )}
-          </div>
-          {ev.data.notes && (
-            <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
-          )}
-        </>
-      )}
+      {(BODIES[ev.kind] as BodyRenderer<EventKindName>)(ev, prefs)}
       {!isToday(at) && (
         <div className="text-xs text-white/40">{format(at, "MMM d")}</div>
       )}
