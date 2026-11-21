@@ -2,6 +2,7 @@
 // Charts & History screen — query windows, daily totals, "last X" labels,
 // per-day history rollups and the /day averages. No React; the routes
 // fetch, call these, and render.
+import { summarize } from "./charts";
 import type { DayGroup } from "./groupByDay";
 import type { RecentEvent } from "./recentEvents";
 import { currentSleepDayBounds, sleepDayKey } from "./sleepDays";
@@ -229,4 +230,28 @@ export function formatDaySummary(
   if (sleepMin > 0) parts.push(`${formatDurationHM(sleepMin)} sleep`);
   if (noteCount > 0) parts.push(`${noteCount} ${noteCount === 1 ? "note" : "notes"}`);
   return parts.join(" · ");
+}
+
+// --- /day averages ---
+
+// chartTotals: window totals and per-/day averages for bottle, pumping,
+// nursing and diapers. Averages exclude the in-progress `todayYMD` and
+// divide by the past days that have a row (see charts.summarize).
+export const chartTotals = summarize;
+
+// sleepWindowTotals: total across the window plus the /day average.
+// Unlike chartTotals, the average divides by ALL past days in the window
+// (zero-sleep days included) and excludes `todayYMD` (the partial
+// sleep-day). Falls back to including today when it is the only day.
+export function sleepWindowTotals(
+  totals: readonly { date: string; minutes: number }[],
+  todayYMD: string,
+): { totalMin: number; avgMin: number } {
+  const totalMin = totals.reduce((s, d) => s + d.minutes, 0);
+  const pastDays = totals.filter((d) => d.date !== todayYMD);
+  const avgDenominator = pastDays.length > 0 ? pastDays.length : totals.length;
+  const avgNumerator =
+    pastDays.length > 0 ? pastDays.reduce((s, d) => s + d.minutes, 0) : totalMin;
+  const avgMin = avgDenominator > 0 ? avgNumerator / avgDenominator : 0;
+  return { totalMin, avgMin };
 }

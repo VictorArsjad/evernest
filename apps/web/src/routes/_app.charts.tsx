@@ -24,11 +24,17 @@ import {
   formatLocalYMD,
   stacked2Layout,
   stackedDiaperLayout,
-  summarize,
   tooltipXPercent,
   type SparkBar,
 } from "../lib/charts";
-import { chartEndDate, entryDayKeys, formatDaySummary, historyWindows } from "../lib/daySummary";
+import {
+  chartEndDate,
+  chartTotals,
+  entryDayKeys,
+  formatDaySummary,
+  historyWindows,
+  sleepWindowTotals,
+} from "../lib/daySummary";
 import { isFeatureVisible } from "../lib/featureVisibility";
 import { groupByLocalDay, type DayGroup } from "../lib/groupByDay";
 import { DEFAULT_PALETTE, resolve } from "../lib/palette";
@@ -491,7 +497,7 @@ function ChartGrid({
   // Pass `todayYMD` so the per-day averages exclude the in-progress
   // current day; otherwise the average would drift down as the day
   // ticks forward and reset every midnight.
-  const totals = useMemo(() => summarize(days, todayYMD), [days, todayYMD]);
+  const totals = useMemo(() => chartTotals(days, todayYMD), [days, todayYMD]);
   const nursing = useMemo(() => barLayout(days.map((d) => d.nursing_minutes)), [days]);
   const pumping = useMemo(() => barLayout(days.map((d) => d.pumping_ml)), [days]);
   const stacked = useMemo(
@@ -749,14 +755,7 @@ function SleepChartsSection({
   const range = getDailySleepRange(baby, now);
   const canSelectDay = (date: string) => !!entryDayKeys?.has(date);
 
-  // Window totals/avg. The average excludes today (partial sleep-day)
-  // exactly like summarize() does for the other cards.
-  const totalMin = totals.reduce((s, d) => s + d.minutes, 0);
-  const pastDays = totals.filter((d) => d.date !== todayYMD);
-  const avgDenominator = pastDays.length > 0 ? pastDays.length : totals.length;
-  const avgNumerator =
-    pastDays.length > 0 ? pastDays.reduce((s, d) => s + d.minutes, 0) : totalMin;
-  const avgMin = avgDenominator > 0 ? avgNumerator / avgDenominator : 0;
+  const { totalMin, avgMin } = sleepWindowTotals(totals, todayYMD);
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

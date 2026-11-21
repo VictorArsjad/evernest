@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   chartEndDate,
+  chartTotals,
   entryDayKeys,
   formatDaySummary,
   historyWindows,
   lastEvents,
   lastWokeAtOf,
   latestWeightGrams,
+  sleepWindowTotals,
   todaySleepWindow,
   todayTotals,
   todayWindows,
@@ -297,5 +299,57 @@ describe("formatDaySummary", () => {
     const closed = sleepEv(local(2026, 11, 22, 8), local(2026, 11, 22, 9));
     expect(formatDaySummary([closed], prefs, "2026-11-22", [open])).toBe("");
     expect(formatDaySummary([], prefs, "2026-11-22", [open, closed])).toBe("1h 0m sleep");
+  });
+});
+
+describe("sleepWindowTotals", () => {
+  const day = (date: string, minutes: number) => ({ date, minutes });
+
+  it("totals the whole window but averages past days only", () => {
+    const r = sleepWindowTotals(
+      [day("2026-11-20", 600), day("2026-11-21", 660), day("2026-11-22", 120)],
+      "2026-11-22",
+    );
+    expect(r.totalMin).toBe(1380);
+    expect(r.avgMin).toBe(630);
+  });
+
+  it("divides by all past window days, zero-sleep days included", () => {
+    // Pending product question: the other cards divide by past days WITH
+    // data; sleep divides by every past day. This pins the difference.
+    const r = sleepWindowTotals(
+      [day("2026-11-19", 0), day("2026-11-20", 0), day("2026-11-21", 600), day("2026-11-22", 50)],
+      "2026-11-22",
+    );
+    expect(r.avgMin).toBe(200);
+  });
+
+  it("includes today when it is the only day", () => {
+    expect(sleepWindowTotals([day("2026-11-22", 90)], "2026-11-22")).toEqual({
+      totalMin: 90,
+      avgMin: 90,
+    });
+  });
+
+  it("is zero for an empty window", () => {
+    expect(sleepWindowTotals([], "2026-11-22")).toEqual({ totalMin: 0, avgMin: 0 });
+  });
+});
+
+describe("chartTotals", () => {
+  const d = (date: string, bottle: number, diapers: number) =>
+    ({
+      date,
+      bottle_ml: bottle,
+      pumping_ml: 0,
+      nursing_minutes: 0,
+      diaper_total: diapers,
+    }) as unknown as import("./types").ChartDaily;
+
+  it("excludes today from averages but not from totals", () => {
+    const r = chartTotals([d("2026-11-21", 300, 4), d("2026-11-22", 100, 1)], "2026-11-22");
+    expect(r.bottleTotalMl).toBe(400);
+    expect(r.bottleAvgMl).toBe(300);
+    expect(r.diaperAvg).toBe(4);
   });
 });
