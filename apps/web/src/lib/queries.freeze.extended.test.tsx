@@ -67,7 +67,13 @@ describe.each(PHOTO_KINDS)("$kind: photo url hook", (p) => {
     const { result } = renderHook(() => p.usePhotoUrl(EXISTING_ID, true), { wrapper });
     await waitFor(() => expect(result.current).toBe("blob:test-1"));
     expect(calls).toEqual([{ method: "GET", url: `/v1${p.path}/${EXISTING_ID}/photo`, body: undefined }]);
-    expect(qc.getQueryData([p.cacheRoot, EXISTING_ID, "photo"])).toBeInstanceOf(Blob);
+    // Realm-independent Blob check: under Node 22 + jsdom, Response.blob()
+    // returns Node's Blob while the global `Blob` is jsdom's, so instanceof
+    // fails even on pre-refactor code. Assert the same facts structurally.
+    const cached = qc.getQueryData<Blob>([p.cacheRoot, EXISTING_ID, "photo"]);
+    expect(Object.prototype.toString.call(cached)).toBe("[object Blob]");
+    expect(cached?.size).toBe(11);
+    expect(cached?.type).toBe("image/jpeg");
     expect(create).toHaveBeenCalledTimes(1);
     expect(revoke).not.toHaveBeenCalled();
   });
