@@ -7,6 +7,7 @@ import { Link } from "@tanstack/react-router";
 import { format, isToday, parseISO } from "date-fns";
 import { useState } from "react";
 
+import { EVENT_KIND_ROWS } from "../lib/eventKinds";
 import { useDiaperPhotoUrl, useNotePhotoUrl, useSolidMealPhotoUrl } from "../lib/queries";
 import type { RecentEvent } from "../lib/recentEvents";
 import {
@@ -98,22 +99,8 @@ export function RecentRow({
     : isSolidsWithPhoto
       ? solidsPhotoUrl
       : diaperPhotoUrl;
-  const icon =
-    ev.kind === "bottle"
-      ? "🍼"
-      : ev.kind === "diaper"
-        ? "🧷"
-        : ev.kind === "solids"
-          ? "🥣"
-          : ev.kind === "pumping"
-            ? "💧"
-            : ev.kind === "growth"
-              ? "📏"
-              : ev.kind === "sleep"
-                ? "😴"
-                : ev.kind === "note"
-                  ? "📝"
-                  : "👶";
+  const meta = EVENT_KIND_ROWS[ev.kind];
+  const icon = meta.icon;
   // Tap target: the row body links to the matching /log/<kind>?edit=<id>
   // form so users can correct mistyped values. Open nursing and sleep
   // sessions are intentionally NOT editable from here — those flow
@@ -122,8 +109,7 @@ export function RecentRow({
   // tappable because the edit form prefills from the same cache that
   // holds the unsynced row.
   const editable =
-    !(ev.kind === "nursing" && ev.data.ended_at == null) &&
-    !(ev.kind === "sleep" && ev.data.ended_at == null);
+    !(meta.openSession && (ev.data as { ended_at?: string | null }).ended_at == null);
   const body = (
     <>
       {ev.kind === "bottle" && (
@@ -297,13 +283,7 @@ export function RecentRow({
           {photoUrl ? (
             <img
               src={photoUrl}
-              alt={
-                ev.kind === "note"
-                  ? "Note photo"
-                  : ev.kind === "solids"
-                    ? "Solids photo"
-                    : "Diaper photo"
-              }
+              alt={meta.photoAlt ?? "Diaper photo"}
               className="max-h-48 rounded-xl border border-white/10 object-contain"
             />
           ) : (
