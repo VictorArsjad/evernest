@@ -9,6 +9,7 @@ import {
   defineEventKind,
   definePhotoUrl,
   editedText,
+  HEAVY_REFETCH_MS,
   listKeyFor,
   type ListHookOpts,
   newRowBase,
@@ -117,13 +118,11 @@ export const qk = {
   babies: (householdId: string) => ["households", householdId, "babies"] as const,
   bottleFeeds: listKeyFor("bottle-feeds"),
   diapers: listKeyFor("diapers"),
-  pumpings: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "pumpings", from ?? "", to ?? ""] as const,
+  pumpings: listKeyFor("pumpings"),
   nursings: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "nursing-sessions", from ?? "", to ?? ""] as const,
   openNursing: (babyId: string) => ["babies", babyId, "nursing-sessions", "open"] as const,
-  growths: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "growths", from ?? "", to ?? ""] as const,
+  growths: listKeyFor("growths"),
   sleeps: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "sleeps", from ?? "", to ?? ""] as const,
   openSleep: (babyId: string) => ["babies", babyId, "sleeps", "open"] as const,
@@ -566,135 +565,63 @@ export const useNotePhotoUrl = definePhotoUrl(note);
 
 // --- pumpings ---
 
-export function usePumpings(
-  babyId: string | null,
-  from?: string,
-  to?: string,
-  opts?: ListHookOpts,
-) {
-  return useQuery({
-    queryKey: babyId ? qk.pumpings(babyId, from, to) : ["babies", "none", "pumpings"],
-    enabled: !!babyId,
-    refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
-    queryFn: () => {
-      const params = new URLSearchParams();
-      if (from) params.set("from", from);
-      if (to) params.set("to", to);
-      if (opts?.limit != null) params.set("limit", String(opts.limit));
-      const qs = params.toString();
-      return api<Pumping[]>(`/babies/${babyId}/pumpings${qs ? `?${qs}` : ""}`);
-    },
-  });
+interface CreatePumpingVars {
+  babyId: string;
+  occurred_at: string;
+  amount_ml: number;
+  duration_seconds?: number;
+  notes?: string;
 }
 
-export function useCreatePumping() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      babyId: string;
-      occurred_at: string;
-      amount_ml: number;
-      duration_seconds?: number;
-      notes?: string;
-    }) => {
-      const id = makeId();
-      const synthetic: Pumping = {
-        id,
-        baby_id: vars.babyId,
-        occurred_at: vars.occurred_at,
-        amount_ml: vars.amount_ml,
-        duration_seconds: vars.duration_seconds ?? null,
-        notes: vars.notes ?? null,
-        source: "manual",
-        created_at: new Date().toISOString(),
-      };
-      return apiQueued<Pumping>(`/babies/${vars.babyId}/pumpings`, {
-        method: "POST",
-        body: {
-          id,
-          occurred_at: vars.occurred_at,
-          amount_ml: vars.amount_ml,
-          duration_seconds: vars.duration_seconds,
-          notes: vars.notes || undefined,
-        },
-        idempotencyKey: id,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      upsertList<Pumping>(qc, ["babies", vars.babyId, "pumpings"], data);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "pumpings"] });
-    },
-  });
+interface UpdatePumpingVars {
+  id: string;
+  babyId: string;
+  occurred_at?: string;
+  amount_ml?: number;
+  duration_seconds?: number;
+  notes?: string;
 }
 
-export function useDeletePumping() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: { id: string; babyId: string }) =>
-      apiQueued<void>(`/pumpings/${vars.id}`, {
-        method: "DELETE",
-        idempotencyKey: `del-pumping-${vars.id}`,
-        synthesize: () => undefined as unknown as void,
-      }),
-    onSuccess: (_data, vars) => {
-      removeFromList<Pumping>(qc, ["babies", vars.babyId, "pumpings"], vars.id);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "pumpings"] });
-    },
-  });
-}
+const pumping = defineEventKind<Pumping, CreatePumpingVars, UpdatePumpingVars>({
+  segment: "pumpings",
+  itemPath: "/pumpings",
+  deleteKeyPrefix: "del-pumping-",
+  refetchMs: LIVE_LIST_REFETCH_MS,
+  createRow: (vars, id) => ({
+    ...newRowBase(id, vars.babyId),
+    occurred_at: vars.occurred_at,
+    amount_ml: vars.amount_ml,
+    duration_seconds: vars.duration_seconds ?? null,
+    notes: vars.notes ?? null,
+  }),
+  createBody: (vars, id) => ({
+    id,
+    occurred_at: vars.occurred_at,
+    amount_ml: vars.amount_ml,
+    duration_seconds: vars.duration_seconds,
+    notes: vars.notes || undefined,
+  }),
+  updateRow: (vars, existing) => ({
+    ...updatedRowBase(vars.id, vars.babyId, existing),
+    occurred_at: vars.occurred_at ?? existing?.occurred_at ?? new Date().toISOString(),
+    amount_ml: vars.amount_ml ?? existing?.amount_ml ?? 0,
+    duration_seconds: vars.duration_seconds ?? existing?.duration_seconds ?? null,
+    notes: editedText(vars.notes, existing?.notes),
+  }),
+  updateBody: (vars) => {
+    const body: Record<string, unknown> = {};
+    if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
+    if (vars.amount_ml !== undefined) body.amount_ml = vars.amount_ml;
+    if (vars.duration_seconds !== undefined) body.duration_seconds = vars.duration_seconds;
+    if (vars.notes !== undefined) body.notes = vars.notes;
+    return body;
+  },
+});
 
-export function useUpdatePumping() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      id: string;
-      babyId: string;
-      occurred_at?: string;
-      amount_ml?: number;
-      duration_seconds?: number;
-      notes?: string;
-    }) => {
-      const lists = qc.getQueriesData<Pumping[] | undefined>({
-        queryKey: ["babies", vars.babyId, "pumpings"],
-      }) as Array<[unknown, Pumping[] | undefined]>;
-      const existing = lists
-        .flatMap(([, list]) => list ?? [])
-        .find((r) => r.id === vars.id);
-      const synthetic: Pumping = {
-        id: vars.id,
-        baby_id: existing?.baby_id ?? vars.babyId,
-        occurred_at: vars.occurred_at ?? existing?.occurred_at ?? new Date().toISOString(),
-        amount_ml: vars.amount_ml ?? existing?.amount_ml ?? 0,
-        duration_seconds:
-          vars.duration_seconds ?? existing?.duration_seconds ?? null,
-        notes:
-          vars.notes === undefined
-            ? existing?.notes ?? null
-            : vars.notes === ""
-              ? null
-              : vars.notes,
-        source: existing?.source ?? "manual",
-        created_at: existing?.created_at ?? new Date().toISOString(),
-      };
-      const body: Record<string, unknown> = {};
-      if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
-      if (vars.amount_ml !== undefined) body.amount_ml = vars.amount_ml;
-      if (vars.duration_seconds !== undefined) body.duration_seconds = vars.duration_seconds;
-      if (vars.notes !== undefined) body.notes = vars.notes;
-      return apiQueued<Pumping>(`/pumpings/${vars.id}`, {
-        method: "PATCH",
-        body,
-        idempotencyKey: vars.id,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      upsertList<Pumping>(qc, ["babies", vars.babyId, "pumpings"], data);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "pumpings"] });
-    },
-  });
-}
+export const usePumpings = pumping.useList;
+export const useCreatePumping = pumping.useCreate;
+export const useUpdatePumping = pumping.useUpdate;
+export const useDeletePumping = pumping.useDelete;
 
 // --- nursing sessions ---
 
@@ -1175,155 +1102,80 @@ export function useDeleteSleep() {
 
 // --- growths ---
 
-export function useGrowths(
-  babyId: string | null,
-  from?: string,
-  to?: string,
-  opts?: ListHookOpts,
-) {
-  return useQuery({
-    queryKey: babyId ? qk.growths(babyId, from, to) : ["babies", "none", "growths"],
-    enabled: !!babyId,
-    refetchInterval: opts?.refetchInterval ?? HEAVY_REFETCH_MS,
-    queryFn: () => {
-      const params = new URLSearchParams();
-      if (from) params.set("from", from);
-      if (to) params.set("to", to);
-      if (opts?.limit != null) params.set("limit", String(opts.limit));
-      const qs = params.toString();
-      return api<Growth[]>(`/babies/${babyId}/growths${qs ? `?${qs}` : ""}`);
-    },
-  });
+interface CreateGrowthVars {
+  babyId: string;
+  measured_at: string;
+  weight_g?: number;
+  height_cm?: number;
+  head_circumference_cm?: number;
+  notes?: string;
 }
 
-export function useCreateGrowth() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      babyId: string;
-      measured_at: string;
-      weight_g?: number;
-      height_cm?: number;
-      head_circumference_cm?: number;
-      notes?: string;
-    }) => {
-      const id = makeId();
-      const synthetic: Growth = {
-        id,
-        baby_id: vars.babyId,
-        measured_at: vars.measured_at,
-        weight_g: vars.weight_g ?? null,
-        height_cm: vars.height_cm ?? null,
-        head_circumference_cm: vars.head_circumference_cm ?? null,
-        notes: vars.notes ?? null,
-        source: "manual",
-        created_at: new Date().toISOString(),
-      };
-      return apiQueued<Growth>(`/babies/${vars.babyId}/growths`, {
-        method: "POST",
-        body: {
-          id,
-          measured_at: vars.measured_at,
-          weight_g: vars.weight_g,
-          height_cm: vars.height_cm,
-          head_circumference_cm: vars.head_circumference_cm,
-          notes: vars.notes || undefined,
-        },
-        idempotencyKey: id,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      upsertList<Growth>(qc, ["babies", vars.babyId, "growths"], data);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "growths"] });
-    },
-  });
+// Supports explicit per-measurement clearing via the BE's clear_* flags. The
+// growth form passes the clear flag when the user empties an input that
+// previously held a value.
+interface UpdateGrowthVars {
+  id: string;
+  babyId: string;
+  measured_at?: string;
+  weight_g?: number;
+  clear_weight_g?: boolean;
+  height_cm?: number;
+  clear_height_cm?: boolean;
+  head_circumference_cm?: number;
+  clear_head_circumference_cm?: boolean;
+  notes?: string;
 }
 
-export function useDeleteGrowth() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: { id: string; babyId: string }) =>
-      apiQueued<void>(`/growths/${vars.id}`, {
-        method: "DELETE",
-        idempotencyKey: `del-growth-${vars.id}`,
-        synthesize: () => undefined as unknown as void,
-      }),
-    onSuccess: (_data, vars) => {
-      removeFromList<Growth>(qc, ["babies", vars.babyId, "growths"], vars.id);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "growths"] });
-    },
-  });
-}
+const growth = defineEventKind<Growth, CreateGrowthVars, UpdateGrowthVars>({
+  segment: "growths",
+  itemPath: "/growths",
+  deleteKeyPrefix: "del-growth-",
+  refetchMs: HEAVY_REFETCH_MS,
+  createRow: (vars, id) => ({
+    ...newRowBase(id, vars.babyId),
+    measured_at: vars.measured_at,
+    weight_g: vars.weight_g ?? null,
+    height_cm: vars.height_cm ?? null,
+    head_circumference_cm: vars.head_circumference_cm ?? null,
+    notes: vars.notes ?? null,
+  }),
+  createBody: (vars, id) => ({
+    id,
+    measured_at: vars.measured_at,
+    weight_g: vars.weight_g,
+    height_cm: vars.height_cm,
+    head_circumference_cm: vars.head_circumference_cm,
+    notes: vars.notes || undefined,
+  }),
+  updateRow: (vars, existing) => ({
+    ...updatedRowBase(vars.id, vars.babyId, existing),
+    measured_at: vars.measured_at ?? existing?.measured_at ?? new Date().toISOString(),
+    weight_g: vars.clear_weight_g ? null : (vars.weight_g ?? existing?.weight_g ?? null),
+    height_cm: vars.clear_height_cm ? null : (vars.height_cm ?? existing?.height_cm ?? null),
+    head_circumference_cm: vars.clear_head_circumference_cm
+      ? null
+      : (vars.head_circumference_cm ?? existing?.head_circumference_cm ?? null),
+    notes: editedText(vars.notes, existing?.notes),
+  }),
+  updateBody: (vars) => {
+    const body: Record<string, unknown> = {};
+    if (vars.measured_at !== undefined) body.measured_at = vars.measured_at;
+    if (vars.weight_g !== undefined) body.weight_g = vars.weight_g;
+    if (vars.clear_weight_g) body.clear_weight_g = true;
+    if (vars.height_cm !== undefined) body.height_cm = vars.height_cm;
+    if (vars.clear_height_cm) body.clear_height_cm = true;
+    if (vars.head_circumference_cm !== undefined) body.head_circumference_cm = vars.head_circumference_cm;
+    if (vars.clear_head_circumference_cm) body.clear_head_circumference_cm = true;
+    if (vars.notes !== undefined) body.notes = vars.notes;
+    return body;
+  },
+});
 
-// useUpdateGrowth supports explicit per-measurement clearing via
-// the BE's clear_* flags. The growth form passes the clear flag when
-// the user empties an input that previously held a value.
-export function useUpdateGrowth() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      id: string;
-      babyId: string;
-      measured_at?: string;
-      weight_g?: number;
-      clear_weight_g?: boolean;
-      height_cm?: number;
-      clear_height_cm?: boolean;
-      head_circumference_cm?: number;
-      clear_head_circumference_cm?: boolean;
-      notes?: string;
-    }) => {
-      const lists = qc.getQueriesData<Growth[] | undefined>({
-        queryKey: ["babies", vars.babyId, "growths"],
-      }) as Array<[unknown, Growth[] | undefined]>;
-      const existing = lists
-        .flatMap(([, list]) => list ?? [])
-        .find((r) => r.id === vars.id);
-      const synthetic: Growth = {
-        id: vars.id,
-        baby_id: existing?.baby_id ?? vars.babyId,
-        measured_at: vars.measured_at ?? existing?.measured_at ?? new Date().toISOString(),
-        weight_g: vars.clear_weight_g
-          ? null
-          : vars.weight_g ?? existing?.weight_g ?? null,
-        height_cm: vars.clear_height_cm
-          ? null
-          : vars.height_cm ?? existing?.height_cm ?? null,
-        head_circumference_cm: vars.clear_head_circumference_cm
-          ? null
-          : vars.head_circumference_cm ?? existing?.head_circumference_cm ?? null,
-        notes:
-          vars.notes === undefined
-            ? existing?.notes ?? null
-            : vars.notes === ""
-              ? null
-              : vars.notes,
-        source: existing?.source ?? "manual",
-        created_at: existing?.created_at ?? new Date().toISOString(),
-      };
-      const body: Record<string, unknown> = {};
-      if (vars.measured_at !== undefined) body.measured_at = vars.measured_at;
-      if (vars.weight_g !== undefined) body.weight_g = vars.weight_g;
-      if (vars.clear_weight_g) body.clear_weight_g = true;
-      if (vars.height_cm !== undefined) body.height_cm = vars.height_cm;
-      if (vars.clear_height_cm) body.clear_height_cm = true;
-      if (vars.head_circumference_cm !== undefined) body.head_circumference_cm = vars.head_circumference_cm;
-      if (vars.clear_head_circumference_cm) body.clear_head_circumference_cm = true;
-      if (vars.notes !== undefined) body.notes = vars.notes;
-      return apiQueued<Growth>(`/growths/${vars.id}`, {
-        method: "PATCH",
-        body,
-        idempotencyKey: vars.id,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      upsertList<Growth>(qc, ["babies", vars.babyId, "growths"], data);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "growths"] });
-    },
-  });
-}
+export const useGrowths = growth.useList;
+export const useCreateGrowth = growth.useCreate;
+export const useUpdateGrowth = growth.useUpdate;
+export const useDeleteGrowth = growth.useDelete;
 
 // --- preferences (user + per-baby settings) ---
 
