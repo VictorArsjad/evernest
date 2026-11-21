@@ -17,31 +17,43 @@ internal/
   auth/                JWT, sessions, password, RequireUser middleware, UserIDFrom(ctx)
   baby/                MustOwnBaby authz gate + ErrNotFound / ErrUnauthorized
   config/              env-driven config
-  <domain>/            one package per event kind: bottlefeed, diaper, pumping,
-                       nursing, growth, chart, household, preferences
+  eventstore/          shared HTTP+SQL module for every event kind
+  <domain>/            event-kind descriptors (bottlefeed, diaper, pumping, nursing,
+                       sleep, solidmeal, note, growth) and chart, household, preferences
 ```
 
-## How a domain package is shaped (the pattern to copy)
+## How an event kind is shaped (the descriptor pattern)
 
-Every event-kind package follows `bottlefeed` almost verbatim:
+All eight event kinds (bottlefeed, diaper, pumping, nursing, growth, sleep,
+note, solidmeal) share ONE implementation, `internal/eventstore`. A kind
+package holds only a descriptor:
 
-- A `Handler` struct holding `*store.Store`, `*slog.Logger`, and a
-  `*validator.Validate` (`validator.New(validator.WithRequiredStructEnabled())`).
-- `NewHandler(st, logger)` constructor.
-- `BabyRoutes(r chi.Router)` mounts collection routes under
-  `/v1/babies/{babyID}` (POST create, GET list).
-- `ItemRoutes(r chi.Router)` mounts item routes under `/v1/<kind>/{id}`
-  (PATCH update, DELETE delete).
-- Routes get wired in `internal/api/router.go` — add the handler there, never
-  build a separate router. `router.go` carries an import-cycle note: `httpx`
-  provides helpers, domains consume them, `api` is the composition root.
+- Its exported row type (e.g. `BottleFeed`) and the `createReq` / `updateReq`
+  structs with `validate` tags.
+- An `eventstore.Spec[T]`: `Table`, `Path`, `Noun`, `TimeCol`, `Window`,
+  `Select`, `InsertCols`, a `Scan`, and `NewCreate` / `NewPatch` hooks that
+  turn a decoded request into insert args or an UPDATE `Set` clause (or a
+  422 via `eventstore.Invalid`).
+- `Photo: true` (embed `eventstore.PhotoIn` in the request structs) for kinds
+  with an inline photo; `Open: true` plus `eventstore.SessionPatch` for
+  start-now/end-later kinds (nursing, sleep).
+- `NewHandler(st, logger) *eventstore.Handler[T]`.
+
+`eventstore` owns the routes (`BabyRoutes` under `/v1/babies/{babyID}`:
+POST/GET, plus `/open` for Open kinds; `ItemRoutes` under `/v1/<path>/{id}`:
+PATCH/DELETE, plus `/photo`), authz, body cap, decode + validate, the
+idempotent insert, list ranges and error envelopes. To add a kind, write a new
+descriptor package and wire its `NewHandler` in `internal/api/router.go` -
+never build a separate router. `router.go` carries an import-cycle note:
+`httpx` provides helpers, domains consume them, `api` is the composition root.
 
 ## Non-obvious invariants (don't break these)
 
 - **Authz on every baby-scoped request** goes through
-  `baby.MustOwnBaby(ctx, store, uid, babyID)`. Map its errors with the local
-  `writeBabyAuthErr` helper (404 `ErrNotFound`, 403 `ErrUnauthorized`). Never
-  query an event table without first proving the caller owns the baby.
+  `baby.MustOwnBaby(ctx, store, uid, babyID)`; `eventstore` does this for the
+  event kinds. Map its errors with `baby.WriteAuthErr` (404 `ErrNotFound`, 403
+  `ErrUnauthorized`; anything else is a logged 500 with a generic message).
+  Never query an event table without first proving the caller owns the baby.
 - **Idempotent creates.** Inserts use the `WITH ins AS (INSERT … ON CONFLICT
   (id) DO NOTHING RETURNING …) SELECT … UNION ALL SELECT … WHERE NOT EXISTS`
   shape so a client retry (offline outbox replay) returns the existing row
@@ -49,11 +61,15 @@ Every event-kind package follows `bottlefeed` almost verbatim:
 - **Client-supplied ids.** `create` accepts an optional `id` in the body; if
   absent, generate with `uuidx.NewV7()`. This is what makes the FE outbox safe.
 - **PATCH is partial.** Omitted fields stay untouched (`COALESCE($n, col)`).
-  The server always preserves `id` / `source` / `created_at` /
-  `created_by_user_id` regardless of input so an `import_babyplus` row stays
-  correctly tagged after a user correction. For nullable text like `notes`,
-  follow the "present-flag + NULLIF(value,'')" convention used in `bottlefeed`
-  (Go's JSON decoder can't tell "absent" from "explicit null" on a `*string`).
+  `id` / `source` / `created_at` / `created_by_user_id` are preserved because
+  the UPDATE never sets them. They are NOT silently ignored if sent:
+  `httpx.DecodeJSON` uses `DisallowUnknownFields`, so any field the PATCH body
+  doesn't declare (including `source` and `id`) is a 400 `bad_request`. For
+  nullable text like `notes`, follow the "present-flag + NULLIF(value,'')"
+  convention (`eventstore.Text`); Go's JSON decoder can't tell "absent" from
+  "explicit null" on a `*string`.
+- **Request bodies are capped** at 3 MiB for every kind (413
+  `payload_too_large`).
 - **Canonical units only.** DB stores `ml` / `cm` / `grams` and UTC timestamps.
   Do NOT add user-preference unit columns to event tables — conversion is the
   FE's job.

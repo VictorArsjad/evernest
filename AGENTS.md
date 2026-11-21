@@ -66,7 +66,7 @@ apps/
   api/cmd/server/           HTTP server entrypoint
   api/cmd/import-babyplus/  one-shot importer (also bundled in the api image)
   api/migrations/           golang-migrate SQL pairs
-  api/internal/             handlers, store, auth, etc.
+  api/internal/             eventstore + per-kind descriptors, store, auth, etc.
   web/                      Vite + React PWA
   web/src/lib/outbox.ts     IndexedDB-backed offline outbox (don't bypass for writes)
   web/src/routes/           TanStack Router routes
@@ -110,7 +110,7 @@ docs/
 
 | Task | Where to look |
 |---|---|
-| Add a new event kind (e.g. sleep) | `apps/api/migrations/` (new table) → `apps/api/internal/store/` (CRUD) → `apps/api/internal/handlers/` (HTTP) → `docs/api.openapi.yaml` (contract) → `apps/web/src/lib/outbox.ts` (kind) → `apps/web/src/routes/_app.log.<kind>.tsx` (form) |
+| Add a new event kind (e.g. sleep) | `apps/api/migrations/` (new table) → `apps/api/internal/<kind>/` (a descriptor for the shared `apps/api/internal/eventstore/` module; wire it in `internal/api/router.go`) → `docs/api.openapi.yaml` (contract) → `apps/web/src/lib/outbox.ts` (kind) → `apps/web/src/routes/_app.log.<kind>.tsx` (form) |
 | Tweak the BabyPlus importer | `apps/api/cmd/import-babyplus/{parse,importer}.go` + `*_test.go` |
 | Adjust the FE activity-chart range | `apps/web/src/routes/_app.charts.tsx` |
 | Work on the growth / WHO-percentile view | `apps/web/src/routes/_app.growth.tsx` + `apps/web/src/lib/who/` (bundled WHO LMS tables, percentile math, curve geometry — all pure + unit-tested) |
