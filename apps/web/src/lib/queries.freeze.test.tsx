@@ -931,17 +931,16 @@ it("offline edit while create queued is enqueued alongside the create", async ()
     idempotencyKey: `${ROW_ID}:patch:${ROW_ID}`,
   });
   expect(q[1].body).toEqual({ amount_ml: 150 });
-  // Direct POST + one immediate outbox retry, then the direct PATCH + its
-  // outbox retry. The retried PATCH runs while the create is still parked in
-  // backoff (pickNextReady skips backed-off records), i.e. replay is FIFO only
-  // among ready records.
+  // Direct POST + one immediate outbox retry, then the direct PATCH. The
+  // PATCH's outbox retry is held back while the create is parked in backoff
+  // (same entityId), so it never replays ahead of the create.
   const post = {
     method: "POST",
     url: "/v1/babies/b1/bottle-feeds",
     body: { id: ROW_ID, occurred_at: "2026-11-22T09:30:00Z", milk_source: "formula", amount_ml: 120 },
   };
   const patch = { method: "PATCH", url: `/v1/bottle-feeds/${ROW_ID}`, body: { amount_ml: 150 } };
-  expect(calls).toEqual([post, post, patch, patch]);
+  expect(calls).toEqual([post, post, patch]);
   // The local cache shows the edit.
   expect(qc.getQueryData(qk.bottleFeeds(BABY))).toEqual([
     {

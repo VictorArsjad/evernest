@@ -307,6 +307,7 @@ export function defineEventKind<
           method: "POST",
           body: d.createBody(vars, id),
           idempotencyKey: id,
+          entityId: id,
           synthesize: () => synthetic,
         });
       },
@@ -337,6 +338,7 @@ export function defineEventKind<
           method: "PATCH",
           body: d.updateBody(vars),
           idempotencyKey: await patchKeyFor(vars.id),
+          entityId: vars.id,
           synthesize: () => synthetic,
         });
       },
@@ -354,6 +356,7 @@ export function defineEventKind<
         apiQueued<void>(`${d.itemPath}/${vars.id}`, {
           method: "DELETE",
           idempotencyKey: `${d.deleteKeyPrefix}${vars.id}`,
+          entityId: vars.id,
           synthesize: () => undefined as unknown as void,
         }),
       onSuccess: (_data, vars) => {
@@ -431,6 +434,7 @@ export function defineOpenSession<
           method: "PATCH",
           body: d.endBody(vars),
           idempotencyKey: `${d.endKeyPrefix}${vars.id}`,
+          entityId: vars.id,
           synthesize: () => synthetic,
         });
       },
