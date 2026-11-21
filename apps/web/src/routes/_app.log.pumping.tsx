@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
+import { isoToLocalDatetimeInput, localToISO, nowLocalDatetimeInput } from "../lib/datetime";
 import {
   useBabies,
   useCreatePumping,
@@ -36,22 +37,6 @@ export const Route = createFileRoute("/_app/log/pumping")({
   validateSearch: search,
   component: LogPumpingPage,
 });
-
-function nowLocalDatetimeInput(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function isoToLocalDatetimeInput(iso: string): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function localToISO(local: string): string {
-  return new Date(local).toISOString();
-}
 
 function LogPumpingPage() {
   const nav = useNavigate();
