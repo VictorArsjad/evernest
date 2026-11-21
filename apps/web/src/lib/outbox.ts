@@ -203,6 +203,7 @@ export async function _resetForTests(): Promise<void> {
     dbPromise = null;
   }
   draining = null;
+  resyncRequested = false;
   if (retryTimer !== null) {
     clearTimeout(retryTimer);
     retryTimer = null;
@@ -323,9 +324,16 @@ export async function enqueueMutation(
 // backlog post-outage doesn't slam the API.
 let draining: Promise<void> | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
+// Set when sync() is called while a drain is in flight. A drain that is
+// past its last pickNextReady would otherwise never see the request, so
+// drainLoop re-runs a pass while this is set.
+let resyncRequested = false;
 
 export function sync(): Promise<void> {
-  if (draining) return draining;
+  if (draining) {
+    resyncRequested = true;
+    return draining;
+  }
   draining = drainLoop().finally(() => {
     draining = null;
   });
@@ -333,6 +341,13 @@ export function sync(): Promise<void> {
 }
 
 async function drainLoop(): Promise<void> {
+  do {
+    resyncRequested = false;
+    await drainPass();
+  } while (resyncRequested && dispatcher);
+}
+
+async function drainPass(): Promise<void> {
   if (!dispatcher) return;
 
   const startCount = (await getPending()).length;
