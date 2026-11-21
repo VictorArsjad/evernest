@@ -176,6 +176,17 @@ describe("lastWokeAtOf", () => {
     expect(lastWokeAtOf([s(null)])).toBeNull();
   });
 
+  it("compares instants, not ISO strings", () => {
+    // 13:45+07:00 is 06:45Z: earlier than 06:50Z though lexically larger.
+    expect(lastWokeAtOf([s("2026-11-22T06:50:00Z"), s("2026-11-22T13:45:00+07:00")])).toBe(
+      "2026-11-22T06:50:00Z",
+    );
+  });
+
+  it("ignores unparseable end times", () => {
+    expect(lastWokeAtOf([s("not-a-date"), s("2026-11-22T06:50:00Z")])).toBe("2026-11-22T06:50:00Z");
+  });
+
   it("returns the latest end among closed sleeps, ignoring open ones", () => {
     expect(
       lastWokeAtOf([s("2026-11-22T01:00:00Z"), s(null), s("2026-11-22T04:00:00Z")]),

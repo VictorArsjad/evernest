@@ -221,11 +221,9 @@ describe("Today feature-visibility gating", () => {
 describe("Today wake card: compare-instants change (approved)", () => {
   // Two closed sleeps end at the same wall-clock region but in different
   // zones. Instants: 06:50Z (sleepA) and 06:45Z (sleepB, 13:45 at +07:00).
-  // The route sorts the ISO strings lexically, so it picks "13:45:00+07:00"
-  // (the earlier instant) as the last wake. The true latest instant is
-  // 06:50Z, which would read 3h 10m. This test freezes the current string
-  // result: 3h 15m.
-  it("APPROVED CHANGE (compare instants): lastWokeAt picks the lexically largest ISO string", async () => {
+  // lastWokeAt compares instants, so it picks 06:50Z (the true latest
+  // instant) rather than the lexically larger "13:45:00+07:00" (06:45Z).
+  it("APPROVED CHANGE (compare instants): lastWokeAt picks the latest instant", async () => {
     const fixture = baseFixture({
       lists: {
         sleeps: [
@@ -238,6 +236,6 @@ describe("Today wake card: compare-instants change (approved)", () => {
     });
     renderAt("/", fixture);
 
-    await screen.findByText("Awake 3h 15m");
+    await screen.findByText("Awake 3h 10m");
   });
 });

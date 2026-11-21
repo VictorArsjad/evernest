@@ -111,16 +111,23 @@ export function lastEvents(input: LastEventsInput): {
   };
 }
 
-// lastWokeAt is the end of the most recent CLOSED sleep (the wake-window
-// card's anchor), or null when there is none.
+// lastWokeAtOf is the end of the most recent CLOSED sleep (the wake-window
+// card's anchor), or null when there is none. Compared as instants, not
+// strings: ISO timestamps may differ in offset or fractional precision, so
+// a lexicographic sort can rank an earlier instant last.
 export function lastWokeAtOf(sleeps: readonly Sleep[] | undefined): string | null {
-  return (
-    (sleeps ?? [])
-      .filter((s) => s.ended_at != null)
-      .map((s) => s.ended_at as string)
-      .sort()
-      .at(-1) ?? null
-  );
+  let best: number | null = null;
+  let bestIso: string | null = null;
+  for (const s of sleeps ?? []) {
+    if (s.ended_at == null) continue;
+    const t = Date.parse(s.ended_at);
+    if (Number.isNaN(t)) continue;
+    if (best === null || t > best) {
+      best = t;
+      bestIso = s.ended_at;
+    }
+  }
+  return bestIso;
 }
 
 // --- Charts & History windows ---
