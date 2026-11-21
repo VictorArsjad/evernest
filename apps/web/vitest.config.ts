@@ -1,7 +1,6 @@
-// Vitest is configured separately from `vite.config.ts` so test runs don't
-// instantiate the PWA plugin (and don't need a browser-like environment for
-// pure-logic tests). Add `environment: "jsdom"` here if React component
-// tests land later.
+// Vitest is configured separately from `vite.config.ts` so test runs do not
+// instantiate the PWA plugin. Default environment is `node`; component/hook
+// tests opt in per file with `// @vitest-environment jsdom`.
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
