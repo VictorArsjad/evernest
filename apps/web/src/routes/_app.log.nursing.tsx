@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
+import { DeleteEntryButton } from "../components/DeleteEntryButton";
 import { isoToLocalDatetimeInput, localToISO, nowLocalDatetimeInput } from "../lib/datetime";
 import {
   useBabies,
@@ -31,7 +32,6 @@ import { useActiveBaby } from "../lib/useActiveBaby";
 import { submitOnEnter } from "../lib/submitOnEnter";
 import type { Nursing, NursingSide, StartingBreast } from "../lib/types";
 import { useEscapeKey } from "../lib/useEscapeKey";
-import { DeleteEntryButton } from "./_app.log.bottle";
 
 const search = z.object({
   babyId: z.string().uuid().optional(),

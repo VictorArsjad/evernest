@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
+import { DeleteEntryButton } from "../components/DeleteEntryButton";
 import { isoToLocalDatetimeInput, localToISO, nowLocalDatetimeInput } from "../lib/datetime";
 import { MAX_PHOTO_BYTES, compressForUpload } from "../lib/image";
 import {
@@ -23,7 +24,6 @@ import type { DiaperPhotoMime, SolidMeal, SolidMealReaction } from "../lib/types
 import { useEscapeKey } from "../lib/useEscapeKey";
 import { displayWeightToG, gToDisplayWeight, weightUnitLabel } from "../lib/units";
 import { usePreferences } from "../lib/usePreferences";
-import { DeleteEntryButton } from "./_app.log.bottle";
 
 const search = z.object({
   babyId: z.string().uuid().optional(),

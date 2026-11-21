@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
+import { DeleteEntryButton } from "../components/DeleteEntryButton";
 import { isoToLocalDatetimeInput, localToISO, nowLocalDatetimeInput } from "../lib/datetime";
 import { MAX_PHOTO_BYTES, compressForUpload } from "../lib/image";
 import {
@@ -25,7 +26,6 @@ import { submitOnEnter } from "../lib/submitOnEnter";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import type { DiaperPhotoMime, Note } from "../lib/types";
 import { useEscapeKey } from "../lib/useEscapeKey";
-import { DeleteEntryButton } from "./_app.log.bottle";
 
 const search = z.object({
   babyId: z.string().uuid().optional(),
