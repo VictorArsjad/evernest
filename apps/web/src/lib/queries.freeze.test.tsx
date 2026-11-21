@@ -886,14 +886,11 @@ describe.each(KINDS)("$kind: per-kind hooks", (k) => {
   });
 });
 
-// KNOWN BUG (approved fix): offline edit while create queued is dropped
-// Approved by user to flip when fixing the idempotency-key collision (create and PATCH both use row id).
-//
-// The create is queued under key ROW_ID. The later PATCH is also keyed ROW_ID,
-// so enqueueMutation coalesces it into the still-pending create and returns
-// that record. The edit is never queued: the replay sends the original POST
-// with amount 120, and the 150 edit exists only in the cache.
-it("KNOWN BUG (approved fix): offline edit while create queued is dropped", async () => {
+// Fixed: offline edit while create queued is enqueued, not dropped
+// The create is queued under key ROW_ID. The later PATCH gets its own key
+// (`<id>:patch:<uuid>`) so enqueueMutation no longer coalesces it into the
+// pending create. Both records replay.
+it("offline edit while create queued is enqueued alongside the create", async () => {
   const calls = stubFetch(OFFLINE);
   const { qc, wrapper } = setup();
   qc.setQueryData(qk.bottleFeeds(BABY), []);
@@ -919,7 +916,7 @@ it("KNOWN BUG (approved fix): offline edit while create queued is dropped", asyn
   await sync();
 
   const q = await peekQueue();
-  expect(q).toHaveLength(1);
+  expect(q).toHaveLength(2);
   expect(q[0]).toMatchObject({ method: "POST", path: `/babies/${BABY}/bottle-feeds`, idempotencyKey: ROW_ID });
   expect(q[0].body).toEqual({
     id: ROW_ID,
@@ -927,21 +924,25 @@ it("KNOWN BUG (approved fix): offline edit while create queued is dropped", asyn
     milk_source: "formula",
     amount_ml: 120,
   });
-  // The PATCH is attempted directly (fetch rejects), then dropped by coalescing.
-  expect(calls).toEqual([
-    {
-      method: "POST",
-      url: "/v1/babies/b1/bottle-feeds",
-      body: { id: ROW_ID, occurred_at: "2026-11-22T09:30:00Z", milk_source: "formula", amount_ml: 120 },
-    },
-    {
-      method: "POST",
-      url: "/v1/babies/b1/bottle-feeds",
-      body: { id: ROW_ID, occurred_at: "2026-11-22T09:30:00Z", milk_source: "formula", amount_ml: 120 },
-    },
-    { method: "PATCH", url: `/v1/bottle-feeds/${ROW_ID}`, body: { amount_ml: 150 } },
-  ]);
-  // The local cache shows the edit even though it is never queued.
+  // randomUUID is stubbed to ROW_ID, so the minted suffix is ROW_ID too.
+  expect(q[1]).toMatchObject({
+    method: "PATCH",
+    path: `/bottle-feeds/${ROW_ID}`,
+    idempotencyKey: `${ROW_ID}:patch:${ROW_ID}`,
+  });
+  expect(q[1].body).toEqual({ amount_ml: 150 });
+  // Direct POST + one immediate outbox retry, then the direct PATCH + its
+  // outbox retry. The retried PATCH runs while the create is still parked in
+  // backoff (pickNextReady skips backed-off records), i.e. replay is FIFO only
+  // among ready records.
+  const post = {
+    method: "POST",
+    url: "/v1/babies/b1/bottle-feeds",
+    body: { id: ROW_ID, occurred_at: "2026-11-22T09:30:00Z", milk_source: "formula", amount_ml: 120 },
+  };
+  const patch = { method: "PATCH", url: `/v1/bottle-feeds/${ROW_ID}`, body: { amount_ml: 150 } };
+  expect(calls).toEqual([post, post, patch, patch]);
+  // The local cache shows the edit.
   expect(qc.getQueryData(qk.bottleFeeds(BABY))).toEqual([
     {
       id: ROW_ID,

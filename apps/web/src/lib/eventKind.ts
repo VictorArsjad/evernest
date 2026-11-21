@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiBlob, apiQueued } from "./api";
+import { peekQueue } from "./outbox";
 import type { DiaperPhotoMime } from "./types";
 
 // makeId: client-generated row id. crypto.randomUUID is everywhere we
@@ -88,6 +89,20 @@ function removeFromList<T extends { id: string }>(
     if (!old) return old;
     return old.filter((r) => r.id !== id);
   });
+}
+
+// Idempotency key for a PATCH. The outbox coalesces by key, and the row id is
+// already the key of a queued create (or of an earlier queued PATCH), so
+// reusing it would drop this edit. Use the bare row id only while nothing is
+// queued under it (keeps double-tap coalescing for the first edit); otherwise
+// mint a per-edit key so the edit is enqueued behind the earlier record.
+async function patchKeyFor(id: string): Promise<string> {
+  try {
+    const taken = (await peekQueue()).some((r) => r.idempotencyKey === id);
+    return taken ? `${id}:patch:${makeId()}` : id;
+  } catch {
+    return id;
+  }
 }
 
 // Reads the existing row out of any cached list so an update can merge the
@@ -311,13 +326,13 @@ export function defineEventKind<
   function useUpdate() {
     const qc = useQueryClient();
     return useMutation({
-      mutationFn: (vars: UpdateVars) => {
+      mutationFn: async (vars: UpdateVars) => {
         const existing = findCached<Row>(qc, prefixFor(vars.babyId, d.segment), vars.id);
         const synthetic = d.updateRow(vars, existing);
         return apiQueued<Row>(`${d.itemPath}/${vars.id}`, {
           method: "PATCH",
           body: d.updateBody(vars),
-          idempotencyKey: vars.id,
+          idempotencyKey: await patchKeyFor(vars.id),
           synthesize: () => synthetic,
         });
       },
