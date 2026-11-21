@@ -4,6 +4,14 @@ import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tansta
 import { api, apiBlob, apiQueued } from "./api";
 import { useAuthStore } from "./authStore";
 import type { FeatureVisibilityMap } from "./featureVisibility";
+import {
+  defineEventKind,
+  editedText,
+  listKeyFor,
+  type ListHookOpts,
+  newRowBase,
+  updatedRowBase,
+} from "./eventKind";
 import { kickAfterReauth } from "./outbox";
 import type { ChartPalette } from "./palette";
 import type {
@@ -97,25 +105,13 @@ const LIVE_LIST_REFETCH_MS = 15_000;
 const OPEN_NURSING_REFETCH_MS = 10_000;
 const HEAVY_REFETCH_MS = 5 * 60_000;
 
-// Per-kind list hooks (useBottleFeeds / useDiapers / usePumpings /
-// useNursings / useGrowths) accept an optional fourth `opts` arg so
-// the History view can request `{ limit: 1000, refetchInterval: false }`
-// without spawning a parallel query key per consumer. The default 200
-// row cap on the BE would silently truncate a 30-day window for an
-// active baby, and polling past data buys nothing — it doesn't change.
-// Today / Charts continue to call the hooks with three args and inherit
-// the live-poll defaults unchanged.
-export interface ListHookOpts {
-  limit?: number;
-  refetchInterval?: number | false;
-}
+export type { ListHookOpts };
 
 export const qk = {
   me: ["me"] as const,
   households: ["households"] as const,
   babies: (householdId: string) => ["households", householdId, "babies"] as const,
-  bottleFeeds: (babyId: string, from?: string, to?: string) =>
-    ["babies", babyId, "bottle-feeds", from ?? "", to ?? ""] as const,
+  bottleFeeds: listKeyFor("bottle-feeds"),
   diapers: (babyId: string, from?: string, to?: string) =>
     ["babies", babyId, "diapers", from ?? "", to ?? ""] as const,
   pumpings: (babyId: string, from?: string, to?: string) =>
@@ -305,144 +301,66 @@ export function useAcceptInvite() {
 
 // --- bottle feeds ---
 
-export function useBottleFeeds(
-  babyId: string | null,
-  from?: string,
-  to?: string,
-  opts?: ListHookOpts,
-) {
-  return useQuery({
-    queryKey: babyId ? qk.bottleFeeds(babyId, from, to) : ["babies", "none", "bottle-feeds"],
-    enabled: !!babyId,
-    refetchInterval: opts?.refetchInterval ?? LIVE_LIST_REFETCH_MS,
-    queryFn: () => {
-      const params = new URLSearchParams();
-      if (from) params.set("from", from);
-      if (to) params.set("to", to);
-      if (opts?.limit != null) params.set("limit", String(opts.limit));
-      const qs = params.toString();
-      return api<BottleFeed[]>(`/babies/${babyId}/bottle-feeds${qs ? `?${qs}` : ""}`);
-    },
-  });
+interface CreateBottleFeedVars {
+  babyId: string;
+  occurred_at: string;
+  milk_source: "breast" | "formula";
+  amount_ml: number;
+  notes?: string;
 }
 
-export function useCreateBottleFeed() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      babyId: string;
-      occurred_at: string;
-      milk_source: "breast" | "formula";
-      amount_ml: number;
-      notes?: string;
-    }) => {
-      const id = makeId();
-      const synthetic: BottleFeed = {
-        id,
-        baby_id: vars.babyId,
-        occurred_at: vars.occurred_at,
-        milk_source: vars.milk_source,
-        amount_ml: vars.amount_ml,
-        notes: vars.notes ?? null,
-        source: "manual",
-        created_at: new Date().toISOString(),
-      };
-      return apiQueued<BottleFeed>(`/babies/${vars.babyId}/bottle-feeds`, {
-        method: "POST",
-        body: {
-          id,
-          occurred_at: vars.occurred_at,
-          milk_source: vars.milk_source,
-          amount_ml: vars.amount_ml,
-          notes: vars.notes || undefined,
-        },
-        idempotencyKey: id,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      // Inject the row (real or synthesized) into every cached
-      // bottle-feeds list under this baby so the Today hub updates
-      // immediately, even when offline. invalidate triggers a
-      // background refetch when online (no-op when offline).
-      upsertList<BottleFeed>(qc, ["babies", vars.babyId, "bottle-feeds"], data);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "bottle-feeds"] });
-    },
-  });
+// Notes follow the "send empty string to clear" convention from the BE
+// handler — the FE form converts blank notes into an empty string so the
+// user can remove an accidentally-typed note.
+interface UpdateBottleFeedVars {
+  id: string;
+  babyId: string;
+  occurred_at?: string;
+  milk_source?: "breast" | "formula";
+  amount_ml?: number;
+  notes?: string;
 }
 
-export function useDeleteBottleFeed() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: { id: string; babyId: string }) =>
-      apiQueued<void>(`/bottle-feeds/${vars.id}`, {
-        method: "DELETE",
-        idempotencyKey: `del-bottle-${vars.id}`,
-        synthesize: () => undefined as unknown as void,
-      }),
-    onSuccess: (_data, vars) => {
-      removeFromList<BottleFeed>(qc, ["babies", vars.babyId, "bottle-feeds"], vars.id);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "bottle-feeds"] });
-    },
-  });
-}
+const bottle = defineEventKind<BottleFeed, CreateBottleFeedVars, UpdateBottleFeedVars>({
+  segment: "bottle-feeds",
+  itemPath: "/bottle-feeds",
+  deleteKeyPrefix: "del-bottle-",
+  refetchMs: LIVE_LIST_REFETCH_MS,
+  createRow: (vars, id) => ({
+    ...newRowBase(id, vars.babyId),
+    occurred_at: vars.occurred_at,
+    milk_source: vars.milk_source,
+    amount_ml: vars.amount_ml,
+    notes: vars.notes ?? null,
+  }),
+  createBody: (vars, id) => ({
+    id,
+    occurred_at: vars.occurred_at,
+    milk_source: vars.milk_source,
+    amount_ml: vars.amount_ml,
+    notes: vars.notes || undefined,
+  }),
+  updateRow: (vars, existing) => ({
+    ...updatedRowBase(vars.id, vars.babyId, existing),
+    occurred_at: vars.occurred_at ?? existing?.occurred_at ?? new Date().toISOString(),
+    milk_source: vars.milk_source ?? existing?.milk_source ?? "formula",
+    amount_ml: vars.amount_ml ?? existing?.amount_ml ?? 0,
+    notes: editedText(vars.notes, existing?.notes),
+  }),
+  updateBody: (vars) => {
+    const body: Record<string, unknown> = {};
+    if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
+    if (vars.milk_source !== undefined) body.milk_source = vars.milk_source;
+    if (vars.amount_ml !== undefined) body.amount_ml = vars.amount_ml;
+    if (vars.notes !== undefined) body.notes = vars.notes;
+    return body;
+  },
+});
 
-// useUpdateBottleFeed sends a partial PATCH. Notes follow the
-// "send empty string to clear" convention from the BE handler — the
-// FE form converts blank notes into an empty string so the user can
-// remove an accidentally-typed note. Synthesize reads the existing
-// row out of the cache and merges in the requested edits so the
-// optimistic upsert reflects the change even while offline.
-export function useUpdateBottleFeed() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: {
-      id: string;
-      babyId: string;
-      occurred_at?: string;
-      milk_source?: "breast" | "formula";
-      amount_ml?: number;
-      notes?: string;
-    }) => {
-      const lists = qc.getQueriesData<BottleFeed[] | undefined>({
-        queryKey: ["babies", vars.babyId, "bottle-feeds"],
-      }) as Array<[unknown, BottleFeed[] | undefined]>;
-      const existing = lists
-        .flatMap(([, list]) => list ?? [])
-        .find((r) => r.id === vars.id);
-      const synthetic: BottleFeed = {
-        id: vars.id,
-        baby_id: existing?.baby_id ?? vars.babyId,
-        occurred_at: vars.occurred_at ?? existing?.occurred_at ?? new Date().toISOString(),
-        milk_source: vars.milk_source ?? existing?.milk_source ?? "formula",
-        amount_ml: vars.amount_ml ?? existing?.amount_ml ?? 0,
-        notes:
-          vars.notes === undefined
-            ? existing?.notes ?? null
-            : vars.notes === ""
-              ? null
-              : vars.notes,
-        source: existing?.source ?? "manual",
-        created_at: existing?.created_at ?? new Date().toISOString(),
-      };
-      const body: Record<string, unknown> = {};
-      if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
-      if (vars.milk_source !== undefined) body.milk_source = vars.milk_source;
-      if (vars.amount_ml !== undefined) body.amount_ml = vars.amount_ml;
-      if (vars.notes !== undefined) body.notes = vars.notes;
-      return apiQueued<BottleFeed>(`/bottle-feeds/${vars.id}`, {
-        method: "PATCH",
-        body,
-        idempotencyKey: vars.id,
-        synthesize: () => synthetic,
-      });
-    },
-    onSuccess: (data, vars) => {
-      upsertList<BottleFeed>(qc, ["babies", vars.babyId, "bottle-feeds"], data);
-      qc.invalidateQueries({ queryKey: ["babies", vars.babyId, "bottle-feeds"] });
-    },
-  });
-}
+export const useBottleFeeds = bottle.useList;
+export const useCreateBottleFeed = bottle.useCreate;
+export const useUpdateBottleFeed = bottle.useUpdate;
+export const useDeleteBottleFeed = bottle.useDelete;
 
 // --- diapers ---
 
