@@ -14,6 +14,7 @@ package baby
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -138,6 +139,7 @@ func WriteAuthErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrUnauthorized):
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not a member of this household")
 	default:
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		slog.Error("baby auth lookup failed", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 	}
 }

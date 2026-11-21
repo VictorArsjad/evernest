@@ -32,7 +32,7 @@ type Baby struct {
 }
 
 var (
-	ErrNotFound    = errors.New("baby not found")
+	ErrNotFound     = errors.New("baby not found")
 	ErrUnauthorized = errors.New("not authorized")
 )
 
@@ -222,6 +222,7 @@ func writeMembershipErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, household.ErrNotMember):
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not a member of this household")
 	default:
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		slog.Error("household membership lookup failed", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 	}
 }
