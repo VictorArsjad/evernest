@@ -54,6 +54,10 @@ function minutesBetween(startISO: string, endISO: string): number {
   return Math.round(delta / 60_000);
 }
 
+const inProgressMarker = (
+  <span className="ml-2 text-xs font-normal text-indigo-300">· in progress</span>
+);
+
 // Per-kind row body. Record<EventKindName, …> makes a missing kind a compile
 // error; the shared "MMM d" date line is appended by RecentRow.
 type BodyRenderer<K extends EventKindName> = (
@@ -105,6 +109,7 @@ const BODIES: { [K in EventKindName]: BodyRenderer<K> } = {
             <span className="ml-2 text-xs font-normal capitalize text-white/50">
               · {ev.data.nursing_side}
             </span>
+            {ev.data.ended_at == null && inProgressMarker}
           </div>
           {ev.data.notes && (
             <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
@@ -132,9 +137,7 @@ const BODIES: { [K in EventKindName]: BodyRenderer<K> } = {
                 · {[ev.data.sleep_type, ev.data.location].filter(Boolean).join(" · ")}
               </span>
             )}
-            {ev.data.ended_at == null && (
-              <span className="ml-2 text-xs font-normal text-indigo-300">· in progress</span>
-            )}
+            {ev.data.ended_at == null && inProgressMarker}
           </div>
           {ev.data.notes && (
             <div className="truncate text-xs text-white/50">{ev.data.notes}</div>
