@@ -190,19 +190,16 @@ describe("log/diaper freeze", () => {
     ]);
   });
 
-  it("edit: Remove on a saved photo still PATCHes photo: \"\" (current behavior: the image stays on screen)", async () => {
-    // Surprise: after Remove, the cached server photo keeps rendering (the
-    // preview falls back to existingPhotoUrl, whose query is only disabled, not
-    // cleared). The "will be removed" hint therefore never shows for diapers.
-    // Save still clears the server copy. Frozen as-is.
+  it("edit: Remove on a saved photo hides the image, shows the removal hint, and PATCHes photo: \"\" (APPROVED CHANGE (photo-remove))", async () => {
     const r = await renderLogRoute("diaper", EDIT_URL, {
       backend: { photo: DEFAULT_PHOTO_BYTES },
       seed: (qc) => qc.setQueryData(["babies", BABY_ID, "diapers", "", ""], [ROW_WITH_PHOTO]),
     });
     await waitFor(() => expect(screen.getByAltText("Saved diaper photo")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
-    expect(screen.queryByText(/Saved photo will be removed/)).toBeNull();
-    expect(screen.getByAltText("Selected diaper photo")).toBeTruthy();
+    expect(screen.getByText(/Saved photo will be removed/)).toBeTruthy();
+    expect(screen.queryByAltText("Selected diaper photo")).toBeNull();
+    expect(screen.queryByAltText("Saved diaper photo")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(r.location()).toBe("/"));

@@ -67,7 +67,7 @@ create/update/delete hooks and cache `segment`) and renders `<LogFormLayout>`; i
 keeps only its fields, validation and the create/update bodies. Photo kinds add
 `usePhotoField` + `<PhotoField>`. The per-route quirks that predate the shell are
 pinned by `src/test/logRoutes/*.freeze.test.tsx` and surfaced as explicit options
-(`errorScope`, `heicPrecheck`, `resetInputOnPick`, `removedPreview`, `actions`) —
+(`errorScope`, `heicPrecheck`, `resetInputOnPick`, `actions`) —
 don't "unify" them without a deliberate behavior change.
 
 **Adding a kind also means a row in `lib/eventKinds.ts`** (`EVENT_KIND_ROWS` + `EventKindRows`). `Record<EventKindName, …>` maps (e.g. `RecentRow`'s `BODIES`) then fail to compile until the new kind is handled. Still hand-listed: the Today tiles (`_app.index.tsx`), charts kind lists, `PRESETS`/`SERIES_LABELS` (palette), `mergeRecent`.

@@ -50,7 +50,6 @@ function LogDiaperPage() {
     usePhotoUrl: useDiaperPhotoUrl,
     heicPrecheck: true,
     resetInputOnPick: true,
-    removedPreview: "keep",
   });
 
   usePrefillOnce(isEditMode, existing, (row) => {

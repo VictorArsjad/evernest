@@ -50,7 +50,6 @@ function LogNotePage() {
     usePhotoUrl: useNotePhotoUrl,
     heicPrecheck: true,
     resetInputOnPick: true,
-    removedPreview: "keep",
   });
 
   usePrefillOnce(isEditMode, existing, (row) => {

@@ -90,7 +90,6 @@ function LogSolidsPage() {
     usePhotoUrl: useSolidMealPhotoUrl,
     heicPrecheck: false,
     resetInputOnPick: false,
-    removedPreview: "hide",
   });
   const { resetCleared } = photo;
 
