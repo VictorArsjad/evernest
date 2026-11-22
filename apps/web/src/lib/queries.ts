@@ -503,6 +503,8 @@ interface UpdatePumpingVars {
   occurred_at?: string;
   amount_ml?: number;
   duration_seconds?: number;
+  // Blank duration on a row that had one; never sent with duration_seconds.
+  clear_duration_seconds?: boolean;
   notes?: string;
 }
 
@@ -529,10 +531,15 @@ const pumping = defineEventKind<Pumping, CreatePumpingVars, UpdatePumpingVars>({
     ...updatedRowBase(vars.id, vars.babyId, existing),
     occurred_at: vars.occurred_at ?? existing?.occurred_at ?? new Date().toISOString(),
     amount_ml: vars.amount_ml ?? existing?.amount_ml ?? 0,
-    duration_seconds: vars.duration_seconds ?? existing?.duration_seconds ?? null,
+    duration_seconds: vars.clear_duration_seconds
+      ? null
+      : (vars.duration_seconds ?? existing?.duration_seconds ?? null),
     notes: editedText(vars.notes, existing?.notes),
   }),
-  updateBody: (vars) => patchBody(vars, ["occurred_at", "amount_ml", "duration_seconds", "notes"]),
+  updateBody: (vars) =>
+    vars.clear_duration_seconds
+      ? { ...patchBody(vars, ["occurred_at", "amount_ml", "notes"]), clear_duration_seconds: true }
+      : patchBody(vars, ["occurred_at", "amount_ml", "duration_seconds", "notes"]),
 });
 
 export const usePumpings = pumping.useList;
