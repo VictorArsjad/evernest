@@ -32,14 +32,15 @@ type createReq struct {
 	Notes           *string    `json:"notes,omitempty"`
 }
 
-// updateReq is the PATCH body. duration_seconds can't be cleared (it is
-// genuinely optional at create time; a duration entered by mistake is fixed
-// by delete and re-log). Notes clear with an empty string.
+// updateReq is the PATCH body. duration_seconds is optional at create time, so
+// it clears with clear_duration_seconds: true (sending it together with a
+// duration_seconds value is a 400). Notes clear with an empty string.
 type updateReq struct {
-	OccurredAt      *time.Time `json:"occurred_at,omitempty"`
-	AmountML        *float64   `json:"amount_ml,omitempty" validate:"omitempty,gte=0,lte=2000"`
-	DurationSeconds *int       `json:"duration_seconds,omitempty" validate:"omitempty,gte=0,lte=21600"`
-	Notes           *string    `json:"notes,omitempty"`
+	OccurredAt           *time.Time `json:"occurred_at,omitempty"`
+	AmountML             *float64   `json:"amount_ml,omitempty" validate:"omitempty,gte=0,lte=2000"`
+	DurationSeconds      *int       `json:"duration_seconds,omitempty" validate:"omitempty,gte=0,lte=21600"`
+	ClearDurationSeconds bool       `json:"clear_duration_seconds,omitempty"`
+	Notes                *string    `json:"notes,omitempty"`
 }
 
 var spec = eventstore.Spec[Pumping]{
@@ -68,10 +69,13 @@ var spec = eventstore.Spec[Pumping]{
 
 	NewPatch: func() eventstore.Patch {
 		return eventstore.PatchOf(func(req *updateReq) (eventstore.Update, *eventstore.Problem) {
+			if req.ClearDurationSeconds && req.DurationSeconds != nil {
+				return eventstore.Update{}, eventstore.BadRequest("clear_duration_seconds and duration_seconds are mutually exclusive")
+			}
 			set := eventstore.NewSet(2).
 				Coalesce("occurred_at", req.OccurredAt).
 				Coalesce("amount_ml", req.AmountML).
-				Coalesce("duration_seconds", req.DurationSeconds).
+				Clearable("duration_seconds", "integer", req.ClearDurationSeconds, req.DurationSeconds).
 				Text("notes", req.Notes)
 			return eventstore.Update{Set: set.SQL(), Args: set.Args()}, nil
 		})

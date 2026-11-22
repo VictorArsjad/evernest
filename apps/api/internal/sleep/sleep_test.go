@@ -560,10 +560,10 @@ func TestDeleteSleep(t *testing.T) {
 	}
 	_ = openResp.Body.Close()
 
-	// Unknown id deletes are 204 (idempotent).
+	// Unknown id deletes are 404 (APPROVED CHANGE: was 204).
 	del = te.do(t, "DELETE", "/v1/sleeps/"+uuid.NewString(), te.token, nil)
-	if del.StatusCode != http.StatusNoContent {
-		t.Fatalf("delete unknown: want 204, got %d: %s", del.StatusCode, readBody(del))
+	if del.StatusCode != http.StatusNotFound {
+		t.Fatalf("delete unknown: want 404, got %d: %s", del.StatusCode, readBody(del))
 	}
 	_ = del.Body.Close()
 }

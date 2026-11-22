@@ -54,6 +54,13 @@ never build a separate router. `router.go` carries an import-cycle note:
   event kinds. Map its errors with `baby.WriteAuthErr` (404 `ErrNotFound`, 403
   `ErrUnauthorized`; anything else is a logged 500 with a generic message).
   Never query an event table without first proving the caller owns the baby.
+- **DELETE is not idempotent.** An unknown / already-deleted id answers 404
+  `not_found` (same envelope as PATCH); the web outbox treats that as success.
+  Auth paths (403 from `MustOwnBaby`) are unchanged.
+- **Clearing optional columns on PATCH.** Text clears with `""`; numeric
+  columns use an explicit flag: solids `clear_amount_g`, pumping
+  `clear_duration_seconds` (flag + a value in the same body is a 400 on
+  pumping).
 - **Idempotent creates.** Inserts use the `WITH ins AS (INSERT … ON CONFLICT
   (id) DO NOTHING RETURNING …) SELECT … UNION ALL SELECT … WHERE NOT EXISTS`
   shape so a client retry (offline outbox replay) returns the existing row

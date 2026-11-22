@@ -688,16 +688,20 @@ paths:
       operationId: deleteBottleFeed
       summary: Delete a bottle feed
       description: |
-        Idempotent: deletes return `204` whether or not the row existed.
+        Returns `404` if no row matches (unknown or already-deleted id).
+        Clients replaying a delete from an offline outbox should treat `404`
+        as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -805,16 +809,21 @@ paths:
       tags: [Diapers]
       operationId: deleteDiaper
       summary: Delete a diaper change
-      description: Idempotent.
+      description: |
+        Returns `404` if no row matches (unknown or already-deleted id).
+        Clients replaying a delete from an offline outbox should treat `404`
+        as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -975,16 +984,21 @@ paths:
       tags: [Solid Meals]
       operationId: deleteSolidMeal
       summary: Delete a solid meal
-      description: Idempotent.
+      description: |
+        Returns `404` if no row matches (unknown or already-deleted id).
+        Clients replaying a delete from an offline outbox should treat `404`
+        as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1135,16 +1149,21 @@ paths:
       tags: [Pumpings]
       operationId: deletePumping
       summary: Delete a pumping session
-      description: Idempotent.
+      description: |
+        Returns `404` if no row matches (unknown or already-deleted id).
+        Clients replaying a delete from an offline outbox should treat `404`
+        as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1306,16 +1325,21 @@ paths:
       tags: [Nursing Sessions]
       operationId: deleteNursingSession
       summary: Delete a nursing session
-      description: Idempotent.
+      description: |
+        Returns `404` if no row matches (unknown or already-deleted id).
+        Clients replaying a delete from an offline outbox should treat `404`
+        as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1430,16 +1454,21 @@ paths:
       tags: [Growths]
       operationId: deleteGrowth
       summary: Delete a growth measurement
-      description: Idempotent.
+      description: |
+        Returns `404` if no row matches (unknown or already-deleted id).
+        Clients replaying a delete from an offline outbox should treat `404`
+        as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1612,13 +1641,15 @@ paths:
       description: Idempotent. Open rows can be deleted ("started by mistake").
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -2448,7 +2479,9 @@ components:
       type: object
       description: |
         All fields optional. Omitted fields are left unchanged. Send an
-        empty string for `notes` to clear it.
+        empty string for `notes` to clear it; send `clear_duration_seconds:
+        true` to clear `duration_seconds` (combining it with a
+        `duration_seconds` value is a `400`).
       properties:
         occurred_at:
           type: string
@@ -2465,6 +2498,10 @@ components:
           minimum: 0
           maximum: 21600
           example: 1200
+        clear_duration_seconds:
+          type: boolean
+          description: When true, sets `duration_seconds` to null. Rejected with `400` if `duration_seconds` is also sent.
+          example: true
         notes:
           type: string
           example: "morning session"

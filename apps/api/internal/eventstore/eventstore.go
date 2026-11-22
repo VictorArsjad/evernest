@@ -81,6 +81,11 @@ func Invalid(msg string) *Problem {
 	return &Problem{http.StatusUnprocessableEntity, "validation_failed", msg}
 }
 
+// BadRequest is a 400 bad_request problem, for contradictory request bodies.
+func BadRequest(msg string) *Problem {
+	return &Problem{http.StatusBadRequest, "bad_request", msg}
+}
+
 // Conflict is a 409 problem with the given code.
 func Conflict(code, msg string) *Problem {
 	return &Problem{http.StatusConflict, code, msg}
