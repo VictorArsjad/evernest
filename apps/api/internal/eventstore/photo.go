@@ -67,7 +67,7 @@ func (h *Handler[T]) photo(w http.ResponseWriter, r *http.Request) {
 		data []byte
 		mime *string
 	)
-	if _, ok := h.itemScope(w, r, false, "photo, photo_mime", &data, &mime); !ok {
+	if _, ok := h.itemScope(w, r, "photo, photo_mime", &data, &mime); !ok {
 		return
 	}
 	if len(data) == 0 || mime == nil {

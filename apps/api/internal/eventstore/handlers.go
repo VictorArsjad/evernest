@@ -180,7 +180,7 @@ func (h *Handler[T]) getOpen(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler[T]) patch(w http.ResponseWriter, r *http.Request) {
 	p := h.spec.NewPatch()
-	id, ok := h.itemScope(w, r, false, p.State, p.Dest...)
+	id, ok := h.itemScope(w, r, p.State, p.Dest...)
 	if !ok {
 		return
 	}
@@ -248,7 +248,7 @@ func (h *Handler[T]) patch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler[T]) delete(w http.ResponseWriter, r *http.Request) {
-	id, ok := h.itemScope(w, r, true, "")
+	id, ok := h.itemScope(w, r, "")
 	if !ok {
 		return
 	}

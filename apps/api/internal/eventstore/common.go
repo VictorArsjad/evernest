@@ -43,8 +43,8 @@ func (h *Handler[T]) babyScope(w http.ResponseWriter, r *http.Request) (babyID u
 
 // itemScope parses {id}, looks the row up and proves the caller owns its
 // baby. extraCols are loaded alongside baby_id into dest. A missing row
-// answers 404, or 204 when idempotentMissing is set (DELETE).
-func (h *Handler[T]) itemScope(w http.ResponseWriter, r *http.Request, idempotentMissing bool, extraCols string, dest ...any) (id uuid.UUID, ok bool) {
+// answers 404.
+func (h *Handler[T]) itemScope(w http.ResponseWriter, r *http.Request, extraCols string, dest ...any) (id uuid.UUID, ok bool) {
 	uid := auth.UserIDFrom(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -60,11 +60,7 @@ func (h *Handler[T]) itemScope(w http.ResponseWriter, r *http.Request, idempoten
 		`SELECT `+cols+` FROM `+h.spec.Table+` WHERE id = $1`, id).
 		Scan(append([]any{&babyID}, dest...)...)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if idempotentMissing {
-			w.WriteHeader(http.StatusNoContent)
-		} else {
-			httpx.WriteError(w, http.StatusNotFound, "not_found", h.spec.Noun+" not found")
-		}
+		httpx.WriteError(w, http.StatusNotFound, "not_found", h.spec.Noun+" not found")
 		return id, false
 	}
 	if err != nil {

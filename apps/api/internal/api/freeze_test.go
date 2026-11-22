@@ -919,7 +919,7 @@ func TestFreezePatch_ClearFlags(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. DELETE: 204, then the row is gone; repeat DELETE is still 204
+// 5. DELETE: 204, then the row is gone; repeat DELETE is 404
 // ---------------------------------------------------------------------------
 
 func TestFreezeDelete(t *testing.T) {
@@ -940,10 +940,9 @@ func TestFreezeDelete(t *testing.T) {
 				t.Errorf("deleted row still listed")
 			}
 
-			// Repeat delete: current behavior is 204, not 404.
-			mustStatus(t, e.remove(t, f.token, k, id), http.StatusNoContent)
-			// Unknown id: also 204.
-			mustStatus(t, e.remove(t, f.token, k, uuid.NewString()), http.StatusNoContent)
+			// Repeat delete and unknown id are 404 (APPROVED CHANGE: was 204).
+			wantErr(t, e.remove(t, f.token, k, id), 404, "not_found")
+			wantErr(t, e.remove(t, f.token, k, uuid.NewString()), 404, "not_found")
 			// Malformed id.
 			wantErr(t, e.remove(t, f.token, k, "not-a-uuid"), 400, "bad_id")
 			// PATCH after delete is a 404.
