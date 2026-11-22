@@ -152,7 +152,7 @@ const BODIES: { [K in EventKindName]: BodyRenderer<K> } = {
   solids: (ev, prefs) => (
         <>
           <div className="text-base font-medium">
-            {ev.data.foods.join(", ")}
+            {(ev.data.foods ?? []).join(", ")}
             {ev.data.reaction && (
               <span className="ml-2 text-xs font-normal capitalize text-white/50">
                 · {ev.data.reaction}

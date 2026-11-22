@@ -354,6 +354,15 @@ describe("RecentRow open sessions (freeze)", () => {
   });
 });
 
+// APPROVED CHANGE (foods-guard): legacy rows may lack `foods`.
+describe("RecentRow solids without foods", () => {
+  it("does not crash and renders an empty foods list", () => {
+    const ev = solidsEv();
+    delete (ev.data as Partial<SolidMeal>).foods;
+    expect(textOf(render(ev))).toBe("🥣 08:00 · liked · 0.03 kg");
+  });
+});
+
 describe("RecentRow photo indicator (freeze)", () => {
   it("diaper with has_photo shows the collapsed photo button before the body", () => {
     const html = render(diaperEv({ has_photo: true }));
