@@ -92,22 +92,18 @@ func (h *Handler[T]) decodeBody(w http.ResponseWriter, r *http.Request, dst any)
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return false
 	}
-	if err := h.v.Struct(dst); err != nil {
+	if err := validate.Struct(dst); err != nil {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
 		return false
 	}
 	return true
 }
 
-// isBodyTooLarge recognizes net/http's MaxBytesReader limit hit. Modern Go
-// wraps the overflow as *http.MaxBytesError; the string fallback covers
-// opaque decoder wrappers.
+// isBodyTooLarge recognizes net/http's MaxBytesReader limit hit, which the
+// JSON decoder surfaces as *http.MaxBytesError.
 func isBodyTooLarge(err error) bool {
 	var maxErr *http.MaxBytesError
-	if errors.As(err, &maxErr) {
-		return true
-	}
-	return err != nil && err.Error() == "http: request body too large"
+	return errors.As(err, &maxErr)
 }
 
 // parseRange returns the [from, to) window for a list query. Clients pass

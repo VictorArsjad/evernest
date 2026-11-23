@@ -42,7 +42,8 @@ type Spec[T any] struct {
 	Path  string // URL collection segment, e.g. "bottle-feeds"
 	Noun  string // human noun used in messages, e.g. "bottle feed"
 
-	// TimeCol is the column list ranges filter and order on.
+	// TimeCol is the single timestamp column list filters its from/to window
+	// on and orders by.
 	TimeCol string
 	// Window is how far back list looks when `from` is omitted.
 	Window time.Duration
@@ -165,8 +166,11 @@ type Handler[T any] struct {
 	spec   Spec[T]
 	store  *store.Store
 	logger *slog.Logger
-	v      *validator.Validate
 }
+
+// validate is shared by every handler; validator.Validate is safe for
+// concurrent use and caches struct metadata.
+var validate = validator.New(validator.WithRequiredStructEnabled())
 
 // New panics when the Spec is internally inconsistent (a programmer error
 // caught at startup): Photo disagreeing with the request structs, or Open
@@ -187,7 +191,6 @@ func New[T any](spec Spec[T], st *store.Store, logger *slog.Logger) *Handler[T] 
 		spec:   spec,
 		store:  st,
 		logger: logger,
-		v:      validator.New(validator.WithRequiredStructEnabled()),
 	}
 }
 
