@@ -9,8 +9,8 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 
 if [ -z "${CI:-}" ]; then
   case "$DATABASE_URL" in
-    */evernest_e2e\?*) ;;
-    *) echo "refusing: DATABASE_URL must point at evernest_e2e locally" >&2; exit 1 ;;
+    */evernest_e2e\?*|*/evernest_e2e_*) ;;
+    *) echo "refusing: DATABASE_URL must point at evernest_e2e or evernest_e2e_<suffix> locally" >&2; exit 1 ;;
   esac
   PSQL=(docker exec -i evernest-db-1 psql -U evernest -d postgres -v ON_ERROR_STOP=1 -tA)
   if [ "${E2E_FRESH_DB:-}" = "1" ]; then
