@@ -93,23 +93,15 @@ export function useLogForm<
     [qc, segment, editId, babyId],
   );
 
-  const either = errorScope === "either";
-  const pending = either
-    ? create.isPending || update.isPending
-    : isEditMode
-      ? update.isPending
-      : create.isPending;
-  const hadError = either
-    ? create.isError || update.isError
-    : isEditMode
-      ? update.isError
-      : create.isError;
-  const errorMsg = either
-    ? (create.error ?? update.error)?.message
-    : isEditMode
-      ? update.error?.message
-      : create.error?.message;
+  // Mutations that feed pending/hadError/errorMsg. Order matters for errorMsg:
+  // in "either" scope a create error wins over an update error.
+  const active: Array<Pick<LogMutation<unknown>, "isPending" | "isError" | "error">> =
+    errorScope === "either" ? [create, update] : [isEditMode ? update : create];
+  const pending = active.some((m) => m.isPending);
+  const hadError = active.some((m) => m.isError);
+  const errorMsg = active.find((m) => m.error)?.error?.message;
 
+  // The casts re-add the generic keys: TS can't prove Omit<V, K> & {K} is V.
   // Create-or-update by mode. `babyId` (and `id`, on update) are added here, so
   // a route passes only the kind's own fields. Both bodies are built eagerly;
   // the one that doesn't match the mode is simply dropped.
