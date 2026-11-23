@@ -19,7 +19,11 @@ const SINCE_DAYS = 30;
 
 // todayWindows returns ISO instants for the local-calendar "today" and
 // the 30-day lookback start, all anchored at local midnight.
-export function todayWindows(now: Date): { from: string; to: string; since: string } {
+export function todayWindows(now: Date): {
+  from: string;
+  to: string;
+  since: string;
+} {
   const from = new Date(now);
   from.setHours(0, 0, 0, 0);
   const to = new Date(now);
@@ -27,7 +31,11 @@ export function todayWindows(now: Date): { from: string; to: string; since: stri
   const since = new Date(now);
   since.setDate(since.getDate() - SINCE_DAYS);
   since.setHours(0, 0, 0, 0);
-  return { from: from.toISOString(), to: to.toISOString(), since: since.toISOString() };
+  return {
+    from: from.toISOString(),
+    to: to.toISOString(),
+    since: since.toISOString(),
+  };
 }
 
 // todaySleepWindow follows the baby's sleep-day cutover (e.g. 6am→6am),
@@ -38,6 +46,18 @@ export function todaySleepWindow(now: Date, dayStartHour: number): { from: strin
 }
 
 // --- Today totals ---
+
+// Nursing minutes for one session: left+right seconds, rounded to minutes.
+function nursingMinutes(n: Pick<Nursing, "left_duration_s" | "right_duration_s">): number {
+  return Math.round((Number(n.left_duration_s) + Number(n.right_duration_s)) / 60);
+}
+
+// Raw (unclamped) minutes of a CLOSED sleep. NOTE: todayTotals uses this
+// as-is while formatDaySummary clamps with Math.max(0, …). The difference
+// is intentionally preserved pending a product decision.
+function sleepMinutes(s: Pick<Sleep, "started_at"> & { ended_at: string }): number {
+  return Math.round((new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 60_000);
+}
 
 export interface TodayTotalsInput {
   feeds?: readonly BottleFeed[];
@@ -60,18 +80,11 @@ export interface TodayTotals {
 export function todayTotals(input: TodayTotalsInput): TodayTotals {
   const totalMl = input.feeds?.reduce((s, f) => s + Number(f.amount_ml), 0) ?? 0;
   const pumpedMl = input.pumpings?.reduce((s, p) => s + Number(p.amount_ml), 0) ?? 0;
-  const nursingMin =
-    input.nursings?.reduce(
-      (s, n) => s + Math.round((Number(n.left_duration_s) + Number(n.right_duration_s)) / 60),
-      0,
-    ) ?? 0;
+  const nursingMin = input.nursings?.reduce((s, n) => s + nursingMinutes(n), 0) ?? 0;
   const sleepMin =
     input.sleeps?.reduce((sum, s) => {
       if (s.ended_at == null) return sum;
-      return (
-        sum +
-        Math.round((new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 60_000)
-      );
+      return sum + sleepMinutes({ started_at: s.started_at, ended_at: s.ended_at });
     }, 0) ?? 0;
   return { totalMl, pumpedMl, nursingMin, sleepMin };
 }
@@ -139,7 +152,10 @@ export function chartEndDate(now: Date, range: number, offset: number): Date {
 export function historyWindows(
   endDate: Date,
   range: number,
-): { history: { from: string; to: string }; rhythm: { from: string; to: string } } {
+): {
+  history: { from: string; to: string };
+  rhythm: { from: string; to: string };
+} {
   const historyFrom = new Date(endDate);
   historyFrom.setDate(historyFrom.getDate() - (range - 1));
   const to = new Date(endDate);
@@ -188,9 +204,7 @@ export function formatDaySummary(
         bottleMl += Number(ev.data.amount_ml) || 0;
         break;
       case "nursing":
-        nursingMin += Math.round(
-          (Number(ev.data.left_duration_s) + Number(ev.data.right_duration_s)) / 60,
-        );
+        nursingMin += nursingMinutes(ev.data);
         break;
       case "pumping":
         pumpedMl += Number(ev.data.amount_ml) || 0;
@@ -212,9 +226,10 @@ export function formatDaySummary(
     if (sleepDayKey(new Date(ev.data.started_at), prefs.day_start_hour) !== dayKey) continue;
     sleepMin += Math.max(
       0,
-      Math.round(
-        (new Date(ev.data.ended_at).getTime() - new Date(ev.data.started_at).getTime()) / 60_000,
-      ),
+      sleepMinutes({
+        started_at: ev.data.started_at,
+        ended_at: ev.data.ended_at,
+      }),
     );
   }
   const parts: string[] = [];
