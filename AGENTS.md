@@ -75,6 +75,9 @@ cd apps/e2e && npx playwright show-report                               # last H
 - Server runs on `:8090` against the dedicated `evernest_e2e` database (never the
   dev `evernest` db). `E2E_FRESH_DB=1 make e2e` drops and recreates it.
   A running server on `:8090` is reused locally; rebuild (`make e2e`) after app changes.
+  Parallel worktrees need a unique port and DB each, e.g.
+  `E2E_PORT=8091 E2E_DB_NAME=evernest_e2e_<suffix> make e2e` (locally the DB name must be
+  `evernest_e2e` or `evernest_e2e_<suffix>`).
 - CI: `e2e (chromium|firefox|webkit)` matrix jobs in `ci.yml`; on failure the HTML
   report + traces are uploaded as `playwright-report-<browser>`.
 - **Seam rules:** assert only through the UI (role/label/text locators; `data-testid`
