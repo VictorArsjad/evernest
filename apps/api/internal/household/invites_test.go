@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/varsjad/evernest/apps/api/internal/testutil"
 
 	apirouter "github.com/varsjad/evernest/apps/api/internal/api"
 	"github.com/varsjad/evernest/apps/api/internal/config"
@@ -71,7 +72,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	defer cancel()
 	st, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
-		t.Skipf("postgres not reachable (%s): %v", cfg.DatabaseURL, err)
+		testutil.SkipOrFail(t, "postgres not reachable (%s): %v", cfg.DatabaseURL, err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(apirouter.NewRouter(cfg, st, logger))

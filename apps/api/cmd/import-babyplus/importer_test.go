@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/varsjad/evernest/apps/api/internal/testutil"
 )
 
 const defaultTestDSN = "postgres://evernest:evernest_dev@localhost:5432/evernest?sslmode=disable"
@@ -39,11 +40,11 @@ func newITEnv(t *testing.T) *itEnv {
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		t.Skipf("postgres not reachable (%s): %v", dsn, err)
+		testutil.SkipOrFail(t, "postgres not reachable (%s): %v", dsn, err)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		t.Skipf("postgres ping failed (%s): %v", dsn, err)
+		testutil.SkipOrFail(t, "postgres ping failed (%s): %v", dsn, err)
 	}
 
 	uid := uuid.New()

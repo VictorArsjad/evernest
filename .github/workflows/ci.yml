@@ -19,6 +19,24 @@ jobs:
     defaults:
       run:
         working-directory: apps/api
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evernest
+          POSTGRES_PASSWORD: evernest_dev
+          POSTGRES_DB: evernest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evernest -d evernest"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Integration tests read DATABASE_URL; with CI=true (set by Actions) they
+      # fail instead of skipping when Postgres is unreachable.
+      DATABASE_URL: postgres://evernest:evernest_dev@localhost:5432/evernest?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -28,6 +46,12 @@ jobs:
           cache-dependency-path: apps/api/go.sum
       - name: build
         run: go build ./...
+      - name: install migrate
+        run: |
+          curl -sSfL https://github.com/golang-migrate/migrate/releases/download/v4.17.1/migrate.linux-amd64.tar.gz | tar xz -C /tmp migrate
+          sudo mv /tmp/migrate /usr/local/bin/migrate
+      - name: apply migrations
+        run: migrate -path migrations -database "$DATABASE_URL" up
       - name: test
         run: go test ./... -race -count=1
       - name: golangci-lint

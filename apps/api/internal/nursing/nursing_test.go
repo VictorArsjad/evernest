@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/varsjad/evernest/apps/api/internal/testutil"
 
 	apirouter "github.com/varsjad/evernest/apps/api/internal/api"
 	"github.com/varsjad/evernest/apps/api/internal/config"
@@ -59,7 +60,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	defer cancel()
 	st, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
-		t.Skipf("postgres not reachable (%s): %v", cfg.DatabaseURL, err)
+		testutil.SkipOrFail(t, "postgres not reachable (%s): %v", cfg.DatabaseURL, err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(apirouter.NewRouter(cfg, st, logger))
@@ -211,16 +212,22 @@ func TestOpenNursingLifecycle(t *testing.T) {
 		t.Fatalf("PATCH end: durations %d/%d, want 300/600", ended.LeftDurationS, ended.RightDurationS)
 	}
 
-	// PATCH again -> 409 already_closed
+	// PATCH again on the now-closed row -> 200 edit (since #26 a PATCH on a
+	// closed session is a partial edit via editClosedSession, not a 409).
 	dupEndResp := te.do(t, "PATCH", "/v1/nursing-sessions/"+open.ID.String(), te.token, map[string]any{
 		"ended_at":         endedAt.Format(time.RFC3339),
 		"left_duration_s":  300,
 		"right_duration_s": 600,
 	})
-	if dupEndResp.StatusCode != http.StatusConflict {
-		t.Fatalf("PATCH already-closed: want 409, got %d: %s", dupEndResp.StatusCode, readBody(dupEndResp))
+	if dupEndResp.StatusCode != http.StatusOK {
+		t.Fatalf("PATCH closed (edit): want 200, got %d: %s", dupEndResp.StatusCode, readBody(dupEndResp))
 	}
-	_ = dupEndResp.Body.Close()
+	var edited nursingResp
+	decodeJSON(t, dupEndResp, &edited)
+	if edited.EndedAt == nil || edited.LeftDurationS != 300 || edited.RightDurationS != 600 {
+		t.Fatalf("PATCH closed (edit): got ended_at=%v durations %d/%d, want non-null and 300/600",
+			edited.EndedAt, edited.LeftDurationS, edited.RightDurationS)
+	}
 
 	// GET /open returns 204.
 	emptyResp := te.do(t, "GET", babyPath+"/open", te.token, nil)
