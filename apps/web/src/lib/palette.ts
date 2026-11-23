@@ -13,17 +13,11 @@
 // with apps/api/internal/preferences/preferences.go's allowedSeriesKeys and
 // the `oneof` tag on ChartPalette.Preset.
 
-export type SeriesKey =
-  | "bottle_breast"
-  | "bottle_formula"
-  | "nursing"
-  | "pumping"
-  | "diaper_wet"
-  | "diaper_soiled"
-  | "diaper_mixed"
-  | "sleep_night"
-  | "sleep_nap"
-  | "weight";
+import { EVENT_KIND_ROWS, EVENT_KINDS, type CatalogSeriesKey } from "./eventKinds";
+
+// Derived from the event-kind catalog (each kind declares the series it
+// owns). Not 1:1 with kinds: bottle/diaper/sleep own several, solids/note none.
+export type SeriesKey = CatalogSeriesKey;
 
 export type PresetName =
   | "default"
@@ -166,18 +160,9 @@ const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 // validates the same allowlist, but a stale FE bundle reading a row
 // written by a newer client should not crash; we just drop the unknown
 // key and fall back to the preset for that slot.
-const SERIES_KEY_SET: ReadonlySet<string> = new Set<SeriesKey>([
-  "bottle_breast",
-  "bottle_formula",
-  "nursing",
-  "pumping",
-  "diaper_wet",
-  "diaper_soiled",
-  "diaper_mixed",
-  "sleep_night",
-  "sleep_nap",
-  "weight",
-]);
+const SERIES_KEY_SET: ReadonlySet<string> = new Set<string>(
+  EVENT_KINDS.flatMap((k) => EVENT_KIND_ROWS[k].series),
+);
 
 // resolve flattens a (preset, overrides) palette to a concrete color per
 // series. Overrides win over the preset for that one key; other keys

@@ -1,6 +1,7 @@
 // Pure helpers for the Today screen "Recent" list. Kept here (rather than
 // inline in the route) so the comparator can be tested in isolation —
 // see recentEvents.test.ts.
+import type { EventKindName, EventKindRows } from "./eventKinds";
 import type {
   BottleFeed,
   Diaper,
@@ -12,15 +13,11 @@ import type {
   SolidMeal,
 } from "./types";
 
-export type RecentEvent =
-  | { kind: "bottle"; at: string; data: BottleFeed }
-  | { kind: "diaper"; at: string; data: Diaper }
-  | { kind: "pumping"; at: string; data: Pumping }
-  | { kind: "nursing"; at: string; data: Nursing }
-  | { kind: "growth"; at: string; data: Growth }
-  | { kind: "sleep"; at: string; data: Sleep }
-  | { kind: "note"; at: string; data: Note }
-  | { kind: "solids"; at: string; data: SolidMeal };
+// One variant per catalog kind, so a new kind in eventKinds.ts extends this
+// union automatically (and mergeRecent / RecentRow bodies must handle it).
+export type RecentEvent = {
+  [K in EventKindName]: { kind: K; at: string; data: EventKindRows[K] };
+}[EventKindName];
 
 export interface RecentEventSources {
   bottleFeeds?: readonly BottleFeed[];

@@ -10,39 +10,18 @@
 // migration 000009 + the allowlist in
 // apps/api/internal/preferences/preferences.go.
 
-export type FeatureKey =
-  | "bottle"
-  | "nursing"
-  | "pumping"
-  | "diaper"
-  | "solids"
-  | "growth"
-  | "sleep"
-  | "note";
+import { EVENT_KIND_ROWS, EVENT_KINDS, type EventKindName } from "./eventKinds";
+
+// Every event kind is a feature; the catalog owns the list.
+export type FeatureKey = EventKindName;
 
 // Render order for the settings card. Matches the order of tiles on the
 // Today screen left-to-right so the toggle list mirrors what users see.
-export const FEATURE_KEYS: FeatureKey[] = [
-  "bottle",
-  "nursing",
-  "pumping",
-  "diaper",
-  "solids",
-  "growth",
-  "sleep",
-  "note",
-];
+export const FEATURE_KEYS: FeatureKey[] = [...EVENT_KINDS];
 
-export const FEATURE_LABELS: Record<FeatureKey, string> = {
-  bottle: "Bottle",
-  nursing: "Nursing",
-  pumping: "Pumping",
-  diaper: "Diaper",
-  solids: "Solids",
-  growth: "Growth",
-  sleep: "Sleep",
-  note: "Note",
-};
+export const FEATURE_LABELS: Record<FeatureKey, string> = Object.fromEntries(
+  EVENT_KINDS.map((k) => [k, EVENT_KIND_ROWS[k].label]),
+) as Record<FeatureKey, string>;
 
 export type FeatureVisibilityMap = Partial<Record<FeatureKey, boolean>>;
 
