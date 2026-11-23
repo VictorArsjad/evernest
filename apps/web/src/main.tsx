@@ -29,7 +29,10 @@ const queryClient = new QueryClient({
       refetchIntervalInBackground: false,
       staleTime: 30_000,
     },
-    mutations: { retry: 0 },
+    // Mutations go through apiQueued/the outbox, which handles offline itself.
+    // The default "online" mode would pause them while navigator.onLine is
+    // false (airplane mode) and leave the form stuck on "Saving…".
+    mutations: { retry: 0, networkMode: "always" },
   },
 });
 
