@@ -68,14 +68,12 @@ var spec = eventstore.Spec[Pumping]{
 
 	NewPatch: func() eventstore.Patch {
 		return eventstore.PatchOf(func(req *updateReq) (eventstore.Update, *eventstore.Problem) {
-			notesPresent, notesValue := eventstore.Text(req.Notes)
-			return eventstore.Update{
-				Set: `occurred_at      = COALESCE($2, occurred_at),
-					amount_ml        = COALESCE($3, amount_ml),
-					duration_seconds = COALESCE($4, duration_seconds),
-					notes            = CASE WHEN $5::boolean THEN NULLIF($6, '') ELSE notes END`,
-				Args: []any{req.OccurredAt, req.AmountML, req.DurationSeconds, notesPresent, notesValue},
-			}, nil
+			set := eventstore.NewSet(2).
+				Coalesce("occurred_at", req.OccurredAt).
+				Coalesce("amount_ml", req.AmountML).
+				Coalesce("duration_seconds", req.DurationSeconds).
+				Text("notes", req.Notes)
+			return eventstore.Update{Set: set.SQL(), Args: set.Args()}, nil
 		})
 	},
 }

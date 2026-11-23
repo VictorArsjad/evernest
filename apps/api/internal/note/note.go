@@ -83,12 +83,10 @@ var spec = eventstore.Spec[Note]{
 					return eventstore.Update{}, eventstore.Invalid("body must not be empty")
 				}
 			}
-			return eventstore.Update{
-				Set: `occurred_at = COALESCE($2, occurred_at),
-					body        = CASE WHEN $3::boolean THEN $4 ELSE body END`,
-				Args:  []any{req.OccurredAt, bodyPresent, bodyValue},
-				Photo: &req.PhotoIn,
-			}, nil
+			set := eventstore.NewSet(2).
+				Coalesce("occurred_at", req.OccurredAt).
+				Optional("body", "", bodyPresent, bodyValue)
+			return eventstore.Update{Set: set.SQL(), Args: set.Args(), Photo: &req.PhotoIn}, nil
 		})
 	},
 }

@@ -69,27 +69,28 @@ type editReq struct {
 
 var session = eventstore.SessionPatch[endReq, editReq]{
 	Noun: "nursing session",
-	Close: func(req *endReq) (string, []any, time.Time) {
-		return `ended_at = $2, left_duration_s = $3, right_duration_s = $4`,
-			[]any{req.EndedAt, derefInt(req.LeftDurationS), derefInt(req.RightDurationS)},
-			req.EndedAt
+	Close: func(req *endReq) eventstore.SessionClose {
+		return eventstore.SessionClose{
+			Set: eventstore.NewSet(2).
+				Assign("ended_at", req.EndedAt).
+				Assign("left_duration_s", derefInt(req.LeftDurationS)).
+				Assign("right_duration_s", derefInt(req.RightDurationS)),
+			EndedAt: req.EndedAt,
+		}
 	},
-	Edit: func(req *editReq) (string, []any, *time.Time, *time.Time) {
-		notesPresent, notesValue := eventstore.Text(req.Notes)
-		return `started_at       = COALESCE($2, started_at),
-			ended_at         = COALESCE($3, ended_at),
-			starting_breast  = CASE WHEN $4::boolean THEN NULL
-			                        WHEN $5::text IS NOT NULL THEN $5
-			                        ELSE starting_breast END,
-			nursing_side     = COALESCE($6, nursing_side),
-			left_duration_s  = COALESCE($7, left_duration_s),
-			right_duration_s = COALESCE($8, right_duration_s),
-			notes            = CASE WHEN $9::boolean THEN NULLIF($10, '') ELSE notes END`,
-			[]any{req.StartedAt, req.EndedAt,
-				req.ClearStartingBreast, req.StartingBreast,
-				req.NursingSide, req.LeftDurationS, req.RightDurationS,
-				notesPresent, notesValue},
-			req.StartedAt, req.EndedAt
+	Edit: func(req *editReq) eventstore.SessionEdit {
+		return eventstore.SessionEdit{
+			Set: eventstore.NewSet(2).
+				Coalesce("started_at", req.StartedAt).
+				Coalesce("ended_at", req.EndedAt).
+				Clearable("starting_breast", "text", req.ClearStartingBreast, req.StartingBreast).
+				Coalesce("nursing_side", req.NursingSide).
+				Coalesce("left_duration_s", req.LeftDurationS).
+				Coalesce("right_duration_s", req.RightDurationS).
+				Text("notes", req.Notes),
+			StartedAt: req.StartedAt,
+			EndedAt:   req.EndedAt,
+		}
 	},
 }
 

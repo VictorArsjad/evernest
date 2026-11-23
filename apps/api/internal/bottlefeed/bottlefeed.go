@@ -69,14 +69,12 @@ var spec = eventstore.Spec[BottleFeed]{
 
 	NewPatch: func() eventstore.Patch {
 		return eventstore.PatchOf(func(req *updateReq) (eventstore.Update, *eventstore.Problem) {
-			notesPresent, notesValue := eventstore.Text(req.Notes)
-			return eventstore.Update{
-				Set: `occurred_at = COALESCE($2, occurred_at),
-					milk_source = COALESCE($3, milk_source),
-					amount_ml   = COALESCE($4, amount_ml),
-					notes       = CASE WHEN $5::boolean THEN NULLIF($6, '') ELSE notes END`,
-				Args: []any{req.OccurredAt, req.MilkSource, req.AmountML, notesPresent, notesValue},
-			}, nil
+			set := eventstore.NewSet(2).
+				Coalesce("occurred_at", req.OccurredAt).
+				Coalesce("milk_source", req.MilkSource).
+				Coalesce("amount_ml", req.AmountML).
+				Text("notes", req.Notes)
+			return eventstore.Update{Set: set.SQL(), Args: set.Args()}, nil
 		})
 	},
 }

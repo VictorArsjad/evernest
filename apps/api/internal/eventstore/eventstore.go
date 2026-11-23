@@ -147,16 +147,6 @@ func PatchOf[R any](build func(req *R) (Update, *Problem)) Patch {
 	}
 }
 
-// Text is the "present-flag + NULLIF(value,”)" PATCH convention for nullable
-// text: Go's JSON decoder can't tell an absent field from an explicit null on
-// a *string, so an empty string means clear and nil means leave alone.
-func Text(s *string) (present bool, value string) {
-	if s == nil {
-		return false, ""
-	}
-	return true, *s
-}
-
 // Handler serves one event kind.
 type Handler[T any] struct {
 	spec   Spec[T]

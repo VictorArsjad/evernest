@@ -117,26 +117,14 @@ var spec = eventstore.Spec[Growth]{
 					return eventstore.Update{}, eventstore.Invalid(
 						"at least one of weight_g, height_cm, head_circumference_cm must be set")
 				}
-				notesPresent, notesValue := eventstore.Text(req.Notes)
 				// Per measurement: clear flag → NULL; new value → replace; else keep.
-				return eventstore.Update{
-					Set: `measured_at           = COALESCE($2, measured_at),
-						weight_g              = CASE WHEN $3::boolean THEN NULL
-						                             WHEN $4::numeric IS NOT NULL THEN $4
-						                             ELSE weight_g END,
-						height_cm             = CASE WHEN $5::boolean THEN NULL
-						                             WHEN $6::numeric IS NOT NULL THEN $6
-						                             ELSE height_cm END,
-						head_circumference_cm = CASE WHEN $7::boolean THEN NULL
-						                             WHEN $8::numeric IS NOT NULL THEN $8
-						                             ELSE head_circumference_cm END,
-						notes                 = CASE WHEN $9::boolean THEN NULLIF($10, '') ELSE notes END`,
-					Args: []any{req.MeasuredAt,
-						req.ClearWeight, req.WeightG,
-						req.ClearHeight, req.HeightCM,
-						req.ClearHead, req.HeadCircumferenceCM,
-						notesPresent, notesValue},
-				}, nil
+				set := eventstore.NewSet(2).
+					Coalesce("measured_at", req.MeasuredAt).
+					Clearable("weight_g", "numeric", req.ClearWeight, req.WeightG).
+					Clearable("height_cm", "numeric", req.ClearHeight, req.HeightCM).
+					Clearable("head_circumference_cm", "numeric", req.ClearHead, req.HeadCircumferenceCM).
+					Text("notes", req.Notes)
+				return eventstore.Update{Set: set.SQL(), Args: set.Args()}, nil
 			},
 		}
 	},

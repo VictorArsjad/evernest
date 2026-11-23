@@ -105,27 +105,18 @@ var spec = eventstore.Spec[SolidMeal]{
 				}
 			}
 			// Reaction: omitted → leave; "" → clear; otherwise must be allowed.
-			reactionPresent, reactionValue := eventstore.Text(req.Reaction)
-			if reactionValue != "" {
-				if _, ok := allowedReactions[reactionValue]; !ok {
+			if req.Reaction != nil && *req.Reaction != "" {
+				if _, ok := allowedReactions[*req.Reaction]; !ok {
 					return eventstore.Update{}, eventstore.Invalid("invalid reaction")
 				}
 			}
-			notesPresent, notesValue := eventstore.Text(req.Notes)
-			return eventstore.Update{
-				Set: `occurred_at = COALESCE($2, occurred_at),
-					foods       = CASE WHEN $3::boolean THEN $4::text[] ELSE foods END,
-					reaction    = CASE WHEN $5::boolean THEN NULLIF($6, '') ELSE reaction END,
-					amount_g    = CASE
-						WHEN $7::boolean THEN NULL
-						WHEN $8::boolean THEN $9::numeric
-						ELSE amount_g
-					END,
-					notes       = CASE WHEN $10::boolean THEN NULLIF($11, '') ELSE notes END`,
-				Args: []any{req.OccurredAt, foodsPresent, foods, reactionPresent, reactionValue,
-					req.ClearAmountG, req.AmountG != nil, req.AmountG, notesPresent, notesValue},
-				Photo: &req.PhotoIn,
-			}, nil
+			set := eventstore.NewSet(2).
+				Coalesce("occurred_at", req.OccurredAt).
+				Optional("foods", "text[]", foodsPresent, foods).
+				Text("reaction", req.Reaction).
+				Clearable("amount_g", "numeric", req.ClearAmountG, req.AmountG).
+				Text("notes", req.Notes)
+			return eventstore.Update{Set: set.SQL(), Args: set.Args(), Photo: &req.PhotoIn}, nil
 		})
 	},
 }

@@ -68,14 +68,11 @@ var spec = eventstore.Spec[Diaper]{
 
 	NewPatch: func() eventstore.Patch {
 		return eventstore.PatchOf(func(req *updateReq) (eventstore.Update, *eventstore.Problem) {
-			notesPresent, notesValue := eventstore.Text(req.Notes)
-			return eventstore.Update{
-				Set: `occurred_at = COALESCE($2, occurred_at),
-					type        = COALESCE($3, type),
-					notes       = CASE WHEN $4::boolean THEN NULLIF($5, '') ELSE notes END`,
-				Args:  []any{req.OccurredAt, req.Type, notesPresent, notesValue},
-				Photo: &req.PhotoIn,
-			}, nil
+			set := eventstore.NewSet(2).
+				Coalesce("occurred_at", req.OccurredAt).
+				Coalesce("type", req.Type).
+				Text("notes", req.Notes)
+			return eventstore.Update{Set: set.SQL(), Args: set.Args(), Photo: &req.PhotoIn}, nil
 		})
 	},
 }

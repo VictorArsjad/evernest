@@ -7,12 +7,24 @@ import "time"
 // non-NULL means PATCH edits a closed session (body X). The WHERE guards keep
 // a concurrent close from flipping the row between lookup and UPDATE.
 type SessionPatch[E, X any] struct {
-	Noun string
-	// Close returns the SET clause, its args ($2...) and the new ended_at.
-	Close func(req *E) (set string, args []any, endedAt time.Time)
-	// Edit returns the SET clause, its args ($2...) and the requested
-	// started_at / ended_at (nil = unchanged).
-	Edit func(req *X) (set string, args []any, startedAt, endedAt *time.Time)
+	Noun  string
+	Close func(req *E) SessionClose
+	Edit  func(req *X) SessionEdit
+}
+
+// SessionClose is what a kind's Close hook returns: the SET (args from $2)
+// and the new ended_at.
+type SessionClose struct {
+	Set     *Set
+	EndedAt time.Time
+}
+
+// SessionEdit is what a kind's Edit hook returns: the SET (args from $2) and
+// the requested started_at / ended_at (nil = unchanged).
+type SessionEdit struct {
+	Set       *Set
+	StartedAt *time.Time
+	EndedAt   *time.Time
 }
 
 // Patch returns a fresh Patch for one request.
@@ -34,33 +46,33 @@ func (s SessionPatch[E, X]) Patch() Patch {
 		},
 		Build: func() (Update, *Problem) {
 			if endedAt == nil {
-				set, args, end := s.Close(&endReq)
-				if end.Before(startedAt) {
+				c := s.Close(&endReq)
+				if c.EndedAt.Before(startedAt) {
 					return Update{}, Invalid("ended_at must be >= started_at")
 				}
 				return Update{
-					Set:     set,
-					Args:    args,
+					Set:     c.Set.SQL(),
+					Args:    c.Set.Args(),
 					Where:   "AND ended_at IS NULL",
 					NoRows:  Conflict("already_closed", s.Noun+" is already closed"),
 					FailMsg: "could not close " + s.Noun,
 				}, nil
 			}
-			set, args, start, end := s.Edit(&editReq)
+			e := s.Edit(&editReq)
 			// Either field may be omitted: substitute the stored value.
 			effStart, effEnd := startedAt, *endedAt
-			if start != nil {
-				effStart = *start
+			if e.StartedAt != nil {
+				effStart = *e.StartedAt
 			}
-			if end != nil {
-				effEnd = *end
+			if e.EndedAt != nil {
+				effEnd = *e.EndedAt
 			}
 			if effEnd.Before(effStart) {
 				return Update{}, Invalid("ended_at must be >= started_at")
 			}
 			return Update{
-				Set:    set,
-				Args:   args,
+				Set:    e.Set.SQL(),
+				Args:   e.Set.Args(),
 				Where:  "AND ended_at IS NOT NULL",
 				NoRows: Conflict("session_state_changed", s.Noun+" state changed; refetch and retry"),
 			}, nil

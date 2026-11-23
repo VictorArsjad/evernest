@@ -56,24 +56,23 @@ type editReq struct {
 
 var session = eventstore.SessionPatch[endReq, editReq]{
 	Noun: "sleep session",
-	Close: func(req *endReq) (string, []any, time.Time) {
-		return `ended_at = $2`, []any{req.EndedAt}, req.EndedAt
+	Close: func(req *endReq) eventstore.SessionClose {
+		return eventstore.SessionClose{
+			Set:     eventstore.NewSet(2).Assign("ended_at", req.EndedAt),
+			EndedAt: req.EndedAt,
+		}
 	},
-	Edit: func(req *editReq) (string, []any, *time.Time, *time.Time) {
-		locationPresent, locationValue := eventstore.Text(req.Location)
-		notesPresent, notesValue := eventstore.Text(req.Notes)
-		return `started_at = COALESCE($2, started_at),
-			ended_at   = COALESCE($3, ended_at),
-			sleep_type = CASE WHEN $4::boolean THEN NULL
-			                  WHEN $5::text IS NOT NULL THEN $5
-			                  ELSE sleep_type END,
-			location   = CASE WHEN $6::boolean THEN NULLIF($7, '') ELSE location END,
-			notes      = CASE WHEN $8::boolean THEN NULLIF($9, '') ELSE notes END`,
-			[]any{req.StartedAt, req.EndedAt,
-				req.ClearSleepType, req.SleepType,
-				locationPresent, locationValue,
-				notesPresent, notesValue},
-			req.StartedAt, req.EndedAt
+	Edit: func(req *editReq) eventstore.SessionEdit {
+		return eventstore.SessionEdit{
+			Set: eventstore.NewSet(2).
+				Coalesce("started_at", req.StartedAt).
+				Coalesce("ended_at", req.EndedAt).
+				Clearable("sleep_type", "text", req.ClearSleepType, req.SleepType).
+				Text("location", req.Location).
+				Text("notes", req.Notes),
+			StartedAt: req.StartedAt,
+			EndedAt:   req.EndedAt,
+		}
 	},
 }
 
