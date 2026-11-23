@@ -91,6 +91,14 @@ cd apps/e2e && npx playwright show-report                               # last H
   householdName? })` does the same on any `APIRequestContext`; pass a separate
   `playwrightRequest.newContext()` to get a caregiver with no session in the page
   (e.g. to test the real login screen). See `tests/session.spec.ts`.
+- **Event seeding** (`apps/e2e/tests/seed.ts`): `seedEvents(request, caregiver, now?)`
+  → `{ latestNote, bottleMl, diapers, growthWeightsG }`. Logs in with the caregiver's
+  credentials and POSTs, through the public API only, bottle feeds, diapers, sleeps,
+  nursing sessions (spread over the last ~4 days) and two growth measurements, using
+  client-generated UUID ids, canonical units (ml/cm/g) and UTC timestamps. The newest
+  bottle feed carries `latestNote` (shows in History's first day group). Growth needs a
+  date of birth: pass `createCaregiver(request, { dateOfBirth: "YYYY-MM-DD" })`. See
+  `tests/review-screens.spec.ts`.
 - **E2E NEVER runs against production.** The suite creates users and data; it only
   targets the local `localhost:8090` server. Never point `baseURL` at the tailnet URL.
 
