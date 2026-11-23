@@ -65,7 +65,6 @@ var spec = eventstore.Spec[SolidMeal]{
 	Window:     24 * time.Hour,
 	Select:     "id, baby_id, occurred_at, foods, reaction, amount_g, notes, (photo IS NOT NULL) AS has_photo, photo_mime, source, created_at",
 	InsertCols: "occurred_at, foods, reaction, amount_g, notes",
-	Photo:      true,
 
 	Scan: func(s eventstore.Scanner) (SolidMeal, error) {
 		var m SolidMeal
@@ -75,7 +74,7 @@ var spec = eventstore.Spec[SolidMeal]{
 	},
 
 	NewCreate: func() eventstore.Create {
-		return eventstore.CreateOf(func(req *createReq) (eventstore.Insert, *eventstore.Problem) {
+		return eventstore.PhotoCreateOf(func(req *createReq) (eventstore.Insert, *eventstore.Problem) {
 			foods := normalizeFoods(req.Foods)
 			if len(foods) == 0 {
 				return eventstore.Insert{}, eventstore.Invalid("foods must contain at least one non-empty item")
@@ -93,7 +92,7 @@ var spec = eventstore.Spec[SolidMeal]{
 	},
 
 	NewPatch: func() eventstore.Patch {
-		return eventstore.PatchOf(func(req *updateReq) (eventstore.Update, *eventstore.Problem) {
+		return eventstore.PhotoPatchOf(func(req *updateReq) (eventstore.Update, *eventstore.Problem) {
 			foodsPresent := req.Foods != nil
 			var foods []string
 			if foodsPresent {

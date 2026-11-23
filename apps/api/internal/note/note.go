@@ -49,7 +49,6 @@ var spec = eventstore.Spec[Note]{
 	Window:     24 * time.Hour,
 	Select:     "id, baby_id, occurred_at, body, (photo IS NOT NULL) AS has_photo, photo_mime, source, created_at",
 	InsertCols: "occurred_at, body",
-	Photo:      true,
 
 	Scan: func(s eventstore.Scanner) (Note, error) {
 		var n Note
@@ -58,7 +57,7 @@ var spec = eventstore.Spec[Note]{
 	},
 
 	NewCreate: func() eventstore.Create {
-		return eventstore.CreateOf(func(req *createReq) (eventstore.Insert, *eventstore.Problem) {
+		return eventstore.PhotoCreateOf(func(req *createReq) (eventstore.Insert, *eventstore.Problem) {
 			// A whitespace-only body would slip past `required` but trip the
 			// DB CHECK, so trim and guard here.
 			body := strings.TrimSpace(req.Body)
@@ -73,7 +72,7 @@ var spec = eventstore.Spec[Note]{
 	},
 
 	NewPatch: func() eventstore.Patch {
-		return eventstore.PatchOf(func(req *updateReq) (eventstore.Update, *eventstore.Problem) {
+		return eventstore.PhotoPatchOf(func(req *updateReq) (eventstore.Update, *eventstore.Problem) {
 			bodyPresent := req.Body != nil
 			var bodyValue string
 			if bodyPresent {

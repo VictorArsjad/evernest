@@ -79,7 +79,8 @@ func (h *Handler[T]) itemScope(w http.ResponseWriter, r *http.Request, extraCols
 
 // decodeBody decodes + struct-validates the request body into dst. With
 // patch set, an explicit null on a field that isn't Optional is a 422.
-func (h *Handler[T]) decodeBody(w http.ResponseWriter, r *http.Request, dst any, patch bool) bool {
+func (h *Handler[T]) decodeBody(w http.ResponseWriter, r *http.Request, body Body, patch bool) bool {
+	dst := body.dst
 	// Cap the body BEFORE parsing so a hostile client can't OOM the API by
 	// streaming a multi-GB body.
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)

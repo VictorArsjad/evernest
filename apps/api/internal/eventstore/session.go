@@ -38,11 +38,11 @@ func (s SessionPatch[E, X]) Patch() Patch {
 	return Patch{
 		State: "started_at, ended_at",
 		Dest:  []any{&startedAt, &endedAt},
-		Body: func() any {
+		Body: func() Body {
 			if endedAt == nil {
-				return &endReq
+				return PlainBody(&endReq)
 			}
-			return &editReq
+			return PlainBody(&editReq)
 		},
 		Build: func() (Update, *Problem) {
 			if endedAt == nil {

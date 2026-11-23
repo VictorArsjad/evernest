@@ -19,7 +19,6 @@ package eventstore
 import (
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -54,11 +53,10 @@ type Spec[T any] struct {
 	// created_by_user_id (and photo/photo_mime for Photo kinds) are implicit.
 	InsertCols string
 
-	// Photo enables the inline photo pipeline: the photo/photo_mime columns,
-	// the GET .../photo route and photo handling on create and PATCH. The
-	// create request struct must embed PhotoIn and the PATCH one PhotoPatch (and non-Photo
-	// kinds must not); New panics otherwise.
-	Photo bool
+	// Photo kinds (NewCreate via PhotoCreateOf, NewPatch via PhotoPatchOf)
+	// get the inline photo pipeline: the photo/photo_mime columns, the GET
+	// .../photo route and photo handling on create and PATCH. It is derived
+	// from those constructors; New panics if only one of the two is used.
 	// Open marks start-now/end-later kinds: the table has started_at and
 	// ended_at, at most one open row per baby, and a GET .../open route.
 	// Only Open kinds may return Insert.Open.
@@ -105,26 +103,23 @@ type PhotoPatch struct {
 	PhotoMime Optional[string] `json:"photo_mime"`
 }
 
-// photoCarrier / patchPhotoCarrier are satisfied by every request struct that
-// embeds PhotoIn / PhotoPatch.
-type photoCarrier interface{ photoIn() *PhotoIn }
-type patchPhotoCarrier interface{ photoPatch() *PhotoPatch }
-
-func (p *PhotoIn) photoIn() *PhotoIn          { return p }
-func (p *PhotoPatch) photoPatch() *PhotoPatch { return p }
-
-func carriesPhoto(body any) bool {
-	if _, ok := body.(photoCarrier); ok {
-		return true
-	}
-	_, ok := body.(patchPhotoCarrier)
-	return ok
+// Body is a request body: the struct the JSON is decoded into plus, for
+// Photo kinds, typed access to its embedded photo fields. Only the
+// constructors below build one, so a kind can't hand the handler an arbitrary
+// value, and whether a kind has photos is fixed by which constructor it used.
+type Body struct {
+	dst        any
+	photoIn    *PhotoIn    // create bodies of Photo kinds
+	photoPatch *PhotoPatch // PATCH bodies of Photo kinds
 }
+
+// PlainBody wraps a request struct pointer for a kind without photos.
+func PlainBody(dst any) Body { return Body{dst: dst} }
 
 // Create is one create request: Body is decoded and struct-validated, then
 // Build applies the kind's extra rules.
 type Create struct {
-	Body  any
+	Body  Body
 	Build func() (Insert, *Problem)
 }
 
@@ -139,15 +134,31 @@ type Insert struct {
 // allocated per call.
 func CreateOf[R any](build func(req *R) (Insert, *Problem)) Create {
 	req := new(R)
-	return Create{Body: req, Build: func() (Insert, *Problem) { return build(req) }}
+	return Create{Body: PlainBody(req), Build: func() (Insert, *Problem) { return build(req) }}
 }
+
+// PhotoCreateOf is CreateOf for Photo kinds: *R must embed PhotoIn, which the
+// compiler checks.
+func PhotoCreateOf[R any, P interface {
+	*R
+	photoIn() *PhotoIn
+}](build func(req *R) (Insert, *Problem)) Create {
+	req := new(R)
+	return Create{
+		Body:  Body{dst: req, photoIn: P(req).photoIn()},
+		Build: func() (Insert, *Problem) { return build(req) },
+	}
+}
+
+func (p *PhotoIn) photoIn() *PhotoIn          { return p }
+func (p *PhotoPatch) photoPatch() *PhotoPatch { return p }
 
 // Patch is one PATCH request. State (if set) names extra columns loaded
 // with baby_id into Dest before Body is asked for the struct to decode into.
 type Patch struct {
 	State string
 	Dest  []any
-	Body  func() any
+	Body  func() Body
 	Build func() (Update, *Problem)
 }
 
@@ -170,16 +181,29 @@ type Update struct {
 func PatchOf[R any](build func(req *R) (Update, *Problem)) Patch {
 	req := new(R)
 	return Patch{
-		Body:  func() any { return req },
+		Body:  func() Body { return PlainBody(req) },
+		Build: func() (Update, *Problem) { return build(req) },
+	}
+}
+
+// PhotoPatchOf is PatchOf for Photo kinds: *R must embed PhotoPatch.
+func PhotoPatchOf[R any, P interface {
+	*R
+	photoPatch() *PhotoPatch
+}](build func(req *R) (Update, *Problem)) Patch {
+	req := new(R)
+	return Patch{
+		Body:  func() Body { return Body{dst: req, photoPatch: P(req).photoPatch()} },
 		Build: func() (Update, *Problem) { return build(req) },
 	}
 }
 
 // Handler serves one event kind.
 type Handler[T any] struct {
-	spec   Spec[T]
-	store  *store.Store
-	logger *slog.Logger
+	spec     Spec[T]
+	hasPhoto bool // derived from the Spec's create/PATCH bodies
+	store    *store.Store
+	logger   *slog.Logger
 }
 
 // validate is shared by every handler; validator.Validate is safe for
@@ -187,24 +211,21 @@ type Handler[T any] struct {
 var validate = validator.New(validator.WithRequiredStructEnabled())
 
 // New panics when the Spec is internally inconsistent (a programmer error
-// caught at startup): Photo disagreeing with the request structs, or Open
+// caught at startup): create/PATCH disagreeing on photo support, or Open
 // without started_at/ended_at insert columns.
 func New[T any](spec Spec[T], st *store.Store, logger *slog.Logger) *Handler[T] {
-	if got := carriesPhoto(spec.NewCreate().Body); got != spec.Photo {
-		panic("eventstore: " + spec.Table + ": Spec.Photo=" + strconv.FormatBool(spec.Photo) +
-			" but create request embeds PhotoIn=" + strconv.FormatBool(got))
-	}
-	if got := carriesPhoto(spec.NewPatch().Body()); got != spec.Photo {
-		panic("eventstore: " + spec.Table + ": Spec.Photo=" + strconv.FormatBool(spec.Photo) +
-			" but PATCH request embeds PhotoIn=" + strconv.FormatBool(got))
+	photo := spec.NewCreate().Body.photoIn != nil
+	if photo != (spec.NewPatch().Body().photoPatch != nil) {
+		panic("eventstore: " + spec.Table + ": create and PATCH bodies disagree on photo support")
 	}
 	if spec.Open && (!strings.Contains(spec.InsertCols, "started_at") || !strings.Contains(spec.InsertCols, "ended_at")) {
 		panic("eventstore: " + spec.Table + ": Spec.Open requires started_at and ended_at in InsertCols")
 	}
 	return &Handler[T]{
-		spec:   spec,
-		store:  st,
-		logger: logger,
+		spec:     spec,
+		hasPhoto: photo,
+		store:    st,
+		logger:   logger,
 	}
 }
 
@@ -221,7 +242,7 @@ func (h *Handler[T]) BabyRoutes(r chi.Router) {
 func (h *Handler[T]) ItemRoutes(r chi.Router) {
 	r.Patch("/", h.patch)
 	r.Delete("/", h.delete)
-	if h.spec.Photo {
+	if h.hasPhoto {
 		r.Get("/photo", h.photo)
 	}
 }

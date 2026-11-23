@@ -35,8 +35,8 @@ func (h *Handler[T]) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var photo decodedPhoto
-	if h.spec.Photo {
-		in := c.Body.(photoCarrier).photoIn()
+	if h.hasPhoto {
+		in := c.Body.photoIn
 		var p *Problem
 		photo, p = decodePhoto(in.Photo, in.PhotoMime)
 		if p != nil {
@@ -82,7 +82,7 @@ func (h *Handler[T]) create(w http.ResponseWriter, r *http.Request) {
 	cols := "id, baby_id, " + h.spec.InsertCols
 	args := []any{id, babyID}
 	args = append(args, ins.Args...)
-	if h.spec.Photo {
+	if h.hasPhoto {
 		cols += ", photo, photo_mime"
 		args = append(args, photo.bytes, photo.mime)
 	}
@@ -196,8 +196,8 @@ func (h *Handler[T]) patch(w http.ResponseWriter, r *http.Request) {
 
 	args := append([]any{id}, u.Args...)
 	set := u.Set
-	if h.spec.Photo {
-		in := body.(patchPhotoCarrier).photoPatch()
+	if h.hasPhoto {
+		in := body.photoPatch
 		// Photo PATCH (merge-patch) semantics:
 		//   - omitted              → leave columns alone
 		//   - null or ""           → clear photo + photo_mime

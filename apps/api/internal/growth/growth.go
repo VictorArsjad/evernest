@@ -94,7 +94,7 @@ var spec = eventstore.Spec[Growth]{
 		return eventstore.Patch{
 			State: "weight_g, height_cm, head_circumference_cm",
 			Dest:  []any{&curWeight, &curHeight, &curHead},
-			Body:  func() any { return req },
+			Body:  func() eventstore.Body { return eventstore.PlainBody(req) },
 			Build: func() (eventstore.Update, *eventstore.Problem) {
 				if req.WeightG.Ptr(curWeight) == nil &&
 					req.HeightCM.Ptr(curHeight) == nil &&
