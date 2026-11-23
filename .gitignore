@@ -70,3 +70,7 @@ infra/.local-data/
 # passphrase. Only the .example template belongs in the repo.
 infra/secrets/*
 !infra/secrets/*.example
+
+# E2E
+apps/e2e/playwright-report/
+apps/e2e/test-results/
