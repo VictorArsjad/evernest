@@ -12,6 +12,8 @@ export interface Caregiver {
 export interface CaregiverOptions {
   babyName?: string;
   householdName?: string;
+  /** YYYY-MM-DD; needed by screens that chart against age (Growth). */
+  dateOfBirth?: string;
 }
 
 /**
@@ -45,7 +47,7 @@ export async function createCaregiver(
 
   const baby = await request.post(`/v1/households/${householdId}/babies`, {
     headers,
-    data: { name: babyName },
+    data: { name: babyName, ...(opts.dateOfBirth && { date_of_birth: opts.dateOfBirth }) },
   });
   expect(baby.status(), "create baby").toBe(201);
   const babyId = (await baby.json()).id as string;
