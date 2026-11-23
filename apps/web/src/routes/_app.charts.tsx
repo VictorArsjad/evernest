@@ -28,6 +28,13 @@ import {
   tooltipXPercent,
   type SparkBar,
 } from "../lib/charts";
+import {
+  chartEndDate,
+  entryDayKeys,
+  formatDaySummary,
+  historyWindows,
+  sleepWindowTotals,
+} from "../lib/daySummary";
 import { isFeatureVisible } from "../lib/featureVisibility";
 import { groupByLocalDay, type DayGroup } from "../lib/groupByDay";
 import { DEFAULT_PALETTE, resolve } from "../lib/palette";
@@ -265,17 +272,7 @@ function ChartsPage() {
   // Pinning `now` per-render is fine — TanStack only refetches when
   // the queryKey changes, and the YYYY-MM-DD strings only change at
   // local midnight. We don't need to memoize harder than that.
-  //
-  // `endDate` is the last day of the visible window: today when offset
-  // is 0, otherwise `offset * range` days earlier. setDate arithmetic
-  // (not MS_PER_DAY offsets) keeps windows on wall-clock day boundaries
-  // across DST transitions.
-  const endDate = useMemo(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - offset * range);
-    return d;
-  }, [range, offset]);
+  const endDate = useMemo(() => chartEndDate(new Date(), range, offset), [range, offset]);
   const window = useMemo(() => dailyWindowEndingOn(endDate, range), [endDate, range]);
   const charts = useDailyCharts(babyId, window.from, window.to, BROWSER_TZ, {
     // Past windows are immutable — polling them every 5 min is waste.
@@ -286,13 +283,10 @@ function ChartsPage() {
   // History covers the same range window, but as ISO instants over the
   // raw event feeds (charts read pre-aggregated daily rows). Both
   // sections are driven by the single range control above.
-  const historyWindow = useMemo(() => {
-    const fromDate = new Date(endDate);
-    fromDate.setDate(fromDate.getDate() - (range - 1));
-    const toDate = new Date(endDate);
-    toDate.setHours(23, 59, 59, 999);
-    return { from: fromDate.toISOString(), to: toDate.toISOString() };
-  }, [endDate, range]);
+  const { history: historyWindow, rhythm: rhythmWindow } = useMemo(
+    () => historyWindows(endDate, range),
+    [endDate, range],
+  );
   const feeds = useBottleFeeds(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const diapers = useDiapers(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
   const pumpings = usePumpings(babyId, historyWindow.from, historyWindow.to, HISTORY_HOOK_OPTS);
@@ -306,15 +300,7 @@ function ChartsPage() {
     historyWindow.to,
     HISTORY_HOOK_OPTS,
   );
-  // The rhythm chart needs one extra lookback day: an overnight sleep
-  // that STARTED before the window still paints the window's first
-  // morning once clipped at midnight. Kept as its own query (separate
-  // key) so the History list above never grows a phantom day group.
-  const rhythmWindow = useMemo(() => {
-    const fromDate = new Date(endDate);
-    fromDate.setDate(fromDate.getDate() - range);
-    return { from: fromDate.toISOString(), to: historyWindow.to };
-  }, [endDate, range, historyWindow.to]);
+  // Own query (separate key) so the History list never grows a phantom day group.
   const rhythmSleeps = useSleeps(babyId, rhythmWindow.from, rhythmWindow.to, HISTORY_HOOK_OPTS);
 
   // Window navigation. `goForward`'s clamp at 0 is the only guard we
@@ -366,13 +352,13 @@ function ChartsPage() {
 
   // Which local days actually have History entries — so a chart bar for
   // an empty day offers no "jump" (no link, and a mouse click no-ops).
-  const entryDayKeys = new Set(groups.map((g) => g.dayKey));
+  const entryDays = entryDayKeys(groups);
 
   // Jump from a chart bar (metric `kind`, day `date`) to that day's
   // History: expand it, glow the matching rows, scroll it into view. The
   // null→value reset restarts the CSS glow even on a repeat click.
   const handleSelectDay = (date: string, kind: RecentEvent["kind"]) => {
-    if (!entryDayKeys.has(date)) return;
+    if (!entryDays.has(date)) return;
     setExpandOverrides((prev) => ({ ...prev, [date]: true }));
     setHighlight(null);
     requestAnimationFrame(() => setHighlight({ dayKey: date, kind }));
@@ -435,7 +421,7 @@ function ChartsPage() {
           prefs={prefs}
           todayYMD={formatLocalYMD(new Date())}
           onSelectDay={handleSelectDay}
-          entryDayKeys={entryDayKeys}
+          entryDayKeys={entryDays}
         />
       )}
 
@@ -449,7 +435,7 @@ function ChartsPage() {
           toYMD={window.to}
           todayYMD={sleepDayKey(new Date(), prefs.day_start_hour)}
           onSelectDay={(date) => handleSelectDay(date, "sleep")}
-          entryDayKeys={entryDayKeys}
+          entryDayKeys={entryDays}
         />
       )}
 
@@ -769,14 +755,7 @@ function SleepChartsSection({
   const range = getDailySleepRange(baby, now);
   const canSelectDay = (date: string) => !!entryDayKeys?.has(date);
 
-  // Window totals/avg. The average excludes today (partial sleep-day)
-  // exactly like summarize() does for the other cards.
-  const totalMin = totals.reduce((s, d) => s + d.minutes, 0);
-  const pastDays = totals.filter((d) => d.date !== todayYMD);
-  const avgDenominator = pastDays.length > 0 ? pastDays.length : totals.length;
-  const avgNumerator =
-    pastDays.length > 0 ? pastDays.reduce((s, d) => s + d.minutes, 0) : totalMin;
-  const avgMin = avgDenominator > 0 ? avgNumerator / avgDenominator : 0;
+  const { totalMin, avgMin } = sleepWindowTotals(totals, todayYMD);
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1590,69 +1569,4 @@ function Chevron({ expanded }: { expanded: boolean }) {
       <path d="M4 2.5 L8 6 L4 9.5" />
     </svg>
   );
-}
-
-// Roll up the day's events into a one-line "60 ml · 12 min nursing · …"
-// summary. Zero parts are dropped so a quiet day reads "2 diapers"
-// rather than "0 ml · 0 min nursing · 0 pumped · 2 diapers · 0 growth".
-// Sleep minutes are attributed by sleep-day key (prefs.day_start_hour),
-// matching Today + sleep totals — so they may come from a neighboring
-// calendar group's events when the cutover ≠ midnight.
-function formatDaySummary(
-  events: RecentEvent[],
-  prefs: CombinedPreferences,
-  dayKey: string,
-  allEvents: RecentEvent[],
-): string {
-  let bottleMl = 0;
-  let nursingMin = 0;
-  let pumpedMl = 0;
-  let diaperCount = 0;
-  let growthCount = 0;
-  let sleepMin = 0;
-  let noteCount = 0;
-  for (const ev of events) {
-    switch (ev.kind) {
-      case "bottle":
-        bottleMl += Number(ev.data.amount_ml) || 0;
-        break;
-      case "nursing":
-        nursingMin += Math.round(
-          (Number(ev.data.left_duration_s) + Number(ev.data.right_duration_s)) / 60,
-        );
-        break;
-      case "pumping":
-        pumpedMl += Number(ev.data.amount_ml) || 0;
-        break;
-      case "diaper":
-        diaperCount += 1;
-        break;
-      case "growth":
-        growthCount += 1;
-        break;
-      case "note":
-        noteCount += 1;
-        break;
-      // sleep handled below via sleep-day key across allEvents
-    }
-  }
-  for (const ev of allEvents) {
-    if (ev.kind !== "sleep" || ev.data.ended_at == null) continue;
-    if (sleepDayKey(new Date(ev.data.started_at), prefs.day_start_hour) !== dayKey) continue;
-    sleepMin += Math.max(
-      0,
-      Math.round(
-        (new Date(ev.data.ended_at).getTime() - new Date(ev.data.started_at).getTime()) / 60_000,
-      ),
-    );
-  }
-  const parts: string[] = [];
-  if (bottleMl > 0) parts.push(formatVolume(bottleMl, prefs.unit_volume));
-  if (nursingMin > 0) parts.push(`${nursingMin} min nursing`);
-  if (pumpedMl > 0) parts.push(`${formatVolume(pumpedMl, prefs.unit_volume)} pumped`);
-  if (diaperCount > 0) parts.push(`${diaperCount} ${diaperCount === 1 ? "diaper" : "diapers"}`);
-  if (growthCount > 0) parts.push(`${growthCount} growth`);
-  if (sleepMin > 0) parts.push(`${formatDurationHM(sleepMin)} sleep`);
-  if (noteCount > 0) parts.push(`${noteCount} ${noteCount === 1 ? "note" : "notes"}`);
-  return parts.join(" · ");
 }

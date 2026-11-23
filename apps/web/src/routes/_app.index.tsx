@@ -14,6 +14,14 @@ import { RecentRow } from "../components/RecentRow";
 import { SyncStatusBadge } from "../components/SyncStatusBadge";
 import { useAuthStore } from "../lib/authStore";
 import { dailyWindowEndingToday } from "../lib/charts";
+import {
+  lastEvents,
+  lastWokeAtOf,
+  latestWeightGrams,
+  todaySleepWindow,
+  todayTotals,
+  todayWindows,
+} from "../lib/daySummary";
 import { isFeatureVisible } from "../lib/featureVisibility";
 import { formatElapsedHHMM } from "../lib/nursingTimer";
 import {
@@ -34,11 +42,10 @@ import {
   useSolidMeals,
 } from "../lib/queries";
 import { getDailyTargets, type DailyTargets } from "../lib/recommendations";
-import { currentSleepDayBounds } from "../lib/sleepDays";
 import { getWakeWindow, type WakeWindow } from "../lib/sleepGuidance";
 import { mergeRecent } from "../lib/recentEvents";
 import { submitOnEnter } from "../lib/submitOnEnter";
-import { formatTimeSince, lastEventAt, useNow } from "../lib/timeSince";
+import { formatTimeSince, useNow } from "../lib/timeSince";
 import type { Baby, Nursing, Sleep } from "../lib/types";
 import { useActiveBaby } from "../lib/useActiveBaby";
 import { useEscapeKey } from "../lib/useEscapeKey";
@@ -97,27 +104,14 @@ function TodayPage() {
     }
   }, [households.data, households.isSuccess, babies.data, babies.isSuccess, householdId, nav]);
 
-  const todayStart = useMemo(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d.toISOString();
-  }, []);
-  const todayEnd = useMemo(() => {
-    const d = new Date();
-    d.setHours(23, 59, 59, 999);
-    return d.toISOString();
-  }, []);
-  // Lookback for "last fed / last diaper" — the banner surfaces the most
-  // recent event regardless of day, so a feed from last night still reads
-  // "Fed 8h ago" this morning instead of "No feeds yet today". 30 days
-  // matches formatTimeSince's ceiling (older than that renders "—" anyway),
-  // so a wider window buys nothing.
-  const sinceStart = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 30);
-    d.setHours(0, 0, 0, 0);
-    return d.toISOString();
-  }, []);
+  // Memo'd once: the windows feed query keys, and re-reading the clock on
+  // every render would churn them. "Since" is the lookback for the banner's
+  // last-fed / last-diaper labels (see daySummary).
+  const {
+    from: todayStart,
+    to: todayEnd,
+    since: sinceStart,
+  } = useMemo(() => todayWindows(new Date()), []);
 
   // Display preferences for the active baby + user. Falls back to
   // canonical units while the queries hydrate so the tile grid renders
@@ -127,10 +121,10 @@ function TodayPage() {
   const { prefs } = usePreferences(baby?.id ?? null);
   // Sleep "today" follows the baby's sleep-day cutover (e.g. 6am→6am),
   // independent of the calendar-midnight window used for other metrics.
-  const sleepWindow = useMemo(() => {
-    const { start, end } = currentSleepDayBounds(new Date(), prefs.day_start_hour);
-    return { from: start.toISOString(), to: end.toISOString() };
-  }, [prefs.day_start_hour]);
+  const sleepWindow = useMemo(
+    () => todaySleepWindow(new Date(), prefs.day_start_hour),
+    [prefs.day_start_hour],
+  );
 
   const feeds = useBottleFeeds(baby?.id ?? null, todayStart, todayEnd);
   const diapers = useDiapers(baby?.id ?? null, todayStart, todayEnd);
@@ -183,36 +177,14 @@ function TodayPage() {
     return <PageShell title="…">Setting up…</PageShell>;
   }
 
-  const totalMl = feeds.data?.reduce((s, f) => s + Number(f.amount_ml), 0) ?? 0;
+  const { totalMl, pumpedMl, nursingMin, sleepMin } = todayTotals({
+    feeds: feeds.data,
+    pumpings: pumpings.data,
+    nursings: nursings.data,
+    sleeps: sleepsToday.data,
+  });
   const diaperCount = diapers.data?.length ?? 0;
-  const pumpedMl = pumpings.data?.reduce((s, p) => s + Number(p.amount_ml), 0) ?? 0;
-  const nursingMin =
-    nursings.data?.reduce(
-      (s, n) => s + Math.round((Number(n.left_duration_s) + Number(n.right_duration_s)) / 60),
-      0,
-    ) ?? 0;
-  // Latest weight is the only growth metric on the summary tile — height
-  // and head circumference get a full chart in CP4 but are visually
-  // overkill for a 2x3 hub cell. Plain expression (not useMemo) because
-  // the early return above means we can't add another hook here without
-  // tripping rules-of-hooks; the find() over a small list is cheap.
-  // Sleep total: closed intervals only (an open session contributes
-  // nothing until it ends), attributed wholly to the sleep-day the sleep
-  // STARTED — same cutover as Charts sleep totals and History sleep
-  // roll-up (prefs.day_start_hour).
-  const sleepMin =
-    sleepsToday.data?.reduce((sum, s) => {
-      if (s.ended_at == null) return sum;
-      return (
-        sum +
-        Math.round(
-          (new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 60_000,
-        )
-      );
-    }, 0) ?? 0;
-  const latestWeightRow = growthsLatest.data?.find((g) => g.weight_g != null);
-  const latestWeightG =
-    latestWeightRow?.weight_g != null ? Number(latestWeightRow.weight_g) : null;
+  const latestWeightG = latestWeightGrams(growthsLatest.data);
 
   // Targets are gated by both the user pref AND the baby having a DoB.
   // When either is unsatisfied, the banner renders cells without
@@ -220,16 +192,12 @@ function TodayPage() {
   const targets: DailyTargets | null = prefs.show_recommended_targets
     ? getDailyTargets(baby, now)
     : null;
-  // "Last fed" combines bottle feeds and *completed* nursing sessions.
-  // An open nursing session is rendered as "Nursing now" with higher
-  // priority in TodayBanner, so we exclude open sessions here to avoid
-  // double-counting.
-  const lastFedAt = lastEventAt([
-    ...(latestFeeds.data ?? []),
-    ...((latestNursings.data ?? []).filter((n) => n.ended_at != null)),
-  ]);
-  const lastDiaperAt = lastEventAt(latestDiapers.data ?? []);
-  const lastSolidsAt = lastEventAt(latestSolids.data ?? []);
+  const { lastFedAt, lastDiaperAt, lastSolidsAt } = lastEvents({
+    latestFeeds: latestFeeds.data,
+    latestNursings: latestNursings.data,
+    latestDiapers: latestDiapers.data,
+    latestSolids: latestSolids.data,
+  });
 
   // Wake-window inputs: the most recent CLOSED sleep's wake-up time and
   // the age-typical window. Both gated below; either being null hides
@@ -237,12 +205,7 @@ function TodayPage() {
   const wakeWindow: WakeWindow | null = prefs.show_recommended_targets
     ? getWakeWindow(baby, now)
     : null;
-  const lastWokeAt =
-    (latestSleeps.data ?? [])
-      .filter((s) => s.ended_at != null)
-      .map((s) => s.ended_at as string)
-      .sort()
-      .at(-1) ?? null;
+  const lastWokeAt = lastWokeAtOf(latestSleeps.data);
 
   const recent = mergeRecent({
     bottleFeeds: feeds.data,
