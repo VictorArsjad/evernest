@@ -34,10 +34,10 @@ type createReq struct {
 }
 
 type updateReq struct {
-	OccurredAt *time.Time `json:"occurred_at,omitempty"`
-	Type       *string    `json:"type,omitempty" validate:"omitempty,oneof=wet soiled mixed"`
-	Notes      *string    `json:"notes,omitempty"`
-	eventstore.PhotoIn
+	OccurredAt *time.Time                  `json:"occurred_at,omitempty"`
+	Type       *string                     `json:"type,omitempty" validate:"omitempty,oneof=wet soiled mixed"`
+	Notes      eventstore.Optional[string] `json:"notes"`
+	eventstore.PhotoPatch
 }
 
 var spec = eventstore.Spec[Diaper]{

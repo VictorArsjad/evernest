@@ -45,31 +45,16 @@ type createReq struct {
 	Notes               *string    `json:"notes,omitempty"`
 }
 
-// updateReq is the PATCH body. Each measurement has an explicit clear flag
-// (`clear_weight_g: true`) because a *float64 can't tell absent from null.
-// The "at least one non-NULL" CHECK is mirrored in Go on the merged state so
-// the user gets a structured 422 instead of a 500. Notes clear with "".
+// updateReq is the PATCH body (merge-patch): each measurement and notes clear
+// with null (notes also with ""). The "at least one non-NULL" CHECK is
+// mirrored in Go on the merged state so the user gets a structured 422
+// instead of a 500.
 type updateReq struct {
-	MeasuredAt          *time.Time `json:"measured_at,omitempty"`
-	WeightG             *float64   `json:"weight_g,omitempty" validate:"omitempty,gt=0,lt=30000"`
-	ClearWeight         bool       `json:"clear_weight_g,omitempty"`
-	HeightCM            *float64   `json:"height_cm,omitempty" validate:"omitempty,gt=0,lt=200"`
-	ClearHeight         bool       `json:"clear_height_cm,omitempty"`
-	HeadCircumferenceCM *float64   `json:"head_circumference_cm,omitempty" validate:"omitempty,gt=0,lt=80"`
-	ClearHead           bool       `json:"clear_head_circumference_cm,omitempty"`
-	Notes               *string    `json:"notes,omitempty"`
-}
-
-// merged is the post-PATCH value of one measurement: clear wins over a new
-// value, which wins over the stored one.
-func merged(cur, next *float64, clear bool) *float64 {
-	if clear {
-		return nil
-	}
-	if next != nil {
-		return next
-	}
-	return cur
+	MeasuredAt          *time.Time                   `json:"measured_at,omitempty"`
+	WeightG             eventstore.Optional[float64] `json:"weight_g" check:"gt=0,lt=30000"`
+	HeightCM            eventstore.Optional[float64] `json:"height_cm" check:"gt=0,lt=200"`
+	HeadCircumferenceCM eventstore.Optional[float64] `json:"head_circumference_cm" check:"gt=0,lt=80"`
+	Notes               eventstore.Optional[string]  `json:"notes"`
 }
 
 var spec = eventstore.Spec[Growth]{
@@ -111,18 +96,18 @@ var spec = eventstore.Spec[Growth]{
 			Dest:  []any{&curWeight, &curHeight, &curHead},
 			Body:  func() any { return req },
 			Build: func() (eventstore.Update, *eventstore.Problem) {
-				if merged(curWeight, req.WeightG, req.ClearWeight) == nil &&
-					merged(curHeight, req.HeightCM, req.ClearHeight) == nil &&
-					merged(curHead, req.HeadCircumferenceCM, req.ClearHead) == nil {
+				if req.WeightG.Ptr(curWeight) == nil &&
+					req.HeightCM.Ptr(curHeight) == nil &&
+					req.HeadCircumferenceCM.Ptr(curHead) == nil {
 					return eventstore.Update{}, eventstore.Invalid(
 						"at least one of weight_g, height_cm, head_circumference_cm must be set")
 				}
-				// Per measurement: clear flag → NULL; new value → replace; else keep.
+				// Per measurement: null → NULL; value → replace; absent → keep.
 				set := eventstore.NewSet(2).
 					Coalesce("measured_at", req.MeasuredAt).
-					Clearable("weight_g", "numeric", req.ClearWeight, req.WeightG).
-					Clearable("height_cm", "numeric", req.ClearHeight, req.HeightCM).
-					Clearable("head_circumference_cm", "numeric", req.ClearHead, req.HeadCircumferenceCM).
+					Nullable("weight_g", "numeric", req.WeightG).
+					Nullable("height_cm", "numeric", req.HeightCM).
+					Nullable("head_circumference_cm", "numeric", req.HeadCircumferenceCM).
 					Text("notes", req.Notes)
 				return eventstore.Update{Set: set.SQL(), Args: set.Args()}, nil
 			},

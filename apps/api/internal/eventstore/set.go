@@ -36,14 +36,14 @@ func (s *Set) Coalesce(col string, v any) *Set {
 	return s
 }
 
-// Clearable: clear → NULL; non-NULL v → replace; else keep. cast is the SQL
-// type of v.
-func (s *Set) Clearable(col, cast string, clear bool, v any) *Set {
-	c := s.arg(clear)
-	p := s.arg(v)
-	s.parts = append(s.parts, col+" = CASE WHEN "+c+"::boolean THEN NULL WHEN "+
-		p+"::"+cast+" IS NOT NULL THEN "+p+" ELSE "+col+" END")
-	return s
+// sqlOptional is satisfied by every Optional[T].
+type sqlOptional interface{ sqlArg() (set bool, v any) }
+
+// Nullable applies a merge-patch Optional: absent → keep, null → NULL,
+// value → replace. cast is the SQL type of the value.
+func (s *Set) Nullable(col, cast string, o sqlOptional) *Set {
+	set, v := o.sqlArg()
+	return s.Optional(col, cast, set, v)
 }
 
 // Optional replaces col with v only when present, so v may itself be NULL or
@@ -58,15 +58,14 @@ func (s *Set) Optional(col, cast string, present bool, v any) *Set {
 	return s
 }
 
-// Text applies the "present-flag + NULLIF(value,”)" PATCH convention for
-// nullable text: Go's JSON decoder can't tell an absent field from an explicit
-// null on a *string, so nil leaves col alone and "" clears it.
-func (s *Set) Text(col string, v *string) *Set {
-	present, value := false, ""
-	if v != nil {
-		present, value = true, *v
+// Text applies merge-patch to nullable free text: absent keeps col, null or
+// "" clears it, anything else replaces it.
+func (s *Set) Text(col string, o Optional[string]) *Set {
+	value := ""
+	if o.Set && !o.Null {
+		value = o.Value
 	}
-	c := s.arg(present)
+	c := s.arg(o.Set)
 	p := s.arg(value)
 	s.parts = append(s.parts, col+" = CASE WHEN "+c+"::boolean THEN NULLIF("+p+", '') ELSE "+col+" END")
 	return s

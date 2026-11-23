@@ -1,7 +1,9 @@
 package eventstore
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -75,12 +77,18 @@ func (h *Handler[T]) itemScope(w http.ResponseWriter, r *http.Request, extraCols
 	return id, true
 }
 
-// decodeBody decodes + struct-validates the request body into dst.
-func (h *Handler[T]) decodeBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+// decodeBody decodes + struct-validates the request body into dst. With
+// patch set, an explicit null on a field that isn't Optional is a 422.
+func (h *Handler[T]) decodeBody(w http.ResponseWriter, r *http.Request, dst any, patch bool) bool {
 	// Cap the body BEFORE parsing so a hostile client can't OOM the API by
 	// streaming a multi-GB body.
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	if err := httpx.DecodeJSON(r, dst); err != nil {
+	raw, err := io.ReadAll(r.Body)
+	if err == nil {
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		err = httpx.DecodeJSON(r, dst)
+	}
+	if err != nil {
 		if isBodyTooLarge(err) {
 			httpx.WriteError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "request body exceeds limit")
 			return false
@@ -88,7 +96,17 @@ func (h *Handler[T]) decodeBody(w http.ResponseWriter, r *http.Request, dst any)
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return false
 	}
-	if err := validate.Struct(dst); err != nil {
+	if patch {
+		if name, bad := rejectNulls(raw, dst); bad {
+			httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", name+" cannot be null")
+			return false
+		}
+	}
+	err = validate.Struct(dst)
+	if err == nil {
+		err = validateOptionals(validate, dst)
+	}
+	if err != nil {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
 		return false
 	}

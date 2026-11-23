@@ -49,13 +49,12 @@ type createReq struct {
 type updateReq struct {
 	OccurredAt *time.Time `json:"occurred_at,omitempty"`
 	Foods      []string   `json:"foods,omitempty"`
-	// Reaction allows "" to clear, so it is checked by hand rather than with
-	// a oneof tag.
-	Reaction     *string  `json:"reaction,omitempty"`
-	AmountG      *float64 `json:"amount_g,omitempty" validate:"omitempty,gte=0,lte=100000"`
-	ClearAmountG bool     `json:"clear_amount_g,omitempty"`
-	Notes        *string  `json:"notes,omitempty"`
-	eventstore.PhotoIn
+	// Reaction clears with null or "", so it is checked by hand rather than
+	// with a oneof tag.
+	Reaction eventstore.Optional[string]  `json:"reaction"`
+	AmountG  eventstore.Optional[float64] `json:"amount_g" check:"gte=0,lte=100000"`
+	Notes    eventstore.Optional[string]  `json:"notes"`
+	eventstore.PhotoPatch
 }
 
 var spec = eventstore.Spec[SolidMeal]{
@@ -103,9 +102,9 @@ var spec = eventstore.Spec[SolidMeal]{
 					return eventstore.Update{}, eventstore.Invalid("foods must contain at least one non-empty item")
 				}
 			}
-			// Reaction: omitted → leave; "" → clear; otherwise must be allowed.
-			if req.Reaction != nil && *req.Reaction != "" {
-				if _, ok := allowedReactions[*req.Reaction]; !ok {
+			// Reaction: omitted → leave; null or "" → clear; otherwise must be allowed.
+			if req.Reaction.Set && !req.Reaction.Null && req.Reaction.Value != "" {
+				if _, ok := allowedReactions[req.Reaction.Value]; !ok {
 					return eventstore.Update{}, eventstore.Invalid("invalid reaction")
 				}
 			}
@@ -113,7 +112,7 @@ var spec = eventstore.Spec[SolidMeal]{
 				Coalesce("occurred_at", req.OccurredAt).
 				Optional("foods", "text[]", foodsPresent, foods).
 				Text("reaction", req.Reaction).
-				Clearable("amount_g", "numeric", req.ClearAmountG, req.AmountG).
+				Nullable("amount_g", "numeric", req.AmountG).
 				Text("notes", req.Notes)
 			return eventstore.Update{Set: set.SQL(), Args: set.Args()}, nil
 		})

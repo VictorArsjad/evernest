@@ -33,14 +33,13 @@ type createReq struct {
 	Notes      *string    `json:"notes,omitempty"`
 }
 
-// updateReq is the PATCH body. Every field is optional; an omitted field is
-// left alone. Notes follow a "send empty string to clear" convention because
-// Go's JSON decoder can't tell "absent" from "explicit null" on a *string.
+// updateReq is the PATCH body (merge-patch): an omitted field is left alone,
+// notes clear with null or "". Other fields can't be null.
 type updateReq struct {
-	OccurredAt *time.Time `json:"occurred_at,omitempty"`
-	MilkSource *string    `json:"milk_source,omitempty" validate:"omitempty,oneof=breast formula"`
-	AmountML   *float64   `json:"amount_ml,omitempty" validate:"omitempty,gt=0,lte=2000"`
-	Notes      *string    `json:"notes,omitempty"`
+	OccurredAt *time.Time                  `json:"occurred_at,omitempty"`
+	MilkSource *string                     `json:"milk_source,omitempty" validate:"omitempty,oneof=breast formula"`
+	AmountML   *float64                    `json:"amount_ml,omitempty" validate:"omitempty,gt=0,lte=2000"`
+	Notes      eventstore.Optional[string] `json:"notes"`
 }
 
 var spec = eventstore.Spec[BottleFeed]{

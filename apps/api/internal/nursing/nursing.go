@@ -57,14 +57,13 @@ type endReq struct {
 // editReq edits a closed session. Every field is optional; edits cannot
 // re-open a session.
 type editReq struct {
-	StartedAt           *time.Time `json:"started_at,omitempty"`
-	EndedAt             *time.Time `json:"ended_at,omitempty"`
-	StartingBreast      *string    `json:"starting_breast,omitempty" validate:"omitempty,oneof=left right"`
-	ClearStartingBreast bool       `json:"clear_starting_breast,omitempty"`
-	NursingSide         *string    `json:"nursing_side,omitempty" validate:"omitempty,oneof=left right both"`
-	LeftDurationS       *int       `json:"left_duration_s,omitempty" validate:"omitempty,gte=0,lte=21600"`
-	RightDurationS      *int       `json:"right_duration_s,omitempty" validate:"omitempty,gte=0,lte=21600"`
-	Notes               *string    `json:"notes,omitempty"`
+	StartedAt      *time.Time                  `json:"started_at,omitempty"`
+	EndedAt        *time.Time                  `json:"ended_at,omitempty"`
+	StartingBreast eventstore.Optional[string] `json:"starting_breast" check:"oneof=left right"`
+	NursingSide    *string                     `json:"nursing_side,omitempty" validate:"omitempty,oneof=left right both"`
+	LeftDurationS  *int                        `json:"left_duration_s,omitempty" validate:"omitempty,gte=0,lte=21600"`
+	RightDurationS *int                        `json:"right_duration_s,omitempty" validate:"omitempty,gte=0,lte=21600"`
+	Notes          eventstore.Optional[string] `json:"notes"`
 }
 
 var session = eventstore.SessionPatch[endReq, editReq]{
@@ -83,7 +82,7 @@ var session = eventstore.SessionPatch[endReq, editReq]{
 			Set: eventstore.NewSet(2).
 				Coalesce("started_at", req.StartedAt).
 				Coalesce("ended_at", req.EndedAt).
-				Clearable("starting_breast", "text", req.ClearStartingBreast, req.StartingBreast).
+				Nullable("starting_breast", "text", req.StartingBreast).
 				Coalesce("nursing_side", req.NursingSide).
 				Coalesce("left_duration_s", req.LeftDurationS).
 				Coalesce("right_duration_s", req.RightDurationS).

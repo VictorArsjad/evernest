@@ -497,9 +497,9 @@ func TestEditClosedNursingSession(t *testing.T) {
 		t.Fatalf("clear notes: notes = %q, want nil", *cleared.Notes)
 	}
 
-	// clear_starting_breast: true -> NULL.
+	// starting_breast: null -> NULL.
 	clearBreast := te.do(t, "PATCH", itemPath, te.token, map[string]any{
-		"clear_starting_breast": true,
+		"starting_breast": nil,
 	})
 	if clearBreast.StatusCode != http.StatusOK {
 		t.Fatalf("clear starting_breast: want 200, got %d: %s", clearBreast.StatusCode, readBody(clearBreast))

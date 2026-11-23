@@ -240,9 +240,9 @@ func TestPatchSolidMealClearAmountAndReaction(t *testing.T) {
 	decodeJSON(t, resp, &seed)
 
 	patch := te.do(t, "PATCH", "/v1/solid-meals/"+seed.ID.String(), te.token, map[string]any{
-		"reaction":       "",
-		"clear_amount_g": true,
-		"foods":          []string{"oats", "blueberry"},
+		"reaction": "",
+		"amount_g": nil,
+		"foods":    []string{"oats", "blueberry"},
 	})
 	if patch.StatusCode != http.StatusOK {
 		t.Fatalf("PATCH: want 200, got %d: %s", patch.StatusCode, readBody(patch))

@@ -846,18 +846,18 @@ func TestFreezePatch_NoteBodyCannotBeCleared(t *testing.T) {
 	wantErr(t, e.patch(t, f.token, k, id, map[string]any{"body": ""}), 422, "validation_failed")
 }
 
-func TestFreezePatch_ClearFlags(t *testing.T) {
+func TestFreezePatch_NullClears(t *testing.T) {
 	e := newEnv(t)
 	f := newFixture(t, e)
 
-	t.Run("growth clear_weight_g removes weight only", func(t *testing.T) {
+	t.Run("growth null weight_g removes weight only", func(t *testing.T) {
 		k := kindByName(t, "growth")
 		id := fmt.Sprint(obj(t, e.create(t, f.token, f.baby, k, k.sample(fixedAt))))
 		_ = id
 		r := e.create(t, f.token, f.baby, k, k.sample(fixedAt))
 		mustStatus(t, r, http.StatusCreated)
 		gid := fmt.Sprint(obj(t, r)["id"])
-		pr := e.patch(t, f.token, k, gid, map[string]any{"clear_weight_g": true})
+		pr := e.patch(t, f.token, k, gid, map[string]any{"weight_g": nil})
 		mustStatus(t, pr, http.StatusOK)
 		got := obj(t, pr)
 		if _, ok := got["weight_g"]; ok {
@@ -873,40 +873,40 @@ func TestFreezePatch_ClearFlags(t *testing.T) {
 		mustStatus(t, r, http.StatusCreated)
 		gid := fmt.Sprint(obj(t, r)["id"])
 		wantErr(t, e.patch(t, f.token, k, gid, map[string]any{
-			"clear_weight_g": true, "clear_height_cm": true, "clear_head_circumference_cm": true,
+			"weight_g": nil, "height_cm": nil, "head_circumference_cm": nil,
 		}), 422, "validation_failed")
 	})
 
-	t.Run("nursing clear_starting_breast removes starting_breast", func(t *testing.T) {
+	t.Run("nursing null starting_breast removes starting_breast", func(t *testing.T) {
 		k := kindByName(t, "nursing")
 		r := e.create(t, f.token, f.baby, k, k.sample(fixedAt))
 		mustStatus(t, r, http.StatusCreated)
 		nid := fmt.Sprint(obj(t, r)["id"])
-		pr := e.patch(t, f.token, k, nid, map[string]any{"clear_starting_breast": true})
+		pr := e.patch(t, f.token, k, nid, map[string]any{"starting_breast": nil})
 		mustStatus(t, pr, http.StatusOK)
 		if _, ok := obj(t, pr)["starting_breast"]; ok {
 			t.Errorf("starting_breast should be cleared")
 		}
 	})
 
-	t.Run("sleep clear_sleep_type removes sleep_type", func(t *testing.T) {
+	t.Run("sleep null sleep_type removes sleep_type", func(t *testing.T) {
 		k := kindByName(t, "sleep")
 		r := e.create(t, f.token, f.baby, k, k.sample(fixedAt))
 		mustStatus(t, r, http.StatusCreated)
 		sid := fmt.Sprint(obj(t, r)["id"])
-		pr := e.patch(t, f.token, k, sid, map[string]any{"clear_sleep_type": true})
+		pr := e.patch(t, f.token, k, sid, map[string]any{"sleep_type": nil})
 		mustStatus(t, pr, http.StatusOK)
 		if _, ok := obj(t, pr)["sleep_type"]; ok {
 			t.Errorf("sleep_type should be cleared")
 		}
 	})
 
-	t.Run("solid clear_amount_g and reaction \"\"", func(t *testing.T) {
+	t.Run("solid null amount_g and reaction \"\"", func(t *testing.T) {
 		k := kindByName(t, "solid")
 		r := e.create(t, f.token, f.baby, k, k.sample(fixedAt))
 		mustStatus(t, r, http.StatusCreated)
 		sid := fmt.Sprint(obj(t, r)["id"])
-		pr := e.patch(t, f.token, k, sid, map[string]any{"clear_amount_g": true, "reaction": ""})
+		pr := e.patch(t, f.token, k, sid, map[string]any{"amount_g": nil, "reaction": ""})
 		mustStatus(t, pr, http.StatusOK)
 		got := obj(t, pr)
 		if _, ok := got["amount_g"]; ok {
