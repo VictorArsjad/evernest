@@ -67,8 +67,8 @@ synthesized rows; `lib/eventKind.ts` then, for every write:
    immediately, then invalidates to refetch when online.
 
 Photo kinds (diaper, solids, note) reuse the photo helpers + `definePhotoUrl`;
-kinds with an in-progress state (nursing, sleep) set `openSession: true` and add
-`defineOpenSession` for the `/open` query and the end mutation.
+kinds with an in-progress state (nursing, sleep) pass an `open` descriptor and get
+`useOpen` (the `/open` query) and `useEnd` (the end mutation).
 
 This works because the BE accepts client ids and does `ON CONFLICT (id) DO
 NOTHING`, so replay is idempotent (see `lib/outbox.ts` header for the full

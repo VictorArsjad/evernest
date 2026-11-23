@@ -7,7 +7,6 @@ import {
   createdPhoto,
   createPhotoBody,
   defineEventKind,
-  defineOpenSession,
   definePhotoUrl,
   editedText,
   HEAVY_REFETCH_MS,
@@ -606,12 +605,29 @@ interface EndNursingVars {
   right_duration_s: number;
 }
 
-const nursing = defineEventKind<Nursing, CreateNursingVars, UpdateNursingVars>({
+const nursing = defineEventKind<Nursing, CreateNursingVars, UpdateNursingVars, EndNursingVars>({
   segment: "nursing-sessions",
   itemPath: "/nursing-sessions",
   deleteKeyPrefix: "del-nursing-",
   refetchMs: LIVE_LIST_REFETCH_MS,
-  openSession: true,
+  open: {
+    endKeyPrefix: "end-nursing-",
+    endBody: (vars) => ({
+      ended_at: vars.ended_at,
+      left_duration_s: vars.left_duration_s,
+      right_duration_s: vars.right_duration_s,
+    }),
+    endRow: (vars, base) => ({
+      ...updatedRowBase(vars.id, vars.babyId, base ?? undefined),
+      started_at: base?.started_at ?? new Date().toISOString(),
+      ended_at: vars.ended_at,
+      starting_breast: base?.starting_breast ?? null,
+      nursing_side: base?.nursing_side ?? "both",
+      left_duration_s: vars.left_duration_s,
+      right_duration_s: vars.right_duration_s,
+      notes: base?.notes ?? null,
+    }),
+  },
   createRow: (vars, id) => ({
     ...newRowBase(id, vars.babyId),
     started_at: vars.started_at,
@@ -658,31 +674,12 @@ const nursing = defineEventKind<Nursing, CreateNursingVars, UpdateNursingVars>({
   },
 });
 
-const nursingSession = defineOpenSession<Nursing, EndNursingVars>(nursing, {
-  endKeyPrefix: "end-nursing-",
-  endBody: (vars) => ({
-    ended_at: vars.ended_at,
-    left_duration_s: vars.left_duration_s,
-    right_duration_s: vars.right_duration_s,
-  }),
-  endRow: (vars, base) => ({
-    ...updatedRowBase(vars.id, vars.babyId, base ?? undefined),
-    started_at: base?.started_at ?? new Date().toISOString(),
-    ended_at: vars.ended_at,
-    starting_breast: base?.starting_breast ?? null,
-    nursing_side: base?.nursing_side ?? "both",
-    left_duration_s: vars.left_duration_s,
-    right_duration_s: vars.right_duration_s,
-    notes: base?.notes ?? null,
-  }),
-});
-
 export const useNursings = nursing.useList;
 export const useCreateNursing = nursing.useCreate;
 export const useUpdateNursing = nursing.useUpdate;
 export const useDeleteNursing = nursing.useDelete;
-export const useOpenNursing = nursingSession.useOpen;
-export const useEndNursing = nursingSession.useEnd;
+export const useOpenNursing = nursing.useOpen;
+export const useEndNursing = nursing.useEnd;
 
 // --- sleeps ---
 
@@ -717,12 +714,23 @@ interface EndSleepVars {
   ended_at: string;
 }
 
-const sleep = defineEventKind<Sleep, CreateSleepVars, UpdateSleepVars>({
+const sleep = defineEventKind<Sleep, CreateSleepVars, UpdateSleepVars, EndSleepVars>({
   segment: "sleeps",
   itemPath: "/sleeps",
   deleteKeyPrefix: "del-sleep-",
   refetchMs: LIVE_LIST_REFETCH_MS,
-  openSession: true,
+  open: {
+    endKeyPrefix: "end-sleep-",
+    endBody: (vars) => ({ ended_at: vars.ended_at }),
+    endRow: (vars, base) => ({
+      ...updatedRowBase(vars.id, vars.babyId, base ?? undefined),
+      started_at: base?.started_at ?? new Date().toISOString(),
+      ended_at: vars.ended_at,
+      sleep_type: base?.sleep_type ?? null,
+      location: base?.location ?? null,
+      notes: base?.notes ?? null,
+    }),
+  },
   createRow: (vars, id) => ({
     ...newRowBase(id, vars.babyId),
     started_at: vars.started_at,
@@ -759,25 +767,12 @@ const sleep = defineEventKind<Sleep, CreateSleepVars, UpdateSleepVars>({
   },
 });
 
-const sleepSession = defineOpenSession<Sleep, EndSleepVars>(sleep, {
-  endKeyPrefix: "end-sleep-",
-  endBody: (vars) => ({ ended_at: vars.ended_at }),
-  endRow: (vars, base) => ({
-    ...updatedRowBase(vars.id, vars.babyId, base ?? undefined),
-    started_at: base?.started_at ?? new Date().toISOString(),
-    ended_at: vars.ended_at,
-    sleep_type: base?.sleep_type ?? null,
-    location: base?.location ?? null,
-    notes: base?.notes ?? null,
-  }),
-});
-
 export const useSleeps = sleep.useList;
 export const useCreateSleep = sleep.useCreate;
 export const useUpdateSleep = sleep.useUpdate;
 export const useDeleteSleep = sleep.useDelete;
-export const useOpenSleep = sleepSession.useOpen;
-export const useEndSleep = sleepSession.useEnd;
+export const useOpenSleep = sleep.useOpen;
+export const useEndSleep = sleep.useEnd;
 
 // --- growths ---
 
