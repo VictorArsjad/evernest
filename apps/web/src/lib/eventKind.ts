@@ -314,6 +314,9 @@ export function patchBody<V extends object>(
   return body;
 }
 
+// apiQueued<void> needs a synthesized value for DELETE; there is none.
+const NO_CONTENT = undefined as unknown as void;
+
 export function defineEventKind<
   Row extends EventRow & { ended_at?: string | null },
   CreateVars extends { babyId: string },
@@ -416,7 +419,7 @@ export function defineEventKind<
           method: "DELETE",
           idempotencyKey: `${d.deleteKeyPrefix}${vars.id}`,
           entityId: vars.id,
-          synthesize: () => undefined as unknown as void,
+          synthesize: () => NO_CONTENT,
         }),
       onSuccess: (_data, vars) => {
         removeFromList<Row>(qc, prefixFor(vars.babyId, d.segment), vars.id);
