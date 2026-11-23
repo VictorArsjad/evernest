@@ -138,6 +138,20 @@ web-test: ## Run frontend tests
 web-lint: ## Type-check + lint the frontend
 	cd apps/web && npm run lint && npm run typecheck
 
+# ---------- end-to-end (apps/e2e) ----------
+.PHONY: e2e e2e-ui e2e-prepare
+
+e2e-prepare:
+	cd apps/e2e && npm ci
+	./apps/e2e/scripts/build.sh
+	./apps/e2e/scripts/db.sh
+
+e2e: e2e-prepare ## Playwright E2E, headless, all browsers (dedicated evernest_e2e db on :8090; needs `make db`)
+	cd apps/e2e && npx playwright test
+
+e2e-ui: e2e-prepare ## Playwright UI mode for debugging E2E
+	cd apps/e2e && npx playwright test --ui
+
 # ---------- aggregate ----------
 .PHONY: lint test build help
 
