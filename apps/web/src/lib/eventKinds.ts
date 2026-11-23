@@ -113,7 +113,7 @@ export const EVENT_KIND_ROWS = {
 
 export const EVENT_KINDS = Object.keys(EVENT_KIND_ROWS) as EventKindName[];
 
-export function eventKindMeta(kind: EventKindName): EventKindMeta {
+export function eventKindMeta<K extends EventKindName>(kind: K): (typeof EVENT_KIND_ROWS)[K] {
   return EVENT_KIND_ROWS[kind];
 }
 
