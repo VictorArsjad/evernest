@@ -14,6 +14,7 @@ package baby
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -41,7 +42,7 @@ func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := MustOwnBaby(r.Context(), h.store, uid, babyID); err != nil {
-		writeBabyAuthErr(w, err)
+		WriteAuthErr(w, err)
 		return
 	}
 
@@ -69,7 +70,7 @@ func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := MustOwnBaby(r.Context(), h.store, uid, babyID); err != nil {
-		writeBabyAuthErr(w, err)
+		WriteAuthErr(w, err)
 		return
 	}
 
@@ -128,16 +129,17 @@ func loadOrSeedSettings(ctx context.Context, st *store.Store, babyID uuid.UUID) 
 	return s, err
 }
 
-// writeBabyAuthErr maps the MustOwnBaby errors to HTTP responses. Mirrors
-// the writeMembershipErr helper in baby.go so the two routes return the
-// same envelope shapes.
-func writeBabyAuthErr(w http.ResponseWriter, err error) {
+// WriteAuthErr maps the MustOwnBaby errors to HTTP responses. Every
+// baby-scoped handler (event kinds, chart, settings) uses it so they all
+// return the same envelope shapes.
+func WriteAuthErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "baby not found")
 	case errors.Is(err, ErrUnauthorized):
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not a member of this household")
 	default:
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		slog.Error("baby auth lookup failed", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 	}
 }

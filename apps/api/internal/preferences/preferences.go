@@ -8,8 +8,9 @@
 //     can be tracked in metric while another is in imperial) and live on
 //     `baby_settings` — see baby.SettingsRoutes for those.
 //
-// PUT is full-replace (not PATCH): the FE always submits all fields, so the
-// API stays simple and partial-update merge logic stays out of it. The row
+// PUT replaces the row, with one exception: the optional boolean prefs
+// (show_recommended_targets, autofill_bottle_amount) keep their stored value
+// when omitted, so older FE builds don't flip them. The row
 // is seeded at user-create time (auth.CreateUser does an INSERT into
 // user_preferences alongside the user insert) so a freshly-registered user
 // always has defaults available.
@@ -68,7 +69,7 @@ type UserPreferences struct {
 	// identical to today.
 	ChartPalette ChartPalette `json:"chart_palette"`
 	// FeatureVisibility lets the user hide event kinds (bottle / nursing /
-	// pumping / diaper / growth) from the Today banner stats, the action
+	// pumping / diaper / solids / growth / sleep / note; see allowedFeatureKeys) from the Today banner stats, the action
 	// tile grid, and the /charts cards WITHOUT touching the underlying data.
 	// Stored sparsely on a jsonb column (migration 000009): a key only
 	// appears when explicitly hidden, e.g. {"bottle": false}. Missing key ⇒
