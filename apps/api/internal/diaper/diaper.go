@@ -48,7 +48,6 @@ var spec = eventstore.Spec[Diaper]{
 	Window:     24 * time.Hour,
 	Select:     "id, baby_id, occurred_at, type, notes, (photo IS NOT NULL) AS has_photo, photo_mime, source, created_at",
 	InsertCols: "occurred_at, type, notes",
-	Photo:      true,
 
 	Scan: func(s eventstore.Scanner) (Diaper, error) {
 		var d Diaper
@@ -57,7 +56,7 @@ var spec = eventstore.Spec[Diaper]{
 	},
 
 	NewCreate: func() eventstore.Create {
-		return eventstore.CreateOf(func(req *createReq) (eventstore.Insert, *eventstore.Problem) {
+		return eventstore.PhotoCreateOf(func(req *createReq) (eventstore.Insert, *eventstore.Problem) {
 			return eventstore.Insert{
 				ID:   req.ID,
 				Args: []any{req.OccurredAt, req.Type, req.Notes},
@@ -66,7 +65,7 @@ var spec = eventstore.Spec[Diaper]{
 	},
 
 	NewPatch: func() eventstore.Patch {
-		return eventstore.PatchOf(func(req *updateReq) (eventstore.Update, *eventstore.Problem) {
+		return eventstore.PhotoPatchOf(func(req *updateReq) (eventstore.Update, *eventstore.Problem) {
 			set := eventstore.NewSet(2).
 				Coalesce("occurred_at", req.OccurredAt).
 				Coalesce("type", req.Type).

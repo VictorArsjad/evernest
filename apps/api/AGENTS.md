@@ -34,8 +34,9 @@ package holds only a descriptor:
   `Select`, `InsertCols`, a `Scan`, and `NewCreate` / `NewPatch` hooks that
   turn a decoded request into insert args or an UPDATE `Set` clause (or a
   422 via `eventstore.Invalid`).
-- `Photo: true` (embed `eventstore.PhotoIn` in the request structs) for kinds
-  with an inline photo; `Open: true` plus `eventstore.SessionPatch` for
+- Photo kinds embed `eventstore.PhotoIn` / `eventstore.PhotoPatch` in the request
+  structs and use `eventstore.PhotoCreateOf` / `PhotoPatchOf` (the compiler
+  checks the embed; there is no `Spec.Photo` flag, it is derived); `Open: true` plus `eventstore.SessionPatch` for
   start-now/end-later kinds (nursing, sleep).
 - `NewHandler(st, logger) *eventstore.Handler[T]`.
 
