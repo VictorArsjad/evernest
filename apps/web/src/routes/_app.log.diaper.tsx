@@ -48,7 +48,6 @@ function LogDiaperPage() {
     isEditMode,
     existingHasPhoto: existing?.has_photo,
     usePhotoUrl: useDiaperPhotoUrl,
-    heicPrecheck: true,
     resetInputOnPick: true,
   });
 

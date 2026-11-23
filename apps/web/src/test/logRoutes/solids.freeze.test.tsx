@@ -18,6 +18,7 @@ import {
 import {
   commonLifecycle,
   DEFAULT_PHOTO_BYTES,
+  HEIC_MESSAGE,
   heicFile,
   jpegFile,
   pickFile,
@@ -177,15 +178,12 @@ describe("log/solids freeze", () => {
     ]);
   });
 
-  it("create: a HEIC pick has NO pre-check; the raw decoder error text is shown (current behavior)", async () => {
-    // Surprise: unlike diaper/note, solids does not sniff HEIC before
-    // compressing. The browser's decode error message reaches the user as-is.
+  it("create: a HEIC pick is rejected up front with the friendly message and nothing is staged (APPROVED CHANGE solids-heic)", async () => {
     await renderLogRoute("solids", CREATE_URL);
     pickFile(heicFile());
-    await waitFor(() =>
-      expect(screen.getByText("The source image could not be decoded.")).toBeTruthy(),
-    );
-    expect(screen.queryByText(/HEIC photos aren't supported/)).toBeNull();
+    await waitFor(() => expect(screen.getByText(HEIC_MESSAGE)).toBeTruthy());
+    expect(screen.queryByText("The source image could not be decoded.")).toBeNull();
+    expect(screen.queryByAltText("Selected solids photo")).toBeNull();
   });
 
   it("create: Enter in the food field only adds a chip; it does not submit (APPROVED CHANGE solids-enter)", async () => {

@@ -48,7 +48,6 @@ function LogNotePage() {
     isEditMode,
     existingHasPhoto: existing?.has_photo,
     usePhotoUrl: useNotePhotoUrl,
-    heicPrecheck: true,
     resetInputOnPick: true,
   });
 

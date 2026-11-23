@@ -28,9 +28,6 @@ export interface PhotoFieldOptions {
   existingHasPhoto: boolean | undefined;
   // The kind's `use<Kind>PhotoUrl` hook.
   usePhotoUrl: (id: string | null, hasPhoto: boolean | undefined) => string | null;
-  // diaper/note reject HEIC/HEIF up front with an actionable message; solids
-  // has never pre-checked and surfaces the raw decoder error instead.
-  heicPrecheck: boolean;
   // diaper/note clear the input value on pick so re-picking the same file
   // fires change again; solids never did.
   resetInputOnPick: boolean;
@@ -82,7 +79,7 @@ export function usePhotoField(o: PhotoFieldOptions) {
     // Browsers other than Safari can't decode HEIC via createImageBitmap, and
     // the compressor's generic DOMException would surface as an opaque "could
     // not process photo". Detection is MIME first, extension second.
-    if (o.heicPrecheck && isHeicFile(file)) {
+    if (isHeicFile(file)) {
       console.warn(`[${o.label}-photo] rejecting HEIC input`, {
         name: file.name,
         type: file.type,

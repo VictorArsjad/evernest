@@ -79,16 +79,14 @@ function LogSolidsPage() {
   const [occurredLocal, setOccurredLocal] = useState(nowLocalDatetimeInput);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Solids differs from diaper/note: no HEIC pre-check (the raw decoder error
-  // is shown), the file input isn't reset on pick, and Remove hides the saved
-  // image instead of leaving it on screen.
+  // Solids differs from diaper/note: the file input isn't reset on pick, and
+  // Remove hides the saved image instead of leaving it on screen.
   const photo = usePhotoField({
     label: "solids",
     rowId: editId ?? null,
     isEditMode,
     existingHasPhoto: existing?.has_photo,
     usePhotoUrl: useSolidMealPhotoUrl,
-    heicPrecheck: false,
     resetInputOnPick: false,
   });
   const { resetCleared } = photo;
