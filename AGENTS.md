@@ -82,6 +82,15 @@ cd apps/e2e && npx playwright show-report                               # last H
   test-only endpoints, no direct DB access, no injected tokens/storage. Each test
   creates its own caregiver/household/baby so tests run in any order, in parallel.
   Wait via auto-waiting assertions, never fixed sleeps.
+- **Setup helpers** (`apps/e2e/tests/fixtures.ts`): import `test, expect` from
+  `./fixtures` instead of `@playwright/test`. The `caregiver` fixture
+  (`{ email, password, householdId, babyId, babyName }`) registers a unique user,
+  creates a household and a baby through the public API using `context.request`, so
+  the refresh cookie lands in the page's context and `page.goto("/")` boots logged in
+  on Today (baby name is the `<h1>`). `createCaregiver(request, { babyName?,
+  householdName? })` does the same on any `APIRequestContext`; pass a separate
+  `playwrightRequest.newContext()` to get a caregiver with no session in the page
+  (e.g. to test the real login screen). See `tests/session.spec.ts`.
 - **E2E NEVER runs against production.** The suite creates users and data; it only
   targets the local `localhost:8090` server. Never point `baseURL` at the tailnet URL.
 
