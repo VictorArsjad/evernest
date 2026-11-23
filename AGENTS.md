@@ -82,6 +82,12 @@ cd apps/e2e && npx playwright show-report                               # last H
   test-only endpoints, no direct DB access, no injected tokens/storage. Each test
   creates its own caregiver/household/baby so tests run in any order, in parallel.
   Wait via auto-waiting assertions, never fixed sleeps.
+- **Time:** every test runs in a fixed-offset timezone where it is ~local noon
+  (`noonTimezone()` in `tests/helpers.ts`), so "today" never crosses midnight
+  whatever the wall clock. Use `localInput()` for `datetime-local` values.
+- **Bugs found by E2E:** real app bugs may need app code changes, but those go in a
+  separate `fix(web)` commit and its own PR off `master`, not in the E2E PR. The
+  `data-testid`-only rule for app changes in E2E PRs otherwise stands.
 - **Setup helpers** (`apps/e2e/tests/fixtures.ts`): import `test, expect` from
   `./fixtures` instead of `@playwright/test`. The `caregiver` fixture
   (`{ email, password, householdId, babyId, babyName }`) registers a unique user,
@@ -91,8 +97,8 @@ cd apps/e2e && npx playwright show-report                               # last H
   householdName? })` does the same on any `APIRequestContext`; pass a separate
   `playwrightRequest.newContext()` to get a caregiver with no session in the page
   (e.g. to test the real login screen). See `tests/session.spec.ts`.
-- **Event seeding** (`apps/e2e/tests/seed.ts`): `seedEvents(request, caregiver, now?)`
-  → `{ latestNote, bottleMl, diapers, growthWeightsG }`. Logs in with the caregiver's
+- **Event seeding** (`apps/e2e/tests/seed.ts`): `seedEvents(request, caregiver)`
+  → `{ latestNote, diapers, growthWeightsG }`. Logs in with the caregiver's
   credentials and POSTs, through the public API only, bottle feeds, diapers, sleeps,
   nursing sessions (spread over the last ~4 days) and two growth measurements, using
   client-generated UUID ids, canonical units (ml/cm/g) and UTC timestamps. The newest
