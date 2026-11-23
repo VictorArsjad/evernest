@@ -128,11 +128,12 @@ function LogNursingPage() {
       createTitle="Log nursing"
       editTitle="Edit nursing"
       onSubmit={onSubmit}
-      submitDisabled={!isValid}
       // Create mode replaces the Save button with Start now + Save. Edit mode
-      // keeps the shell's default Save changes.
-      actions={
-        isEditMode ? undefined : (
+      // keeps the shell's default Save changes (gated on validity).
+      {...(isEditMode
+        ? { submitDisabled: !isValid }
+        : {
+            actions: (
           <div className="grid grid-cols-2 gap-2">
             {/* "Start now" comes first because it's the lower-friction path
                 ("baby latched, fill out details later"), but Save stays the
@@ -154,8 +155,8 @@ function LogNursingPage() {
               {form.createPending ? "Saving…" : "Save"}
             </button>
           </div>
-        )
-      }
+            ),
+          })}
     >
         {editingOpenSession && (
           <p className="rounded-xl border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
