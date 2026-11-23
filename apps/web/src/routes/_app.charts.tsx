@@ -28,13 +28,9 @@ import {
   tooltipXPercent,
   type SparkBar,
 } from "../lib/charts";
-import {
-  chartEndDate,
-  entryDayKeys,
-  formatDaySummary,
-  historyWindows,
-  sleepWindowTotals,
-} from "../lib/daySummary";
+import { entryDayKeys, formatDaySummary } from "../lib/daySummary";
+import { chartEndDate, historyWindows } from "../lib/dayWindows";
+import { sleepWindowTotals } from "../lib/todayTotals";
 import { isFeatureVisible } from "../lib/featureVisibility";
 import { groupByLocalDay, type DayGroup } from "../lib/groupByDay";
 import { DEFAULT_PALETTE, resolve } from "../lib/palette";

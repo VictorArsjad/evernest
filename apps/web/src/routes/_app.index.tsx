@@ -14,14 +14,8 @@ import { RecentRow } from "../components/RecentRow";
 import { SyncStatusBadge } from "../components/SyncStatusBadge";
 import { useAuthStore } from "../lib/authStore";
 import { dailyWindowEndingToday } from "../lib/charts";
-import {
-  lastEvents,
-  lastWokeAtOf,
-  latestWeightGrams,
-  todaySleepWindow,
-  todayTotals,
-  todayWindows,
-} from "../lib/daySummary";
+import { todaySleepWindow, todayWindows } from "../lib/dayWindows";
+import { lastEvents, lastWokeAtOf, latestWeightGrams, todayTotals } from "../lib/todayTotals";
 import { isFeatureVisible } from "../lib/featureVisibility";
 import { formatElapsedHHMM } from "../lib/nursingTimer";
 import {
@@ -106,7 +100,7 @@ function TodayPage() {
 
   // Memo'd once: the windows feed query keys, and re-reading the clock on
   // every render would churn them. "Since" is the lookback for the banner's
-  // last-fed / last-diaper labels (see daySummary).
+  // last-fed / last-diaper labels (see todayTotals).
   const {
     from: todayStart,
     to: todayEnd,
