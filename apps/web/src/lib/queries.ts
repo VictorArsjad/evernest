@@ -161,7 +161,17 @@ export function useCreateBaby() {
         method: "POST",
         body: { name: vars.name, date_of_birth: vars.date_of_birth, sex: vars.sex },
       }),
-    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: qk.babies(vars.householdId) }),
+    onSuccess: async (baby, vars) => {
+      const key = qk.babies(vars.householdId);
+      // The babies GET can fire concurrently with this POST and resolve with
+      // a pre-create [] after it. Cancel it and seed the created baby so that
+      // stale response can't overwrite the cache, then reconcile in background.
+      await qc.cancelQueries({ queryKey: key });
+      qc.setQueryData<Baby[]>(key, (old) =>
+        old?.some((b) => b.id === baby.id) ? old : [...(old ?? []), baby],
+      );
+      void qc.invalidateQueries({ queryKey: key });
+    },
   });
 }
 
