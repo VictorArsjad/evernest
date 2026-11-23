@@ -93,7 +93,7 @@ func (h *Handler) daily(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := baby.MustOwnBaby(r.Context(), h.store, uid, babyID); err != nil {
-		writeBabyAuthErr(w, err)
+		baby.WriteAuthErr(w, err)
 		return
 	}
 
@@ -191,17 +191,6 @@ func parseDailyParams(q map[string][]string) (from, to time.Time, loc *time.Loca
 		return time.Time{}, time.Time{}, nil, fmt.Errorf("window must be <= %d days (got %d)", MaxWindowDays, span)
 	}
 	return fromDay, toDay, loc, nil
-}
-
-func writeBabyAuthErr(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, baby.ErrNotFound):
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "baby not found")
-	case errors.Is(err, baby.ErrUnauthorized):
-		httpx.WriteError(w, http.StatusForbidden, "forbidden", "not a member of this household")
-	default:
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
-	}
 }
 
 // --- SQL queries ---
