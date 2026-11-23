@@ -143,7 +143,6 @@ function LogSolidsPage() {
     const amountG = parseAmountG();
     if (amountG === undefined) return;
 
-    const hadAmount = existing?.amount_g != null;
     form.save({
       create: {
         occurred_at: localToISO(occurredLocal),
@@ -158,9 +157,8 @@ function LogSolidsPage() {
         foods,
         reaction: reaction ?? "",
         amount_g: amountG,
-        clear_amount_g: amountG === null && hadAmount,
         notes: notes.trim(),
-        // PATCH: new photo replaces, Remove clears (""), otherwise omitted.
+        // PATCH: new photo replaces, Remove clears (null), otherwise omitted.
         ...photo.updateFields(),
       },
     });

@@ -167,7 +167,7 @@ describe("log/sleep freeze", () => {
     expect(screen.queryByRole("button", { name: "Start now" })).toBeNull();
   });
 
-  it("edit: clearing the type sends clear_sleep_type: true and no sleep_type", async () => {
+  it("edit: clearing the type sends sleep_type: null", async () => {
     const r = await renderLogRoute("sleep", EDIT_URL, {
       seed: (qc) => qc.setQueryData(["babies", BABY_ID, "sleeps", "", ""], [ROW]),
     });
@@ -176,12 +176,11 @@ describe("log/sleep freeze", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(r.location()).toBe("/"));
-    const { sleep_type: _omitted, ...rest } = UNCHANGED_PATCH;
     expect(mutations(r.calls)).toEqual([
       {
         method: "PATCH",
         url: `/v1/sleeps/${EXISTING_ID}`,
-        body: { ...rest, clear_sleep_type: true },
+        body: { ...UNCHANGED_PATCH, sleep_type: null },
       },
     ]);
   });

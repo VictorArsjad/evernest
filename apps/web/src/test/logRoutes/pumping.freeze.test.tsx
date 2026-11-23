@@ -156,7 +156,7 @@ describe("log/pumping freeze", () => {
     expect((screen.getByLabelText("When") as HTMLInputElement).value).toBe("2026-11-22T13:45");
   });
 
-  it("edit: clearing the duration sends clear_duration_seconds: true and no duration_seconds (APPROVED CHANGE (pumping-clear))", async () => {
+  it("edit: clearing the duration sends duration_seconds: null (APPROVED CHANGE (merge-patch null))", async () => {
     const r = await renderLogRoute("pumping", EDIT_URL, {
       seed: (qc) => qc.setQueryData(["babies", BABY_ID, "pumpings", "", ""], [ROW]),
     });
@@ -172,7 +172,7 @@ describe("log/pumping freeze", () => {
         body: {
           occurred_at: "2026-11-22T06:45:00.000Z",
           amount_ml: 90,
-          clear_duration_seconds: true,
+          duration_seconds: null,
           notes: "",
         },
       },

@@ -243,6 +243,7 @@ describe("log/solids freeze", () => {
           occurred_at: "2026-11-22T06:45:00.000Z",
           foods: ["avocado"],
           reaction: "",
+          amount_g: null,
           notes: "",
         },
       },
@@ -266,7 +267,7 @@ describe("log/solids freeze", () => {
     ]);
   });
 
-  it("edit: emptying the amount sends clear_amount_g: true and no amount_g", async () => {
+  it("edit: emptying the amount sends amount_g: null", async () => {
     const r = await renderLogRoute("solids", EDIT_URL, {
       seed: (qc) => qc.setQueryData(["babies", BABY_ID, "solid-meals", "", ""], [ROW]),
     });
@@ -282,14 +283,14 @@ describe("log/solids freeze", () => {
           occurred_at: "2026-11-22T06:45:00.000Z",
           foods: ["avocado"],
           reaction: "liked",
-          clear_amount_g: true,
+          amount_g: null,
           notes: "soft",
         },
       },
     ]);
   });
 
-  it("edit: Remove on a saved photo hides the image, shows the hint, and PATCHes photo: \"\"", async () => {
+  it("edit: Remove on a saved photo hides the image, shows the hint, and PATCHes photo: null", async () => {
     // Unlike diaper/note, solids hides the saved image once Remove is clicked
     // (previewUrl is gated on !existingCleared) and shows a replace hint.
     const r = await renderLogRoute("solids", EDIT_URL, {
@@ -310,7 +311,7 @@ describe("log/solids freeze", () => {
       {
         method: "PATCH",
         url: `/v1/solid-meals/${EXISTING_ID}`,
-        body: { ...UNCHANGED_PATCH, photo: "" },
+        body: { ...UNCHANGED_PATCH, photo: null },
       },
     ]);
   });

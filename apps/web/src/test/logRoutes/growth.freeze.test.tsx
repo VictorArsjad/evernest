@@ -32,6 +32,7 @@ const UNCHANGED_PATCH = {
   measured_at: "2026-11-22T06:45:00.000Z",
   weight_g: 6500,
   height_cm: 62,
+  head_circumference_cm: null,
   notes: "",
 };
 
@@ -175,7 +176,7 @@ describe("log/growth freeze", () => {
     ]);
   });
 
-  it("edit: emptying a previously-filled field sends its clear_* flag and no value", async () => {
+  it("edit: emptying a previously-filled field sends its field as null", async () => {
     const r = await renderLogRoute("growth", EDIT_URL, {
       seed: (qc) => qc.setQueryData(["babies", BABY_ID, "growths", "", ""], [ROW]),
     });
@@ -191,14 +192,15 @@ describe("log/growth freeze", () => {
         body: {
           measured_at: "2026-11-22T06:45:00.000Z",
           height_cm: 62,
-          clear_weight_g: true,
+          weight_g: null,
+          head_circumference_cm: null,
           notes: "",
         },
       },
     ]);
   });
 
-  it("edit: a blank field that never had a value is not cleared (no clear_* flag)", async () => {
+  it("edit: a blank field that never had a value is also sent as null", async () => {
     const r = await renderLogRoute("growth", EDIT_URL, {
       seed: (qc) => qc.setQueryData(["babies", BABY_ID, "growths", "", ""], [ROW]),
     });
@@ -207,7 +209,7 @@ describe("log/growth freeze", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(r.location()).toBe("/"));
-    expect(mutations(r.calls)[0]?.body).not.toHaveProperty("clear_head_circumference_cm");
+    expect(mutations(r.calls)[0]?.body).toHaveProperty("head_circumference_cm", null);
   });
 
   it("cold edit deep link: Save changes is disabled (no measurement present)", async () => {

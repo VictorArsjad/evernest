@@ -70,7 +70,7 @@ function LogNotePage() {
       update: {
         occurred_at: localToISO(occurredLocal),
         body: trimmedBody,
-        // PATCH: new photo replaces, Remove clears (""), otherwise omitted.
+        // PATCH: new photo replaces, Remove clears (null), otherwise omitted.
         ...photo.updateFields(),
       },
     });

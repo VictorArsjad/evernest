@@ -193,7 +193,7 @@ describe("log/note freeze", () => {
       {
         method: "PATCH",
         url: `/v1/notes/${EXISTING_ID}`,
-        body: { ...UNCHANGED_PATCH, photo: "" },
+        body: { ...UNCHANGED_PATCH, photo: null },
       },
     ]);
   });

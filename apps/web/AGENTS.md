@@ -72,6 +72,8 @@ don't "unify" them without a deliberate behavior change.
 
 **Adding a kind also means a row in `lib/eventKinds.ts`** (`EVENT_KIND_ROWS` + `EventKindRows`). `Record<EventKindName, …>` maps (e.g. `RecentRow`'s `BODIES`) then fail to compile until the new kind is handled. Still hand-listed: the Today tiles (`_app.index.tsx`), charts kind lists, `PRESETS`/`SERIES_LABELS` (palette), `mergeRecent`.
 
+**PATCH is JSON Merge Patch (RFC 7396).** Key absent → keep, `null` → clear, value → set. In edit mode a blank clearable field (solids `amount_g`, pumping `duration_seconds`, growth measurements, sleep `sleep_type`, nursing `starting_breast`) sends `null`; in create mode it is omitted. Photo removal sends `photo: null`. Blank notes still send `""`. `patchBody` passes explicit `null` through and omits `undefined`. There are no `clear_*` fields anymore (the API 400s on them).
+
 **Never bypass the outbox for writes.** A new event kind adds a descriptor
 (passed to `defineEventKind` in `lib/queries.ts`) and gets the hooks for free.
 The descriptor supplies the URL segment, the create/update bodies, and the

@@ -20,6 +20,7 @@ import {
   updatedPhoto,
   updatedRowBase,
   updatePhotoBody,
+  keepOrSet,
 } from "./eventKind";
 import { kickAfterReauth } from "./outbox";
 import type { ChartPalette } from "./palette";
@@ -368,7 +369,6 @@ interface UpdateSolidMealVars extends PhotoVars {
   // undefined = leave; null / "" = clear
   reaction?: SolidMealReaction | null | "";
   amount_g?: number | null;
-  clear_amount_g?: boolean;
   notes?: string;
 }
 
@@ -405,19 +405,12 @@ const solidMeal = defineEventKind<SolidMeal, CreateSolidMealVars, UpdateSolidMea
       reaction = vars.reaction;
     }
 
-    let amount: number | null | undefined = existing?.amount_g ?? null;
-    if (vars.clear_amount_g) {
-      amount = null;
-    } else if (vars.amount_g !== undefined) {
-      amount = vars.amount_g;
-    }
-
     return {
       ...updatedRowBase(vars.id, vars.babyId, existing),
       occurred_at: vars.occurred_at ?? existing?.occurred_at ?? new Date().toISOString(),
       foods: vars.foods ?? existing?.foods ?? [],
       reaction: reaction ?? null,
-      amount_g: amount ?? null,
+      amount_g: keepOrSet(vars.amount_g, existing?.amount_g),
       notes: editedText(vars.notes, existing?.notes),
       ...updatedPhoto(vars, existing),
     };
@@ -427,8 +420,7 @@ const solidMeal = defineEventKind<SolidMeal, CreateSolidMealVars, UpdateSolidMea
     if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
     if (vars.foods !== undefined) body.foods = vars.foods;
     if (vars.reaction !== undefined) body.reaction = vars.reaction === null ? "" : vars.reaction;
-    if (vars.clear_amount_g) body.clear_amount_g = true;
-    else if (vars.amount_g !== undefined && vars.amount_g !== null) body.amount_g = vars.amount_g;
+    if (vars.amount_g !== undefined) body.amount_g = vars.amount_g;
     if (vars.notes !== undefined) body.notes = vars.notes;
     return { ...body, ...updatePhotoBody(vars) };
   },
@@ -502,9 +494,8 @@ interface UpdatePumpingVars {
   babyId: string;
   occurred_at?: string;
   amount_ml?: number;
-  duration_seconds?: number;
-  // Blank duration on a row that had one; never sent with duration_seconds.
-  clear_duration_seconds?: boolean;
+  // undefined = keep; null = clear (merge-patch)
+  duration_seconds?: number | null;
   notes?: string;
 }
 
@@ -531,15 +522,11 @@ const pumping = defineEventKind<Pumping, CreatePumpingVars, UpdatePumpingVars>({
     ...updatedRowBase(vars.id, vars.babyId, existing),
     occurred_at: vars.occurred_at ?? existing?.occurred_at ?? new Date().toISOString(),
     amount_ml: vars.amount_ml ?? existing?.amount_ml ?? 0,
-    duration_seconds: vars.clear_duration_seconds
-      ? null
-      : (vars.duration_seconds ?? existing?.duration_seconds ?? null),
+    duration_seconds: keepOrSet(vars.duration_seconds, existing?.duration_seconds),
     notes: editedText(vars.notes, existing?.notes),
   }),
   updateBody: (vars) =>
-    vars.clear_duration_seconds
-      ? { ...patchBody(vars, ["occurred_at", "amount_ml", "notes"]), clear_duration_seconds: true }
-      : patchBody(vars, ["occurred_at", "amount_ml", "duration_seconds", "notes"]),
+    patchBody(vars, ["occurred_at", "amount_ml", "duration_seconds", "notes"]),
 });
 
 export const usePumpings = pumping.useList;
@@ -572,8 +559,7 @@ interface UpdateNursingVars {
   babyId: string;
   started_at?: string;
   ended_at?: string;
-  starting_breast?: StartingBreast;
-  clear_starting_breast?: boolean;
+  starting_breast?: StartingBreast | null;
   nursing_side?: NursingSide;
   left_duration_s?: number;
   right_duration_s?: number;
@@ -635,9 +621,7 @@ const nursing = defineEventKind<Nursing, CreateNursingVars, UpdateNursingVars, E
     ...updatedRowBase(vars.id, vars.babyId, existing),
     started_at: vars.started_at ?? existing?.started_at ?? new Date().toISOString(),
     ended_at: vars.ended_at ?? existing?.ended_at ?? null,
-    starting_breast: vars.clear_starting_breast
-      ? null
-      : (vars.starting_breast ?? existing?.starting_breast ?? null),
+    starting_breast: keepOrSet(vars.starting_breast, existing?.starting_breast),
     nursing_side: vars.nursing_side ?? existing?.nursing_side ?? "both",
     left_duration_s: vars.left_duration_s ?? existing?.left_duration_s ?? 0,
     right_duration_s: vars.right_duration_s ?? existing?.right_duration_s ?? 0,
@@ -648,7 +632,6 @@ const nursing = defineEventKind<Nursing, CreateNursingVars, UpdateNursingVars, E
       "started_at",
       "ended_at",
       "starting_breast",
-      "clear_starting_breast",
       "nursing_side",
       "left_duration_s",
       "right_duration_s",
@@ -684,8 +667,7 @@ interface UpdateSleepVars {
   babyId: string;
   started_at?: string;
   ended_at?: string;
-  sleep_type?: SleepType;
-  clear_sleep_type?: boolean;
+  sleep_type?: SleepType | null;
   location?: string;
   notes?: string;
 }
@@ -733,7 +715,7 @@ const sleep = defineEventKind<Sleep, CreateSleepVars, UpdateSleepVars, EndSleepV
     ...updatedRowBase(vars.id, vars.babyId, existing),
     started_at: vars.started_at ?? existing?.started_at ?? new Date().toISOString(),
     ended_at: vars.ended_at ?? existing?.ended_at ?? null,
-    sleep_type: vars.clear_sleep_type ? null : (vars.sleep_type ?? existing?.sleep_type ?? null),
+    sleep_type: keepOrSet(vars.sleep_type, existing?.sleep_type),
     location: editedText(vars.location, existing?.location),
     notes: editedText(vars.notes, existing?.notes),
   }),
@@ -742,7 +724,6 @@ const sleep = defineEventKind<Sleep, CreateSleepVars, UpdateSleepVars, EndSleepV
       "started_at",
       "ended_at",
       "sleep_type",
-      "clear_sleep_type",
       "location",
       "notes",
     ]),
@@ -766,19 +747,14 @@ interface CreateGrowthVars {
   notes?: string;
 }
 
-// Supports explicit per-measurement clearing via the BE's clear_* flags. The
-// growth form passes the clear flag when the user empties an input that
-// previously held a value.
+// Merge-patch: a measurement of null clears it, undefined keeps it.
 interface UpdateGrowthVars {
   id: string;
   babyId: string;
   measured_at?: string;
-  weight_g?: number;
-  clear_weight_g?: boolean;
-  height_cm?: number;
-  clear_height_cm?: boolean;
-  head_circumference_cm?: number;
-  clear_head_circumference_cm?: boolean;
+  weight_g?: number | null;
+  height_cm?: number | null;
+  head_circumference_cm?: number | null;
   notes?: string;
 }
 
@@ -806,22 +782,17 @@ const growth = defineEventKind<Growth, CreateGrowthVars, UpdateGrowthVars>({
   updateRow: (vars, existing) => ({
     ...updatedRowBase(vars.id, vars.babyId, existing),
     measured_at: vars.measured_at ?? existing?.measured_at ?? new Date().toISOString(),
-    weight_g: vars.clear_weight_g ? null : (vars.weight_g ?? existing?.weight_g ?? null),
-    height_cm: vars.clear_height_cm ? null : (vars.height_cm ?? existing?.height_cm ?? null),
-    head_circumference_cm: vars.clear_head_circumference_cm
-      ? null
-      : (vars.head_circumference_cm ?? existing?.head_circumference_cm ?? null),
+    weight_g: keepOrSet(vars.weight_g, existing?.weight_g),
+    height_cm: keepOrSet(vars.height_cm, existing?.height_cm),
+    head_circumference_cm: keepOrSet(vars.head_circumference_cm, existing?.head_circumference_cm),
     notes: editedText(vars.notes, existing?.notes),
   }),
   updateBody: (vars) =>
     patchBody(vars, [
       "measured_at",
       "weight_g",
-      "clear_weight_g",
       "height_cm",
-      "clear_height_cm",
       "head_circumference_cm",
-      "clear_head_circumference_cm",
       "notes",
     ]),
 });

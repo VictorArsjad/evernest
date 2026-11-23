@@ -71,7 +71,7 @@ function LogDiaperPage() {
         occurred_at: localToISO(occurredLocal),
         type,
         notes: notes.trim(),
-        // PATCH: new photo replaces, Remove clears (""), otherwise omitted.
+        // PATCH: new photo replaces, Remove clears (null), otherwise omitted.
         ...photo.updateFields(),
       },
     });

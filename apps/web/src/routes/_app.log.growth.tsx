@@ -7,8 +7,8 @@
 // submit time so the BE always sees the canonical row regardless of
 // what the user prefers to look at. In edit mode (`?edit=<uuid>`) the
 // form patches an existing row and exposes a Delete button for accidental
-// double-logs. Clearing a field that previously held a value sends the
-// matching `clear_*` flag to the BE so the column is set to NULL.
+// double-logs. In edit mode a blank field sends `null` (merge-patch)
+// so the BE sets the column to NULL.
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 
@@ -126,18 +126,13 @@ function LogGrowthPage() {
         head_circumference_cm: headCM,
         notes: notes.trim() || undefined,
       },
-      // In edit mode: a blank input where there *was* a value means
-      // "clear this column"; a filled input means "replace". A blank
-      // input where there was nothing before is just unchanged.
+      // In edit mode a blank input sends null (clears the column); a filled
+      // input replaces it.
       update: {
         measured_at: localToISO(measuredLocal),
-        weight_g: weightG,
-        clear_weight_g: weightDisp === undefined && existing?.weight_g != null,
-        height_cm: heightCM,
-        clear_height_cm: heightDisp === undefined && existing?.height_cm != null,
-        head_circumference_cm: headCM,
-        clear_head_circumference_cm:
-          headDisp === undefined && existing?.head_circumference_cm != null,
+        weight_g: weightG ?? null,
+        height_cm: heightCM ?? null,
+        head_circumference_cm: headCM ?? null,
         notes: notes.trim(),
       },
     });

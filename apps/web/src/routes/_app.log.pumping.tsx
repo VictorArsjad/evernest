@@ -73,7 +73,6 @@ function LogPumpingPage() {
     const amount_ml = displayVolumeToMl(amountNum, prefs.unit_volume);
     const duration_seconds =
       durationMin === "" ? undefined : Math.round(durationMinNum * 60);
-    const hadDuration = existing?.duration_seconds != null;
     form.save({
       create: {
         occurred_at: localToISO(occurredLocal),
@@ -84,8 +83,7 @@ function LogPumpingPage() {
       update: {
         occurred_at: localToISO(occurredLocal),
         amount_ml,
-        duration_seconds,
-        clear_duration_seconds: duration_seconds === undefined && hadDuration,
+        duration_seconds: duration_seconds ?? null,
         notes: notes.trim(),
       },
     });

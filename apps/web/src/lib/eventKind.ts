@@ -215,10 +215,10 @@ export function updatedPhoto(
 
 export function updatePhotoBody(vars: PhotoVars): Record<string, unknown> {
   if (vars.photoBase64 === undefined) return {};
+  // "" (the internal remove signal) goes out as merge-patch `photo: null`.
+  if (vars.photoBase64 === "") return { photo: null };
   const body: Record<string, unknown> = { photo: vars.photoBase64 };
-  // photo_mime accompanies a non-empty replace. The BE ignores it for the
-  // clear case, but sending it doesn't hurt.
-  if (vars.photoBase64 !== "" && vars.photoMime) body.photo_mime = vars.photoMime;
+  if (vars.photoMime) body.photo_mime = vars.photoMime;
   return body;
 }
 
@@ -299,17 +299,21 @@ export interface EventKindDescriptor<
   open?: OpenSessionDescriptor<Row & OpenRow, EndVars>;
 }
 
+// Merge-patch row merge: undefined keeps the existing value, null clears it.
+export function keepOrSet<T>(v: T | null | undefined, existing: T | null | undefined): T | null {
+  return v === undefined ? (existing ?? null) : v;
+}
+
 // Body for a PATCH, keys emitted in the order listed. A plain key is copied
-// when it is not undefined; a `clear_*` key is a flag sent as `true` when set.
+// when it is not undefined; an explicit `null` is passed through (merge-patch
+// clear), undefined is omitted (keep).
 export function patchBody<V extends object>(
   vars: V,
   keys: ReadonlyArray<keyof V & string>,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   for (const k of keys) {
-    if (k.startsWith("clear_") ? vars[k] : vars[k] !== undefined) {
-      body[k] = k.startsWith("clear_") ? true : vars[k];
-    }
+    if (vars[k] !== undefined) body[k] = vars[k];
   }
   return body;
 }

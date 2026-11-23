@@ -207,7 +207,7 @@ describe("log/diaper freeze", () => {
       {
         method: "PATCH",
         url: `/v1/diapers/${EXISTING_ID}`,
-        body: { ...UNCHANGED_PATCH, photo: "" },
+        body: { ...UNCHANGED_PATCH, photo: null },
       },
     ]);
   });
