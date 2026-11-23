@@ -54,6 +54,21 @@ never build a separate router. `router.go` carries an import-cycle note:
   event kinds. Map its errors with `baby.WriteAuthErr` (404 `ErrNotFound`, 403
   `ErrUnauthorized`; anything else is a logged 500 with a generic message).
   Never query an event table without first proving the caller owns the baby.
+- **DELETE is not idempotent.** An unknown / already-deleted id answers 404
+  `not_found` (same envelope as PATCH); the web outbox treats that as success.
+  Auth paths (403 from `MustOwnBaby`) are unchanged.
+- **PATCH is JSON Merge Patch (RFC 7396).** Per field: key absent → keep,
+  `"f": null` → clear (SQL NULL), `"f": <value>` → set. There are no `clear_*`
+  request fields (sending one is a 400, unknown field). Convention for every
+  new nullable column: declare the PATCH field as
+  `eventstore.Optional[T]` (`json:"f"`, no omitempty), put validation rules in
+  a `check:"..."` tag (the validator can't see inside the wrapper;
+  `decodeBody` runs the tag on the value when present), and apply it with
+  `Set.Nullable(col, cast, opt)` (or `Set.Text` for free text, where `""` also
+  clears). Fields that are NOT `Optional` (timestamps, enums, NOT NULL
+  amounts) reject an explicit `null` with 422 `"<field> cannot be null"`
+  automatically. Photos use `eventstore.PhotoPatch` (`photo` null/`""` clears
+  photo + mime; null photo with a non-null mime is 422).
 - **Idempotent creates.** Inserts use the `WITH ins AS (INSERT … ON CONFLICT
   (id) DO NOTHING RETURNING …) SELECT … UNION ALL SELECT … WHERE NOT EXISTS`
   shape so a client retry (offline outbox replay) returns the existing row
@@ -64,10 +79,7 @@ never build a separate router. `router.go` carries an import-cycle note:
   `id` / `source` / `created_at` / `created_by_user_id` are preserved because
   the UPDATE never sets them. They are NOT silently ignored if sent:
   `httpx.DecodeJSON` uses `DisallowUnknownFields`, so any field the PATCH body
-  doesn't declare (including `source` and `id`) is a 400 `bad_request`. For
-  nullable text like `notes`, follow the "present-flag + NULLIF(value,'')"
-  convention (`eventstore.Set.Text`); Go's JSON decoder can't tell "absent" from
-  "explicit null" on a `*string`.
+  doesn't declare (including `source` and `id`) is a 400 `bad_request`.
 - **Request bodies are capped** at 3 MiB for every kind (413
   `payload_too_large`).
 - **Canonical units only.** DB stores `ml` / `cm` / `grams` and UTC timestamps.

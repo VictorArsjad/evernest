@@ -846,18 +846,18 @@ func TestFreezePatch_NoteBodyCannotBeCleared(t *testing.T) {
 	wantErr(t, e.patch(t, f.token, k, id, map[string]any{"body": ""}), 422, "validation_failed")
 }
 
-func TestFreezePatch_ClearFlags(t *testing.T) {
+func TestFreezePatch_NullClears(t *testing.T) {
 	e := newEnv(t)
 	f := newFixture(t, e)
 
-	t.Run("growth clear_weight_g removes weight only", func(t *testing.T) {
+	t.Run("growth null weight_g removes weight only", func(t *testing.T) {
 		k := kindByName(t, "growth")
 		id := fmt.Sprint(obj(t, e.create(t, f.token, f.baby, k, k.sample(fixedAt))))
 		_ = id
 		r := e.create(t, f.token, f.baby, k, k.sample(fixedAt))
 		mustStatus(t, r, http.StatusCreated)
 		gid := fmt.Sprint(obj(t, r)["id"])
-		pr := e.patch(t, f.token, k, gid, map[string]any{"clear_weight_g": true})
+		pr := e.patch(t, f.token, k, gid, map[string]any{"weight_g": nil})
 		mustStatus(t, pr, http.StatusOK)
 		got := obj(t, pr)
 		if _, ok := got["weight_g"]; ok {
@@ -873,40 +873,40 @@ func TestFreezePatch_ClearFlags(t *testing.T) {
 		mustStatus(t, r, http.StatusCreated)
 		gid := fmt.Sprint(obj(t, r)["id"])
 		wantErr(t, e.patch(t, f.token, k, gid, map[string]any{
-			"clear_weight_g": true, "clear_height_cm": true, "clear_head_circumference_cm": true,
+			"weight_g": nil, "height_cm": nil, "head_circumference_cm": nil,
 		}), 422, "validation_failed")
 	})
 
-	t.Run("nursing clear_starting_breast removes starting_breast", func(t *testing.T) {
+	t.Run("nursing null starting_breast removes starting_breast", func(t *testing.T) {
 		k := kindByName(t, "nursing")
 		r := e.create(t, f.token, f.baby, k, k.sample(fixedAt))
 		mustStatus(t, r, http.StatusCreated)
 		nid := fmt.Sprint(obj(t, r)["id"])
-		pr := e.patch(t, f.token, k, nid, map[string]any{"clear_starting_breast": true})
+		pr := e.patch(t, f.token, k, nid, map[string]any{"starting_breast": nil})
 		mustStatus(t, pr, http.StatusOK)
 		if _, ok := obj(t, pr)["starting_breast"]; ok {
 			t.Errorf("starting_breast should be cleared")
 		}
 	})
 
-	t.Run("sleep clear_sleep_type removes sleep_type", func(t *testing.T) {
+	t.Run("sleep null sleep_type removes sleep_type", func(t *testing.T) {
 		k := kindByName(t, "sleep")
 		r := e.create(t, f.token, f.baby, k, k.sample(fixedAt))
 		mustStatus(t, r, http.StatusCreated)
 		sid := fmt.Sprint(obj(t, r)["id"])
-		pr := e.patch(t, f.token, k, sid, map[string]any{"clear_sleep_type": true})
+		pr := e.patch(t, f.token, k, sid, map[string]any{"sleep_type": nil})
 		mustStatus(t, pr, http.StatusOK)
 		if _, ok := obj(t, pr)["sleep_type"]; ok {
 			t.Errorf("sleep_type should be cleared")
 		}
 	})
 
-	t.Run("solid clear_amount_g and reaction \"\"", func(t *testing.T) {
+	t.Run("solid null amount_g and reaction \"\"", func(t *testing.T) {
 		k := kindByName(t, "solid")
 		r := e.create(t, f.token, f.baby, k, k.sample(fixedAt))
 		mustStatus(t, r, http.StatusCreated)
 		sid := fmt.Sprint(obj(t, r)["id"])
-		pr := e.patch(t, f.token, k, sid, map[string]any{"clear_amount_g": true, "reaction": ""})
+		pr := e.patch(t, f.token, k, sid, map[string]any{"amount_g": nil, "reaction": ""})
 		mustStatus(t, pr, http.StatusOK)
 		got := obj(t, pr)
 		if _, ok := got["amount_g"]; ok {
@@ -919,7 +919,7 @@ func TestFreezePatch_ClearFlags(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. DELETE: 204, then the row is gone; repeat DELETE is still 204
+// 5. DELETE: 204, then the row is gone; repeat DELETE is 404
 // ---------------------------------------------------------------------------
 
 func TestFreezeDelete(t *testing.T) {
@@ -940,10 +940,9 @@ func TestFreezeDelete(t *testing.T) {
 				t.Errorf("deleted row still listed")
 			}
 
-			// Repeat delete: current behavior is 204, not 404.
-			mustStatus(t, e.remove(t, f.token, k, id), http.StatusNoContent)
-			// Unknown id: also 204.
-			mustStatus(t, e.remove(t, f.token, k, uuid.NewString()), http.StatusNoContent)
+			// Repeat delete and unknown id are 404 (APPROVED CHANGE: was 204).
+			wantErr(t, e.remove(t, f.token, k, id), 404, "not_found")
+			wantErr(t, e.remove(t, f.token, k, uuid.NewString()), 404, "not_found")
 			// Malformed id.
 			wantErr(t, e.remove(t, f.token, k, "not-a-uuid"), 400, "bad_id")
 			// PATCH after delete is a 404.
@@ -1006,6 +1005,31 @@ var (
 	photoJPEG = []byte("\xff\xd8\xff-freeze-jpeg-bytes")
 )
 
+// A PATCH that sets photo_mime without photo is rejected exactly like create,
+// and leaves the stored photo untouched.
+func TestPatchPhotoMimeWithoutPhoto_422(t *testing.T) {
+	e := newEnv(t)
+	f := newFixture(t, e)
+	for _, k := range allKinds() {
+		if !k.photo {
+			continue
+		}
+		t.Run(k.name, func(t *testing.T) {
+			r := e.create(t, f.token, f.baby, k, merge(k.sample(fixedAt), map[string]any{"photo": b64(photoPNG), "photo_mime": "image/png"}))
+			mustStatus(t, r, http.StatusCreated)
+			id := fmt.Sprint(obj(t, r)["id"])
+
+			wantErr(t, e.patch(t, f.token, k, id, map[string]any{"photo_mime": "image/jpeg"}), 422, "validation_failed")
+
+			pg := e.call(t, http.MethodGet, "/v1/"+k.path+"/"+id+"/photo", f.token, nil)
+			mustStatus(t, pg, http.StatusOK)
+			if !bytes.Equal(pg.body, photoPNG) || pg.hdr.Get("Content-Type") != "image/png" {
+				t.Errorf("photo must be unchanged after rejected PATCH")
+			}
+		})
+	}
+}
+
 func b64(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
 
 func TestFreezePhoto_CreateGetPatchClear(t *testing.T) {
@@ -1050,12 +1074,9 @@ func TestFreezePhoto_CreateGetPatchClear(t *testing.T) {
 				t.Errorf("replaced photo: bytes/type mismatch (ct=%q)", pg2.hdr.Get("Content-Type"))
 			}
 
-			// photo_mime alone (no photo) is silently ignored: 200, photo unchanged.
-			mo := e.patch(t, f.token, k, id, map[string]any{"photo_mime": "image/png"})
-			mustStatus(t, mo, http.StatusOK)
-			got2 := obj(t, mo)
-			expectField(t, got2, "has_photo", true)
-			expectField(t, got2, "photo_mime", "image/jpeg")
+			// photo_mime alone (no photo) is rejected like create; photo unchanged.
+			// APPROVED CHANGE (photo_mime patch): was 200 / silently ignored.
+			wantErr(t, e.patch(t, f.token, k, id, map[string]any{"photo_mime": "image/png"}), 422, "validation_failed")
 
 			// photo "" clears photo and photo_mime.
 			cl := e.patch(t, f.token, k, id, map[string]any{"photo": ""})

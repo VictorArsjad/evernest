@@ -56,7 +56,7 @@ type Spec[T any] struct {
 
 	// Photo enables the inline photo pipeline: the photo/photo_mime columns,
 	// the GET .../photo route and photo handling on create and PATCH. The
-	// create and PATCH request structs must embed PhotoIn (and non-Photo
+	// create request struct must embed PhotoIn and the PATCH one PhotoPatch (and non-Photo
 	// kinds must not); New panics otherwise.
 	Photo bool
 	// Open marks start-now/end-later kinds: the table has started_at and
@@ -90,20 +90,34 @@ func (p *Problem) write(w http.ResponseWriter) {
 	httpx.WriteError(w, p.Status, p.Code, p.Message)
 }
 
-// PhotoIn is embedded in the create/PATCH request structs of Photo kinds. The
+// PhotoIn is embedded in the create request structs of Photo kinds. The
 // image is base64 (no data: prefix) with an explicit mime type.
 type PhotoIn struct {
 	Photo     *string `json:"photo,omitempty"`
 	PhotoMime *string `json:"photo_mime,omitempty"`
 }
 
-// photoCarrier is satisfied by every request struct that embeds PhotoIn.
-type photoCarrier interface{ photoIn() *PhotoIn }
+// PhotoPatch is embedded in the PATCH request structs of Photo kinds: the
+// same fields as PhotoIn, but with merge-patch semantics (photo null or ""
+// clears the photo and its mime).
+type PhotoPatch struct {
+	Photo     Optional[string] `json:"photo"`
+	PhotoMime Optional[string] `json:"photo_mime"`
+}
 
-func (p *PhotoIn) photoIn() *PhotoIn { return p }
+// photoCarrier / patchPhotoCarrier are satisfied by every request struct that
+// embeds PhotoIn / PhotoPatch.
+type photoCarrier interface{ photoIn() *PhotoIn }
+type patchPhotoCarrier interface{ photoPatch() *PhotoPatch }
+
+func (p *PhotoIn) photoIn() *PhotoIn          { return p }
+func (p *PhotoPatch) photoPatch() *PhotoPatch { return p }
 
 func carriesPhoto(body any) bool {
-	_, ok := body.(photoCarrier)
+	if _, ok := body.(photoCarrier); ok {
+		return true
+	}
+	_, ok := body.(patchPhotoCarrier)
 	return ok
 }
 

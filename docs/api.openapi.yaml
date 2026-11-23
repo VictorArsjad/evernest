@@ -688,16 +688,20 @@ paths:
       operationId: deleteBottleFeed
       summary: Delete a bottle feed
       description: |
-        Idempotent: deletes return `204` whether or not the row existed.
+        Returns `404` if no row matches (unknown or already-deleted id).
+        Clients replaying a delete from an offline outbox should treat `404`
+        as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -805,16 +809,21 @@ paths:
       tags: [Diapers]
       operationId: deleteDiaper
       summary: Delete a diaper change
-      description: Idempotent.
+      description: |
+        Returns `404` if no row matches (unknown or already-deleted id).
+        Clients replaying a delete from an offline outbox should treat `404`
+        as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -941,9 +950,10 @@ paths:
       summary: Update a solid meal
       description: |
         Partial update. Same photo clear/replace contract as diapers.
-        Send `reaction: ""` to clear reaction; `clear_amount_g: true` to
-        clear amount. `foods` when present must contain at least one
-        non-empty item after trim.
+        Merge-patch: `reaction`, `amount_g`, `notes` and `photo` clear with
+        `null` (`reaction`, `notes` and `photo` also with `""`). `foods`
+        when present must contain at least one non-empty item after trim
+        and can't be `null`.
       requestBody:
         required: true
         content:
@@ -975,16 +985,21 @@ paths:
       tags: [Solid Meals]
       operationId: deleteSolidMeal
       summary: Delete a solid meal
-      description: Idempotent.
+      description: |
+        Returns `404` if no row matches (unknown or already-deleted id).
+        Clients replaying a delete from an offline outbox should treat `404`
+        as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1135,16 +1150,21 @@ paths:
       tags: [Pumpings]
       operationId: deletePumping
       summary: Delete a pumping session
-      description: Idempotent.
+      description: |
+        Returns `404` if no row matches (unknown or already-deleted id).
+        Clients replaying a delete from an offline outbox should treat `404`
+        as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1306,16 +1326,21 @@ paths:
       tags: [Nursing Sessions]
       operationId: deleteNursingSession
       summary: Delete a nursing session
-      description: Idempotent.
+      description: |
+        Returns `404` if no row matches (unknown or already-deleted id).
+        Clients replaying a delete from an offline outbox should treat `404`
+        as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1396,9 +1421,8 @@ paths:
       operationId: updateGrowth
       summary: Update a growth measurement
       description: |
-        Partial update. Each measurement (`weight_g`, `height_cm`,
-        `head_circumference_cm`) can be cleared via its companion
-        `clear_*` boolean. The DB's "at least one non-NULL" CHECK is
+        Partial update (merge-patch). Each measurement (`weight_g`,
+        `height_cm`, `head_circumference_cm`) clears with `null`. The DB's "at least one non-NULL" CHECK is
         mirrored in Go and surfaces as `422` if a clear would empty
         the row.
       requestBody:
@@ -1430,16 +1454,21 @@ paths:
       tags: [Growths]
       operationId: deleteGrowth
       summary: Delete a growth measurement
-      description: Idempotent.
+      description: |
+        Returns `404` if no row matches (unknown or already-deleted id).
+        Clients replaying a delete from an offline outbox should treat `404`
+        as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1562,9 +1591,9 @@ paths:
           request.
         - **Closed session** (`ended_at IS NOT NULL`): partial edit.
           All fields optional. Sending `ended_at: null` is not
-          supported (edits can't re-open a closed session). Set
-          `clear_sleep_type: true` to clear the type; send an empty
-          string for `location` or `notes` to clear them. Returns
+          supported (edits can't re-open a closed session). Send
+          `null` for `sleep_type`, `location` or `notes` to clear them
+          (`""` also clears `location` and `notes`). Returns
           `409 session_state_changed` if the row was deleted or
           re-opened mid-edit.
 
@@ -1609,16 +1638,21 @@ paths:
       tags: [Sleeps]
       operationId: deleteSleep
       summary: Delete a sleep session
-      description: Idempotent. Open rows can be deleted ("started by mistake").
+      description: |
+        Open rows can be deleted ("started by mistake"). Returns `404` if no
+        row matches (unknown or already-deleted id). Clients replaying a
+        delete from an offline outbox should treat `404` as success.
       responses:
         "204":
-          description: Deleted (or no row matched).
+          description: Deleted.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -2124,7 +2158,7 @@ components:
           maximum: 2000
           example: 120
         notes:
-          type: string
+          type: [string, "null"]
           example: "took it eagerly"
 
     Diaper:
@@ -2219,10 +2253,10 @@ components:
           enum: [wet, soiled, mixed]
           example: mixed
         notes:
-          type: string
+          type: [string, "null"]
           example: "blowout"
         photo:
-          type: string
+          type: [string, "null"]
           format: byte
           description: |
             Base64-encoded image bytes. Empty string (`""`) clears the
@@ -2231,7 +2265,11 @@ components:
         photo_mime:
           type: string
           enum: [image/jpeg, image/png, image/webp]
-          description: Required when `photo` is set to a non-empty string.
+          description: |
+            Required when `photo` is set to a non-empty string. Sending
+            `photo_mime` without `photo` is rejected with `422
+            validation_failed` (same as create); the stored photo is left
+            unchanged.
 
     SolidMeal:
       type: object
@@ -2333,10 +2371,11 @@ components:
     UpdateSolidMealRequest:
       type: object
       description: |
-        All fields optional. Omitted fields are left unchanged. Send an
-        empty string for `notes`, `reaction`, or `photo` to clear; send
-        `clear_amount_g: true` to clear amount; send fresh `photo` +
-        `photo_mime` to replace.
+        All fields optional (merge-patch). Omitted fields are left
+        unchanged. Send `null` for `notes`, `reaction`, `amount_g` or
+        `photo` to clear (`""` also clears `notes`, `reaction` and
+        `photo`); send fresh `photo` + `photo_mime` to replace.
+        `photo: null` with a non-null `photo_mime` is `422`.
       properties:
         occurred_at:
           type: string
@@ -2349,24 +2388,20 @@ components:
           minItems: 1
           example: [avocado, banana]
         reaction:
-          type: string
-          enum: [liked, neutral, refused, reaction]
-          description: Empty string clears the stored reaction.
+          type: [string, "null"]
+          enum: [liked, neutral, refused, reaction, null]
+          description: "null or empty string clears the stored reaction."
           example: liked
         amount_g:
-          type: number
+          type: [number, "null"]
           format: float
           minimum: 0
           example: 40.5
-        clear_amount_g:
-          type: boolean
-          description: When true, clears `amount_g` regardless of `amount_g`.
-          example: true
         notes:
-          type: string
+          type: [string, "null"]
           example: "first try"
         photo:
-          type: string
+          type: [string, "null"]
           format: byte
           description: |
             Base64-encoded image bytes. Empty string (`""`) clears the
@@ -2374,7 +2409,11 @@ components:
         photo_mime:
           type: string
           enum: [image/jpeg, image/png, image/webp]
-          description: Required when `photo` is set to a non-empty string.
+          description: |
+            Required when `photo` is set to a non-empty string. Sending
+            `photo_mime` without `photo` is rejected with `422
+            validation_failed` (same as create); the stored photo is left
+            unchanged.
 
     Pumping:
       type: object
@@ -2447,8 +2486,10 @@ components:
     UpdatePumpingRequest:
       type: object
       description: |
-        All fields optional. Omitted fields are left unchanged. Send an
-        empty string for `notes` to clear it.
+        All fields optional (merge-patch). Omitted fields are left
+        unchanged. Send `null` for `notes` or `duration_seconds` to clear
+        (`""` also clears `notes`). `occurred_at` and `amount_ml` can't be
+        `null`.
       properties:
         occurred_at:
           type: string
@@ -2461,12 +2502,12 @@ components:
           maximum: 2000
           example: 90
         duration_seconds:
-          type: integer
+          type: [integer, "null"]
           minimum: 0
           maximum: 21600
           example: 1200
         notes:
-          type: string
+          type: [string, "null"]
           example: "morning session"
 
     Nursing:
@@ -2594,9 +2635,8 @@ components:
       type: object
       description: |
         Body shape for editing a CLOSED nursing session via
-        `PATCH /v1/nursing-sessions/{id}`. All fields optional. Set
-        `clear_starting_breast: true` to clear that nullable column.
-        Send an empty string for `notes` to clear it.
+        `PATCH /v1/nursing-sessions/{id}`. All fields optional (merge-patch). Send `null` for
+        `starting_breast` or `notes` to clear (`""` also clears `notes`).
       properties:
         started_at:
           type: string
@@ -2608,12 +2648,9 @@ components:
           description: When provided, must be `>= started_at`.
           example: "2026-05-26T11:25:00Z"
         starting_breast:
-          type: string
-          enum: [left, right]
+          type: [string, "null"]
+          enum: [left, right, null]
           example: left
-        clear_starting_breast:
-          type: boolean
-          example: false
         nursing_side:
           type: string
           enum: [left, right, both]
@@ -2629,7 +2666,7 @@ components:
           maximum: 21600
           example: 900
         notes:
-          type: string
+          type: [string, "null"]
           example: "fell asleep on right"
 
     Sleep:
@@ -2727,9 +2764,9 @@ components:
       type: object
       description: |
         Body shape for editing a CLOSED sleep session via
-        `PATCH /v1/sleeps/{id}`. All fields optional. Set
-        `clear_sleep_type: true` to clear that nullable column. Send an
-        empty string for `location` or `notes` to clear them.
+        `PATCH /v1/sleeps/{id}`. All fields optional (merge-patch). Send `null` for
+        `sleep_type`, `location` or `notes` to clear them (`""` also
+        clears `location` and `notes`).
       properties:
         started_at:
           type: string
@@ -2741,18 +2778,15 @@ components:
           description: When provided, must be `>= started_at`.
           example: "2026-05-26T14:25:00Z"
         sleep_type:
-          type: string
-          enum: [nap, night]
+          type: [string, "null"]
+          enum: [nap, night, null]
           example: night
-        clear_sleep_type:
-          type: boolean
-          example: false
         location:
-          type: string
+          type: [string, "null"]
           maxLength: 100
           example: crib
         notes:
-          type: string
+          type: [string, "null"]
           maxLength: 500
           example: "restless"
 
@@ -2839,46 +2873,36 @@ components:
     UpdateGrowthRequest:
       type: object
       description: |
-        All fields optional. Omitted fields are left unchanged. Each
-        measurement can be explicitly cleared via its companion
-        `clear_*_g` / `clear_*_cm` boolean. The "at least one non-NULL
+        All fields optional. Omitted fields are left unchanged. Merge-patch:
+        each measurement clears with `null`. The "at least one non-NULL
         measurement" invariant is enforced after the merge: if a clear
-        would empty the row, the server returns `422`. Send an empty
-        string for `notes` to clear it.
+        would empty the row, the server returns `422`. `notes` clears
+        with `null` or `""`.
       properties:
         measured_at:
           type: string
           format: date-time
           example: "2026-05-26T07:00:00Z"
         weight_g:
-          type: number
+          type: [number, "null"]
           format: double
           exclusiveMinimum: 0
           exclusiveMaximum: 30000
           example: 5400
-        clear_weight_g:
-          type: boolean
-          example: false
         height_cm:
-          type: number
+          type: [number, "null"]
           format: double
           exclusiveMinimum: 0
           exclusiveMaximum: 200
           example: 58.5
-        clear_height_cm:
-          type: boolean
-          example: false
         head_circumference_cm:
-          type: number
+          type: [number, "null"]
           format: double
           exclusiveMinimum: 0
           exclusiveMaximum: 80
           example: 39.2
-        clear_head_circumference_cm:
-          type: boolean
-          example: false
         notes:
-          type: string
+          type: [string, "null"]
           example: "post-bath"
 
   responses:

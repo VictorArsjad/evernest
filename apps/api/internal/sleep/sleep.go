@@ -43,15 +43,14 @@ type endReq struct {
 }
 
 // editReq edits a closed session. Every field is optional; edits cannot
-// re-open a session. sleep_type has an explicit clear flag; location and notes
-// clear with "".
+// re-open a session. sleep_type, location and notes clear with null
+// (location and notes also with "").
 type editReq struct {
-	StartedAt      *time.Time `json:"started_at,omitempty"`
-	EndedAt        *time.Time `json:"ended_at,omitempty"`
-	SleepType      *string    `json:"sleep_type,omitempty" validate:"omitempty,oneof=nap night"`
-	ClearSleepType bool       `json:"clear_sleep_type,omitempty"`
-	Location       *string    `json:"location,omitempty" validate:"omitempty,max=100"`
-	Notes          *string    `json:"notes,omitempty" validate:"omitempty,max=500"`
+	StartedAt *time.Time                  `json:"started_at,omitempty"`
+	EndedAt   *time.Time                  `json:"ended_at,omitempty"`
+	SleepType eventstore.Optional[string] `json:"sleep_type" check:"oneof=nap night"`
+	Location  eventstore.Optional[string] `json:"location" check:"max=100"`
+	Notes     eventstore.Optional[string] `json:"notes" check:"max=500"`
 }
 
 var session = eventstore.SessionPatch[endReq, editReq]{
@@ -67,7 +66,7 @@ var session = eventstore.SessionPatch[endReq, editReq]{
 			Set: eventstore.NewSet(2).
 				Coalesce("started_at", req.StartedAt).
 				Coalesce("ended_at", req.EndedAt).
-				Clearable("sleep_type", "text", req.ClearSleepType, req.SleepType).
+				Nullable("sleep_type", "text", req.SleepType).
 				Text("location", req.Location).
 				Text("notes", req.Notes),
 			StartedAt: req.StartedAt,

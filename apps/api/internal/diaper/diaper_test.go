@@ -408,12 +408,9 @@ func TestCreateDiaperPhotoValidation(t *testing.T) {
 	_ = resp.Body.Close()
 }
 
-// TestPatchPhotoMimeWithoutPhoto sanity-checks the PATCH-side validation:
-// supplying just `"photo_mime"` (without a `"photo"` key) is a no-op for
-// the photo (it doesn't match either the clear or the replace branch).
-// The handler currently leaves the columns alone in that case; we lock
-// that behavior in so a future refactor doesn't silently start treating
-// a stray mime as "clear" or "broken".
+// TestPatchPhotoMimeWithoutPhoto: a PATCH with photo_mime but no photo is a
+// 422 (same as create) and leaves the stored photo alone.
+// APPROVED CHANGE (photo_mime patch): was 200 / silently ignored.
 func TestPatchPhotoMimeWithoutPhoto(t *testing.T) {
 	te := newTestEnv(t)
 	babyPath := "/v1/babies/" + te.babyID.String() + "/diapers"
@@ -435,20 +432,10 @@ func TestPatchPhotoMimeWithoutPhoto(t *testing.T) {
 		"notes":      "tweak",
 		"photo_mime": "image/png",
 	})
-	if patch.StatusCode != http.StatusOK {
-		t.Fatalf("PATCH mime-only: want 200, got %d: %s", patch.StatusCode, readBody(patch))
+	if patch.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("PATCH mime-only: want 422, got %d: %s", patch.StatusCode, readBody(patch))
 	}
-	var after diaperResp
-	decodeJSON(t, patch, &after)
-	if !after.HasPhoto {
-		t.Fatal("PATCH mime-only: should not have cleared the photo")
-	}
-	// The mime stays whatever was originally stored (image/jpeg) because
-	// the "replace" branch only fires when `photo` is also present and
-	// non-empty.
-	if after.PhotoMime == nil || *after.PhotoMime != "image/jpeg" {
-		t.Fatalf("PATCH mime-only: photo_mime = %v, want unchanged image/jpeg", after.PhotoMime)
-	}
+	_ = patch.Body.Close()
 }
 
 // --- helpers ---

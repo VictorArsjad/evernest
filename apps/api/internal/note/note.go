@@ -38,7 +38,7 @@ type createReq struct {
 type updateReq struct {
 	OccurredAt *time.Time `json:"occurred_at,omitempty"`
 	Body       *string    `json:"body,omitempty"`
-	eventstore.PhotoIn
+	eventstore.PhotoPatch
 }
 
 var spec = eventstore.Spec[Note]{

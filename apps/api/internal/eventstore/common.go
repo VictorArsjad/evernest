@@ -1,7 +1,9 @@
 package eventstore
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -43,8 +45,8 @@ func (h *Handler[T]) babyScope(w http.ResponseWriter, r *http.Request) (babyID u
 
 // itemScope parses {id}, looks the row up and proves the caller owns its
 // baby. extraCols are loaded alongside baby_id into dest. A missing row
-// answers 404, or 204 when idempotentMissing is set (DELETE).
-func (h *Handler[T]) itemScope(w http.ResponseWriter, r *http.Request, idempotentMissing bool, extraCols string, dest ...any) (id uuid.UUID, ok bool) {
+// answers 404.
+func (h *Handler[T]) itemScope(w http.ResponseWriter, r *http.Request, extraCols string, dest ...any) (id uuid.UUID, ok bool) {
 	uid := auth.UserIDFrom(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -60,11 +62,7 @@ func (h *Handler[T]) itemScope(w http.ResponseWriter, r *http.Request, idempoten
 		`SELECT `+cols+` FROM `+h.spec.Table+` WHERE id = $1`, id).
 		Scan(append([]any{&babyID}, dest...)...)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if idempotentMissing {
-			w.WriteHeader(http.StatusNoContent)
-		} else {
-			httpx.WriteError(w, http.StatusNotFound, "not_found", h.spec.Noun+" not found")
-		}
+		httpx.WriteError(w, http.StatusNotFound, "not_found", h.spec.Noun+" not found")
 		return id, false
 	}
 	if err != nil {
@@ -79,12 +77,18 @@ func (h *Handler[T]) itemScope(w http.ResponseWriter, r *http.Request, idempoten
 	return id, true
 }
 
-// decodeBody decodes + struct-validates the request body into dst.
-func (h *Handler[T]) decodeBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+// decodeBody decodes + struct-validates the request body into dst. With
+// patch set, an explicit null on a field that isn't Optional is a 422.
+func (h *Handler[T]) decodeBody(w http.ResponseWriter, r *http.Request, dst any, patch bool) bool {
 	// Cap the body BEFORE parsing so a hostile client can't OOM the API by
 	// streaming a multi-GB body.
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	if err := httpx.DecodeJSON(r, dst); err != nil {
+	raw, err := io.ReadAll(r.Body)
+	if err == nil {
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		err = httpx.DecodeJSON(r, dst)
+	}
+	if err != nil {
 		if isBodyTooLarge(err) {
 			httpx.WriteError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "request body exceeds limit")
 			return false
@@ -92,7 +96,17 @@ func (h *Handler[T]) decodeBody(w http.ResponseWriter, r *http.Request, dst any)
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return false
 	}
-	if err := validate.Struct(dst); err != nil {
+	if patch {
+		if name, bad := rejectNulls(raw, dst); bad {
+			httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", name+" cannot be null")
+			return false
+		}
+	}
+	err = validate.Struct(dst)
+	if err == nil {
+		err = validateOptionals(validate, dst)
+	}
+	if err != nil {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
 		return false
 	}

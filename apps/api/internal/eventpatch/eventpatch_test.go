@@ -368,9 +368,9 @@ func TestPatchGrowth(t *testing.T) {
 
 	// Clearing all three measurements -> 422 (DB CHECK mirror)
 	emptyAll := te.do(t, "PATCH", "/v1/growths/"+g.ID.String(), te.token, map[string]any{
-		"clear_weight_g":              true,
-		"clear_height_cm":             true,
-		"clear_head_circumference_cm": true,
+		"weight_g":              nil,
+		"height_cm":             nil,
+		"head_circumference_cm": nil,
 	})
 	if emptyAll.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("clear all: want 422, got %d: %s", emptyAll.StatusCode, readBody(emptyAll))
@@ -378,7 +378,7 @@ func TestPatchGrowth(t *testing.T) {
 	_ = emptyAll.Body.Close()
 
 	// Clear weight only — height is still set, so allowed.
-	clearW := te.do(t, "PATCH", "/v1/growths/"+g.ID.String(), te.token, map[string]any{"clear_weight_g": true})
+	clearW := te.do(t, "PATCH", "/v1/growths/"+g.ID.String(), te.token, map[string]any{"weight_g": nil})
 	if clearW.StatusCode != http.StatusOK {
 		t.Fatalf("clear weight only: want 200, got %d: %s", clearW.StatusCode, readBody(clearW))
 	}

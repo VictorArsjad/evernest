@@ -21,7 +21,7 @@ func (h *Handler[T]) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c := h.spec.NewCreate()
-	if !h.decodeBody(w, r, c.Body) {
+	if !h.decodeBody(w, r, c.Body, false) {
 		return
 	}
 	ins, prob := c.Build()
@@ -180,12 +180,12 @@ func (h *Handler[T]) getOpen(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler[T]) patch(w http.ResponseWriter, r *http.Request) {
 	p := h.spec.NewPatch()
-	id, ok := h.itemScope(w, r, false, p.State, p.Dest...)
+	id, ok := h.itemScope(w, r, p.State, p.Dest...)
 	if !ok {
 		return
 	}
 	body := p.Body()
-	if !h.decodeBody(w, r, body) {
+	if !h.decodeBody(w, r, body, true) {
 		return
 	}
 	u, prob := p.Build()
@@ -197,22 +197,35 @@ func (h *Handler[T]) patch(w http.ResponseWriter, r *http.Request) {
 	args := append([]any{id}, u.Args...)
 	set := u.Set
 	if h.spec.Photo {
-		in := body.(photoCarrier).photoIn()
-		// Photo PATCH semantics:
+		in := body.(patchPhotoCarrier).photoPatch()
+		// Photo PATCH (merge-patch) semantics:
 		//   - omitted              → leave columns alone
-		//   - "" (empty string)    → clear photo + photo_mime
+		//   - null or ""           → clear photo + photo_mime
 		//   - non-empty + mime     → replace
 		//   - non-empty + no mime  → 422 (validation_failed)
+		//   - mime without photo   → 422 (same as create); so is null photo
+		//     with a non-null mime
 		var (
 			clear bool
 			photo decodedPhoto
 		)
-		if in.Photo != nil {
-			if *in.Photo == "" {
+		mime := in.PhotoMime.Ptr(nil)
+		if !in.Photo.Set && mime != nil {
+			_, pp := decodePhoto(nil, mime)
+			pp.write(w)
+			return
+		}
+		if in.Photo.Set {
+			switch {
+			case in.Photo.Null && mime != nil:
+				_, pp := decodePhoto(nil, mime)
+				pp.write(w)
+				return
+			case in.Photo.Null || in.Photo.Value == "":
 				clear = true
-			} else {
+			default:
 				var pp *Problem
-				photo, pp = decodePhoto(in.Photo, in.PhotoMime)
+				photo, pp = decodePhoto(&in.Photo.Value, mime)
 				if pp != nil {
 					pp.write(w)
 					return
@@ -248,7 +261,7 @@ func (h *Handler[T]) patch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler[T]) delete(w http.ResponseWriter, r *http.Request) {
-	id, ok := h.itemScope(w, r, true, "")
+	id, ok := h.itemScope(w, r, "")
 	if !ok {
 		return
 	}

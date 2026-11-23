@@ -362,7 +362,7 @@ func TestCreateSleepValidation(t *testing.T) {
 }
 
 // TestEditClosedSleep covers partial-edit semantics: untouched fields are
-// preserved, empty string clears location/notes, clear_sleep_type clears the
+// preserved, empty string clears location/notes, null clears the
 // enum, and invalid enum values 422.
 func TestEditClosedSleep(t *testing.T) {
 	te := newTestEnv(t)
@@ -405,11 +405,11 @@ func TestEditClosedSleep(t *testing.T) {
 		t.Fatalf("PATCH location: started_at = %v, want %v (untouched)", updated.StartedAt, started)
 	}
 
-	// Empty string clears notes and location; clear_sleep_type clears the enum.
+	// Empty string clears notes and location; null clears the enum.
 	patch = te.do(t, "PATCH", "/v1/sleeps/"+id.String(), te.token, map[string]any{
-		"notes":            "",
-		"location":         "",
-		"clear_sleep_type": true,
+		"notes":      "",
+		"location":   "",
+		"sleep_type": nil,
 	})
 	if patch.StatusCode != http.StatusOK {
 		t.Fatalf("PATCH clears: want 200, got %d: %s", patch.StatusCode, readBody(patch))
@@ -560,10 +560,10 @@ func TestDeleteSleep(t *testing.T) {
 	}
 	_ = openResp.Body.Close()
 
-	// Unknown id deletes are 204 (idempotent).
+	// Unknown id deletes are 404 (APPROVED CHANGE: was 204).
 	del = te.do(t, "DELETE", "/v1/sleeps/"+uuid.NewString(), te.token, nil)
-	if del.StatusCode != http.StatusNoContent {
-		t.Fatalf("delete unknown: want 204, got %d: %s", del.StatusCode, readBody(del))
+	if del.StatusCode != http.StatusNotFound {
+		t.Fatalf("delete unknown: want 404, got %d: %s", del.StatusCode, readBody(del))
 	}
 	_ = del.Body.Close()
 }
