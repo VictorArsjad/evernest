@@ -17,10 +17,8 @@ export interface CaregiverOptions {
 }
 
 /**
- * Creates a unique caregiver with a household and one baby via the public API.
- * Calls go through `request`; when that is a browser context's request client
- * (`context.request`), the refresh cookie from /v1/auth/register lands in that
- * context's cookie jar, so the app's boot refresh logs the page in.
+ * Pass `context.request` and the register response's refresh cookie lands in
+ * the page's cookie jar, so the app's boot refresh logs the page in.
  */
 export async function createCaregiver(
   request: APIRequestContext,

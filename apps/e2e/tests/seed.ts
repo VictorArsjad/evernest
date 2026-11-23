@@ -8,30 +8,27 @@ const DAY = 24 * HOUR;
 export interface SeededEvents {
   /** Note on the most recent event; it is in the newest History day group. */
   latestNote: string;
-  /** Canonical units, as sent to the API. */
-  bottleMl: number;
   diapers: number;
   growthWeightsG: number[];
 }
 
 /**
- * Seeds a spread of entries (bottle, diaper, sleep, nursing, growth) over the
- * last few days through the public API. `request` should be the same request
- * context used for `createCaregiver`. Logs in with the caregiver's credentials
- * to get a bearer token. Ids are client-generated UUIDs; units are canonical
- * (ml, cm, g); timestamps are UTC ISO strings relative to `now`.
+ * Seeds bottle, diaper, sleep, nursing and growth entries over the last few
+ * days via the public API. All offsets stay under 12h within a day so, with the
+ * suite's noon-local timezone, each lands on a distinct local day regardless of
+ * the wall clock.
  */
 export async function seedEvents(
   request: APIRequestContext,
   cg: Caregiver,
-  now: Date = new Date(),
 ): Promise<SeededEvents> {
   const login = await request.post("/v1/auth/login", {
     data: { email: cg.email, password: cg.password },
   });
   expect(login.status(), "login").toBe(200);
   const headers = { Authorization: `Bearer ${(await login.json()).access_token}` };
-  const at = (msAgo: number) => new Date(now.getTime() - msAgo).toISOString();
+  const now = Date.now();
+  const at = (msAgo: number) => new Date(now - msAgo).toISOString();
   const post = async (path: string, data: object) => {
     const res = await request.post(`/v1/babies/${cg.babyId}/${path}`, {
       headers,
@@ -71,8 +68,8 @@ export async function seedEvents(
 
   for (let i = 1; i <= 3; i++) {
     await post("nursing-sessions", {
-      started_at: at(i * DAY + 12 * HOUR),
-      ended_at: at(i * DAY + 12 * HOUR - 20 * 60_000),
+      started_at: at(i * DAY + 11 * HOUR),
+      ended_at: at(i * DAY + 11 * HOUR - 20 * 60_000),
       nursing_side: "both",
       left_duration_s: 600,
       right_duration_s: 600,
@@ -90,7 +87,6 @@ export async function seedEvents(
 
   return {
     latestNote,
-    bottleMl: bottles.reduce((n, b) => n + b.ml, 0),
     diapers: diaperTypes.length,
     growthWeightsG: growths.map((g) => g.weight_g),
   };

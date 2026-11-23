@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { expect, test } from "./fixtures";
+import { expectSynced, logBottle } from "./helpers";
 
 // Journey 3: two caregivers share a household. A creates an invite link in
 // Settings; B, in an independent browser context, registers via the link,
@@ -34,15 +35,10 @@ test("two caregivers share a household via an invite link", async ({
 
     await expect(pageB.getByRole("heading", { name: caregiver.babyName })).toBeVisible();
 
-    await pageB.getByRole("link", { name: /Bottle/ }).click();
-    await expect(pageB.getByRole("heading", { name: "Log bottle feed" })).toBeVisible();
-    await pageB.getByPlaceholder("60").fill("90");
-    await pageB.getByRole("button", { name: /Formula/ }).click();
-    await pageB.getByLabel("Notes (optional)").fill(note);
-    await pageB.getByRole("button", { name: "Save", exact: true }).click();
+    await logBottle(pageB, { ml: 90, note });
     await expect(pageB.getByRole("listitem").filter({ hasText: note })).toBeVisible();
     // Entries are written through the offline outbox; wait until B's has synced.
-    await expect(pageB.getByRole("button", { name: /pending sync/ })).toBeHidden();
+    await expectSynced(pageB);
 
     // Today polls while visible; no reload needed.
     await page.goto("/");

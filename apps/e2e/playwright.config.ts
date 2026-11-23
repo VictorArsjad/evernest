@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { noonTimezone } from "./tests/helpers";
 
 // Keep in sync with scripts/env.sh.
 const port = process.env.E2E_PORT ?? "8090";
@@ -16,6 +17,7 @@ export default defineConfig({
     : [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: origin,
+    timezoneId: noonTimezone(),
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "off",

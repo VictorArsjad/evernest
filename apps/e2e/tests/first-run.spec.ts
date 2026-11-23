@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test } from "@playwright/test";
 
+import { expectToday, logBottle } from "./helpers";
+
 // Journey 1: a brand-new caregiver registers, completes onboarding, logs a
 // bottle feed and sees it on Today. UI only, no API setup.
 test("first run: register, onboard, log a bottle feed, see it on Today", async ({ page }) => {
@@ -21,17 +23,12 @@ test("first run: register, onboard, log a bottle feed, see it on Today", async (
   await page.getByLabel("Baby name").fill(babyName);
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await expect(page.getByRole("heading", { name: babyName })).toBeVisible();
+  await expectToday(page, babyName);
   await expect(page.getByText("Nothing logged today yet.")).toBeVisible();
 
-  await page.getByRole("link", { name: /Bottle/ }).click();
-  await expect(page.getByRole("heading", { name: "Log bottle feed" })).toBeVisible();
-  await page.getByPlaceholder("60").fill("120");
-  await page.getByRole("button", { name: /Formula/ }).click();
-  await page.getByLabel("Notes (optional)").fill(note);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await logBottle(page, { note });
 
-  await expect(page.getByRole("heading", { name: babyName })).toBeVisible();
+  await expectToday(page, babyName);
   const row = page.getByRole("listitem").filter({ hasText: note });
   await expect(row).toBeVisible();
   await expect(row).toContainText("formula");
