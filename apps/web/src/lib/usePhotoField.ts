@@ -28,19 +28,9 @@ export interface PhotoFieldOptions {
   existingHasPhoto: boolean | undefined;
   // The kind's `use<Kind>PhotoUrl` hook.
   usePhotoUrl: (id: string | null, hasPhoto: boolean | undefined) => string | null;
-  // diaper/note reject HEIC/HEIF up front with an actionable message; solids
-  // has never pre-checked and surfaces the raw decoder error instead.
-  heicPrecheck: boolean;
   // diaper/note clear the input value on pick so re-picking the same file
   // fires change again; solids never did.
   resetInputOnPick: boolean;
-  // What happens to the on-screen saved photo after Remove in edit mode:
-  //   "keep" (diaper/note) — the already-fetched saved image stays on screen
-  //          (with its Remove button) even though the photo is marked cleared
-  //   "hide" (solids) — the saved image disappears and only the "Saved photo
-  //          will be removed" hint shows; the fetch also pauses while a new
-  //          photo is pending
-  removedPreview: "keep" | "hide";
 }
 
 const HEIC_MESSAGE =
@@ -56,20 +46,19 @@ export function usePhotoField(o: PhotoFieldOptions) {
   // In edit mode, fetch the BE-stored photo lazily so the form shows what's
   // currently saved. The hook is a no-op when has_photo is false or the row
   // isn't loaded yet.
-  const hide = o.removedPreview === "hide";
   const existingPhotoUrl = o.usePhotoUrl(
     o.isEditMode ? o.rowId : null,
-    o.isEditMode && !!o.existingHasPhoto && !existingCleared && (!hide || !pendingPhoto),
+    o.isEditMode && !!o.existingHasPhoto && !existingCleared && !pendingPhoto,
   );
 
-  const previewUrl = hide
-    ? (pendingPhoto?.previewUrl ?? (existingPhotoUrl && !existingCleared ? existingPhotoUrl : null))
-    : (pendingPhoto?.previewUrl ?? existingPhotoUrl ?? null);
+  // The `&& !existingCleared` guard is load-bearing: a disabled query keeps its
+  // cached data, so without it a removed photo stays on screen (diaper/note bug).
+  // After Remove (or while a replacement is pending) the saved image is hidden.
+  const previewUrl =
+    pendingPhoto?.previewUrl ?? (existingPhotoUrl && !existingCleared ? existingPhotoUrl : null);
   // Show the BE thumb only when the user hasn't already replaced or cleared it
   // — keeps the UX honest about what will actually be saved.
-  const showExistingBadge = hide
-    ? !!existingPhotoUrl && !pendingPhoto && !existingCleared
-    : o.isEditMode && !!o.existingHasPhoto && !pendingPhoto && !existingCleared;
+  const showExistingBadge = !!existingPhotoUrl && !pendingPhoto && !existingCleared;
 
   // Revoke the locally-created blob URL when the user replaces it or navigates
   // away. The BE-fetched URL is managed by the photo-url hook itself.
@@ -92,7 +81,7 @@ export function usePhotoField(o: PhotoFieldOptions) {
     // Browsers other than Safari can't decode HEIC via createImageBitmap, and
     // the compressor's generic DOMException would surface as an opaque "could
     // not process photo". Detection is MIME first, extension second.
-    if (o.heicPrecheck && isHeicFile(file)) {
+    if (isHeicFile(file)) {
       console.warn(`[${o.label}-photo] rejecting HEIC input`, {
         name: file.name,
         type: file.type,

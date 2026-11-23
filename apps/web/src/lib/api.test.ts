@@ -14,7 +14,10 @@ import { useAuthStore } from "./authStore";
 import {
   _resetForTests,
   _resetTestConfig,
+  enqueueMutation,
+  getDead,
   peekQueue,
+  sync,
 } from "./outbox";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -136,6 +139,67 @@ describe("apiQueued — 4xx surfaces, does NOT enqueue", () => {
     ).rejects.toMatchObject({ status: 422 });
     expect(synth).not.toHaveBeenCalled();
     expect(await peekQueue()).toHaveLength(0);
+  });
+});
+
+// APPROVED CHANGE (delete-404): the API returns 404 for DELETE of an unknown
+// or already-deleted id. That is the outcome the user wanted, so it is success.
+describe("DELETE 404 is success (APPROVED CHANGE (delete-404))", () => {
+  const notFound = () =>
+    new Response(JSON.stringify({ error: { code: "not_found", message: "not found" } }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+
+  it("direct delete: apiQueued resolves with the synthetic result, nothing queued", async () => {
+    globalThis.fetch = vi.fn(async () => notFound()) as typeof fetch;
+    const synth = vi.fn(() => "done");
+    await expect(
+      apiQueued("/bottle-feeds/x1", {
+        method: "DELETE",
+        idempotencyKey: "del-x1",
+        synthesize: synth,
+      }),
+    ).resolves.toBe("done");
+    expect(await peekQueue()).toHaveLength(0);
+  });
+
+  it("direct non-DELETE 404 still throws", async () => {
+    globalThis.fetch = vi.fn(async () => notFound()) as typeof fetch;
+    await expect(
+      apiQueued("/bottle-feeds/x1", {
+        method: "PATCH",
+        body: {},
+        idempotencyKey: "p-x1",
+        synthesize: () => null,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("outbox replay: a DELETE answered 404 is dropped, not dead-lettered", async () => {
+    globalThis.fetch = vi.fn(async () => notFound()) as typeof fetch;
+    await enqueueMutation({
+      method: "DELETE",
+      path: "/bottle-feeds/x1",
+      idempotencyKey: "del-x1",
+      entityId: "x1",
+    });
+    await sync();
+    expect(await peekQueue()).toHaveLength(0);
+    expect(await getDead()).toHaveLength(0);
+  });
+
+  it("outbox replay: a non-DELETE 404 is still dead-lettered", async () => {
+    globalThis.fetch = vi.fn(async () => notFound()) as typeof fetch;
+    await enqueueMutation({
+      method: "PATCH",
+      path: "/bottle-feeds/x1",
+      body: {},
+      idempotencyKey: "p-x1",
+      entityId: "x1",
+    });
+    await sync();
+    expect(await getDead()).toHaveLength(1);
   });
 });
 

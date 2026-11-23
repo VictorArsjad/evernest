@@ -328,13 +328,12 @@ describe("RecentRow date line (freeze)", () => {
 });
 
 describe("RecentRow open sessions (freeze)", () => {
-  it("open nursing: no edit link, still shows 'Nursed N min' and side, no in-progress marker", () => {
+  it("open nursing: no edit link, 'Nursed N min' and side, then the in-progress marker like sleep", () => {
     const html = render(
       nursingEv({ ended_at: null, left_duration_s: 120, right_duration_s: 0, nursing_side: "left" }),
     );
     expect(editLinkOf(html)).toBeNull();
-    expect(textOf(html)).toBe("👶 08:00 Nursed 2 min · left");
-    expect(html).not.toContain("in progress");
+    expect(textOf(html)).toBe("👶 08:00 Nursed 2 min · left · in progress");
   });
 
   it("open sleep: no edit link and 'Sleeping · in progress'", () => {
@@ -352,6 +351,15 @@ describe("RecentRow open sessions (freeze)", () => {
   it("open sessions render an unlinked body div", () => {
     const html = render(sleepEv({ ended_at: null }));
     expect(html).toContain('<div class="min-w-0 flex-1">');
+  });
+});
+
+// APPROVED CHANGE (foods-guard): legacy rows may lack `foods`.
+describe("RecentRow solids without foods", () => {
+  it("does not crash and renders an empty foods list", () => {
+    const ev = solidsEv();
+    delete (ev.data as Partial<SolidMeal>).foods;
+    expect(textOf(render(ev))).toBe("🥣 08:00 · liked · 0.03 kg");
   });
 });
 

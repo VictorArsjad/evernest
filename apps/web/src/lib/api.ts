@@ -380,6 +380,10 @@ export async function apiQueued<T>(path: string, opts: QueuedOpts<T>): Promise<T
   try {
     return await api<T>(path, opts);
   } catch (err) {
+    // The row is already gone, which is what a delete wants.
+    if (err instanceof ApiError && isAlreadyGone(opts.method, err.status)) {
+      return opts.synthesize();
+    }
     if (!shouldEnqueue(err)) throw err;
     await enqueueMutation({
       method: opts.method as "POST" | "PUT" | "PATCH" | "DELETE",
@@ -390,6 +394,11 @@ export async function apiQueued<T>(path: string, opts: QueuedOpts<T>): Promise<T
     });
     return opts.synthesize();
   }
+}
+
+// A DELETE that 404s found the row already gone, which is what it wanted.
+function isAlreadyGone(method: string | undefined, status: number): boolean {
+  return method === "DELETE" && status === 404;
 }
 
 function shouldEnqueue(err: unknown): boolean {
@@ -443,6 +452,10 @@ async function outboxDispatch(record: {
       };
     }
     if (err instanceof ApiError) {
+      // A replayed DELETE that already succeeded finds nothing: treat as done.
+      if (isAlreadyGone(record.method, err.status)) {
+        return { kind: "ok", status: 404, data: null };
+      }
       if (err.status === 401) {
         return { kind: "auth_error", status: 401, message: err.message };
       }

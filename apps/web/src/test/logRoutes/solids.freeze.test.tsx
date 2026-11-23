@@ -18,6 +18,7 @@ import {
 import {
   commonLifecycle,
   DEFAULT_PHOTO_BYTES,
+  HEIC_MESSAGE,
   heicFile,
   jpegFile,
   pickFile,
@@ -177,27 +178,22 @@ describe("log/solids freeze", () => {
     ]);
   });
 
-  it("create: a HEIC pick has NO pre-check; the raw decoder error text is shown (current behavior)", async () => {
-    // Surprise: unlike diaper/note, solids does not sniff HEIC before
-    // compressing. The browser's decode error message reaches the user as-is.
+  it("create: a HEIC pick is rejected up front with the friendly message and nothing is staged (APPROVED CHANGE solids-heic)", async () => {
     await renderLogRoute("solids", CREATE_URL);
     pickFile(heicFile());
-    await waitFor(() =>
-      expect(screen.getByText("The source image could not be decoded.")).toBeTruthy(),
-    );
-    expect(screen.queryByText(/HEIC photos aren't supported/)).toBeNull();
+    await waitFor(() => expect(screen.getByText(HEIC_MESSAGE)).toBeTruthy());
+    expect(screen.queryByText("The source image could not be decoded.")).toBeNull();
+    expect(screen.queryByAltText("Selected solids photo")).toBeNull();
   });
 
-  it("create: Enter in the food field submits with the pre-Enter foods (stale closure, current behavior)", async () => {
-    // Surprise: the food input's Enter both adds a chip and bubbles to the
-    // form's submitOnEnter, which requests a submit in the same event. The
-    // submit reads the foods before the chip lands, so the first Enter
-    // submits an empty list and shows "Add at least one food".
+  it("create: Enter in the food field only adds a chip; it does not submit (APPROVED CHANGE solids-enter)", async () => {
     const r = await renderLogRoute("solids", CREATE_URL);
     fireEvent.change(foodInput(), { target: { value: "avocado" } });
     fireEvent.keyDown(foodInput(), { key: "Enter" });
-    await waitFor(() => expect(screen.getByText("Add at least one food")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Remove avocado" })).toBeTruthy();
+    expect(screen.queryByText("Add at least one food")).toBeNull();
     expect(mutations(r.calls)).toEqual([]);
+    expect(r.location()).not.toBe("/");
   });
 
   it("create: Backspace in an empty food field removes the last chip", async () => {
@@ -247,6 +243,7 @@ describe("log/solids freeze", () => {
           occurred_at: "2026-11-22T06:45:00.000Z",
           foods: ["avocado"],
           reaction: "",
+          amount_g: null,
           notes: "",
         },
       },
@@ -270,7 +267,7 @@ describe("log/solids freeze", () => {
     ]);
   });
 
-  it("edit: emptying the amount sends clear_amount_g: true and no amount_g", async () => {
+  it("edit: emptying the amount sends amount_g: null", async () => {
     const r = await renderLogRoute("solids", EDIT_URL, {
       seed: (qc) => qc.setQueryData(["babies", BABY_ID, "solid-meals", "", ""], [ROW]),
     });
@@ -286,14 +283,14 @@ describe("log/solids freeze", () => {
           occurred_at: "2026-11-22T06:45:00.000Z",
           foods: ["avocado"],
           reaction: "liked",
-          clear_amount_g: true,
+          amount_g: null,
           notes: "soft",
         },
       },
     ]);
   });
 
-  it("edit: Remove on a saved photo hides the image, shows the hint, and PATCHes photo: \"\"", async () => {
+  it("edit: Remove on a saved photo hides the image, shows the hint, and PATCHes photo: null", async () => {
     // Unlike diaper/note, solids hides the saved image once Remove is clicked
     // (previewUrl is gated on !existingCleared) and shows a replace hint.
     const r = await renderLogRoute("solids", EDIT_URL, {
@@ -314,7 +311,7 @@ describe("log/solids freeze", () => {
       {
         method: "PATCH",
         url: `/v1/solid-meals/${EXISTING_ID}`,
-        body: { ...UNCHANGED_PATCH, photo: "" },
+        body: { ...UNCHANGED_PATCH, photo: null },
       },
     ]);
   });

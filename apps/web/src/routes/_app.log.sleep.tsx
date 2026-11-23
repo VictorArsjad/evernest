@@ -85,7 +85,7 @@ function LogSleepPage() {
       update: {
         started_at: startedISO,
         ended_at: endedISO,
-        ...(sleepType ? { sleep_type: sleepType } : { clear_sleep_type: true }),
+        sleep_type: sleepType ?? null,
         location: location.trim(),
         notes: notes.trim(),
       },

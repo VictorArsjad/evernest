@@ -48,9 +48,7 @@ function LogNotePage() {
     isEditMode,
     existingHasPhoto: existing?.has_photo,
     usePhotoUrl: useNotePhotoUrl,
-    heicPrecheck: true,
     resetInputOnPick: true,
-    removedPreview: "keep",
   });
 
   usePrefillOnce(isEditMode, existing, (row) => {
@@ -72,7 +70,7 @@ function LogNotePage() {
       update: {
         occurred_at: localToISO(occurredLocal),
         body: trimmedBody,
-        // PATCH: new photo replaces, Remove clears (""), otherwise omitted.
+        // PATCH: new photo replaces, Remove clears (null), otherwise omitted.
         ...photo.updateFields(),
       },
     });

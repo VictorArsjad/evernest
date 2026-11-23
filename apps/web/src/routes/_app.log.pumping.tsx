@@ -83,7 +83,7 @@ function LogPumpingPage() {
       update: {
         occurred_at: localToISO(occurredLocal),
         amount_ml,
-        duration_seconds,
+        duration_seconds: duration_seconds ?? null,
         notes: notes.trim(),
       },
     });

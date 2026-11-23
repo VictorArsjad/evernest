@@ -12,7 +12,7 @@
     "preview": "vite preview --port 5173",
     "lint": "eslint .",
     "pretypecheck": "npm run routes",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -b",
     "test": "vitest run",
     "icons": "node scripts/generate-icons.mjs"
   },

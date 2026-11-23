@@ -154,9 +154,8 @@ describe("log/nursing freeze", () => {
     ]);
   });
 
-  it("create: Start now ignores the 'When started' field and uses the wall clock (current behavior)", async () => {
-    // Surprise: Start now is always stamped with new Date(), not the picked
-    // start time. Here the picked time is 16:20 local, but the body is NOW_ISO.
+  it("create: Start now uses the picked 'When started' time (APPROVED CHANGE (nursing-start))", async () => {
+    // Mirrors the sleep fix (6055fe8): the picked 16:20 local time is sent.
     const r = await renderLogRoute("nursing", CREATE_URL);
     fireEvent.change(screen.getByLabelText("When started"), {
       target: { value: "2026-11-22T16:20" },
@@ -165,7 +164,7 @@ describe("log/nursing freeze", () => {
 
     await waitFor(() => expect(r.location()).toBe("/"));
     expect(mutations(r.calls)[0]?.body).toMatchObject({
-      started_at: "2026-11-22T10:00:00.000Z",
+      started_at: new Date("2026-11-22T16:20").toISOString(),
     });
   });
 

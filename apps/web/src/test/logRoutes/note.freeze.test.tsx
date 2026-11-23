@@ -176,15 +176,16 @@ describe("log/note freeze", () => {
     ).toBe(true);
   });
 
-  it("edit: a saved photo is removed with photo: \"\" in PATCH; the image stays visible (current behavior)", async () => {
+  it("edit: a saved photo is removed with photo: \"\" in PATCH; the image hides and the removal hint shows (APPROVED CHANGE (photo-remove))", async () => {
     const r = await renderLogRoute("note", EDIT_URL, {
       backend: { photo: DEFAULT_PHOTO_BYTES },
       seed: (qc) => qc.setQueryData(["babies", BABY_ID, "notes", "", ""], [ROW_WITH_PHOTO]),
     });
     await waitFor(() => expect(screen.getByAltText("Saved note photo")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
-    // Same as diaper: the cached server photo keeps rendering after Remove.
-    expect(screen.getByAltText("Selected note photo")).toBeTruthy();
+    expect(screen.getByText(/Saved photo will be removed/)).toBeTruthy();
+    expect(screen.queryByAltText("Selected note photo")).toBeNull();
+    expect(screen.queryByAltText("Saved note photo")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(r.location()).toBe("/"));
@@ -192,7 +193,7 @@ describe("log/note freeze", () => {
       {
         method: "PATCH",
         url: `/v1/notes/${EXISTING_ID}`,
-        body: { ...UNCHANGED_PATCH, photo: "" },
+        body: { ...UNCHANGED_PATCH, photo: null },
       },
     ]);
   });

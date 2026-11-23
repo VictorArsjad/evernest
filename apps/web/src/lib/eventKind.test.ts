@@ -4,6 +4,7 @@ import {
   createdPhoto,
   createPhotoBody,
   editedText,
+  patchBody,
   listKeyFor,
   openKeyFor,
   updatedPhoto,
@@ -18,6 +19,19 @@ describe("cache keys", () => {
 
   it("openKeyFor nests under the list prefix", () => {
     expect(openKeyFor("sleeps")("b1")).toEqual(["babies", "b1", "sleeps", "open"]);
+  });
+});
+
+describe("patchBody", () => {
+  it("passes explicit null through and omits undefined", () => {
+    expect(
+      patchBody({ a: 1, b: null, c: undefined, d: "" } as {
+        a?: number;
+        b?: number | null;
+        c?: number | null;
+        d?: string;
+      }, ["a", "b", "c", "d"]),
+    ).toEqual({ a: 1, b: null, d: "" });
   });
 });
 
@@ -66,7 +80,7 @@ describe("photo synthesis", () => {
 
   it("updatePhotoBody omits the mime on clear and when none is given", () => {
     expect(updatePhotoBody({})).toEqual({});
-    expect(updatePhotoBody({ photoBase64: "", photoMime: "image/png" })).toEqual({ photo: "" });
+    expect(updatePhotoBody({ photoBase64: "", photoMime: "image/png" })).toEqual({ photo: null });
     expect(updatePhotoBody({ photoBase64: "x" })).toEqual({ photo: "x" });
     expect(updatePhotoBody({ photoBase64: "x", photoMime: "image/png" })).toEqual({
       photo: "x",

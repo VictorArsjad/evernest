@@ -156,9 +156,7 @@ describe("log/pumping freeze", () => {
     expect((screen.getByLabelText("When") as HTMLInputElement).value).toBe("2026-11-22T13:45");
   });
 
-  it("edit: clearing the duration does NOT clear it on the server (PATCH omits duration_seconds; current behavior)", async () => {
-    // Surprise: updateBody skips undefined, so a blank duration is simply not
-    // sent. The server keeps the old value.
+  it("edit: clearing the duration sends duration_seconds: null (APPROVED CHANGE (merge-patch null))", async () => {
     const r = await renderLogRoute("pumping", EDIT_URL, {
       seed: (qc) => qc.setQueryData(["babies", BABY_ID, "pumpings", "", ""], [ROW]),
     });
@@ -171,7 +169,12 @@ describe("log/pumping freeze", () => {
       {
         method: "PATCH",
         url: `/v1/pumpings/${EXISTING_ID}`,
-        body: { occurred_at: "2026-11-22T06:45:00.000Z", amount_ml: 90, notes: "" },
+        body: {
+          occurred_at: "2026-11-22T06:45:00.000Z",
+          amount_ml: 90,
+          duration_seconds: null,
+          notes: "",
+        },
       },
     ]);
   });

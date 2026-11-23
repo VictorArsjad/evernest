@@ -322,9 +322,9 @@ const KINDS: KindSpec[] = [
       },
     },
     update: {
-      // Null reaction clears to "" on the wire; clear_amount_g is sent as a flag.
-      vars: { id: EXISTING_ID, babyId: BABY, reaction: null, clear_amount_g: true, notes: "ate well" },
-      body: { reaction: "", clear_amount_g: true, notes: "ate well" },
+      // Null reaction clears to "" on the wire; amount_g null passes through.
+      vars: { id: EXISTING_ID, babyId: BABY, reaction: null, amount_g: null, notes: "ate well" },
+      body: { reaction: "", amount_g: null, notes: "ate well" },
       row: {
         id: EXISTING_ID,
         baby_id: BABY,
@@ -561,8 +561,8 @@ const KINDS: KindSpec[] = [
       },
     },
     update: {
-      vars: { id: EXISTING_ID, babyId: BABY, clear_starting_breast: true, left_duration_s: 240 },
-      body: { left_duration_s: 240, clear_starting_breast: true },
+      vars: { id: EXISTING_ID, babyId: BABY, starting_breast: null, left_duration_s: 240 },
+      body: { starting_breast: null, left_duration_s: 240 },
       row: {
         id: EXISTING_ID,
         baby_id: BABY,
@@ -724,8 +724,8 @@ const KINDS: KindSpec[] = [
       },
     },
     update: {
-      vars: { id: EXISTING_ID, babyId: BABY, clear_weight_g: true, height_cm: 60 },
-      body: { clear_weight_g: true, height_cm: 60 },
+      vars: { id: EXISTING_ID, babyId: BABY, weight_g: null, height_cm: 60 },
+      body: { weight_g: null, height_cm: 60 },
       row: {
         id: EXISTING_ID,
         baby_id: BABY,
@@ -1338,7 +1338,7 @@ describe.each(PHOTO_KINDS)("$kind: photo", (k) => {
     });
   });
 
-  it("update with an empty photo string clears: PATCH sends photo \"\" with no photo_mime; cached row is synthesized without a photo", async () => {
+  it("update with an empty photo string clears: PATCH sends photo null with no photo_mime; cached row is synthesized without a photo", async () => {
     const calls = stubFetch(OFFLINE);
     const { qc, wrapper } = setup();
     qc.setQueryData(k.listKey(BABY), [{ ...k.existing, has_photo: true, photo_mime: "image/jpeg" }]);
@@ -1347,7 +1347,7 @@ describe.each(PHOTO_KINDS)("$kind: photo", (k) => {
       await result.current({ id: EXISTING_ID, babyId: BABY, photoBase64: "" });
     });
     await sync();
-    expect(calls[0].body).toEqual({ photo: "" });
+    expect(calls[0].body).toEqual({ photo: null });
     const first = (qc.getQueryData(k.listKey(BABY)) as Row[])[0];
     expect(first).toMatchObject({ id: EXISTING_ID, has_photo: false, photo_mime: null });
   });

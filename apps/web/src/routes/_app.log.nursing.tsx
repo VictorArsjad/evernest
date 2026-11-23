@@ -110,13 +110,13 @@ function LogNursingPage() {
   };
 
   // Start now: submit an open session (no ended_at, no per-side durations).
-  // Always uses the live `now()` — deliberately NOT the picked "When started"
-  // time — so the user doesn't have to round-trip through the datetime input.
+  // Uses the "When started" field so backdating is respected by the Today
+  // elapsed timer (same as sleep).
   // The BE rejects multiple open sessions per baby, so the failure mode is a
   // clean 409 surfaced inline rather than an inconsistent state.
   const onStartNow = () => {
     form.createAndExit({
-      started_at: new Date().toISOString(),
+      started_at: localToISO(startedLocal),
       nursing_side: side,
       starting_breast: side === "both" ? startingBreast : undefined,
     });

@@ -79,18 +79,15 @@ function LogSolidsPage() {
   const [occurredLocal, setOccurredLocal] = useState(nowLocalDatetimeInput);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Solids differs from diaper/note: no HEIC pre-check (the raw decoder error
-  // is shown), the file input isn't reset on pick, and Remove hides the saved
-  // image instead of leaving it on screen.
+  // Solids differs from diaper/note: the file input isn't reset on pick, and
+  // Remove hides the saved image instead of leaving it on screen.
   const photo = usePhotoField({
     label: "solids",
     rowId: editId ?? null,
     isEditMode,
     existingHasPhoto: existing?.has_photo,
     usePhotoUrl: useSolidMealPhotoUrl,
-    heicPrecheck: false,
     resetInputOnPick: false,
-    removedPreview: "hide",
   });
   const { resetCleared } = photo;
 
@@ -117,7 +114,9 @@ function LogSolidsPage() {
 
   const onFoodKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" || e.key === ",") {
+      // Only add a chip: stop the form's submitOnEnter from also submitting.
       e.preventDefault();
+      e.stopPropagation();
       addFood(foodDraft.replace(/,$/, ""));
     } else if (e.key === "Backspace" && foodDraft === "" && foods.length > 0) {
       setFoods((prev) => prev.slice(0, -1));
@@ -144,7 +143,6 @@ function LogSolidsPage() {
     const amountG = parseAmountG();
     if (amountG === undefined) return;
 
-    const hadAmount = existing?.amount_g != null;
     form.save({
       create: {
         occurred_at: localToISO(occurredLocal),
@@ -159,9 +157,8 @@ function LogSolidsPage() {
         foods,
         reaction: reaction ?? "",
         amount_g: amountG,
-        clear_amount_g: amountG === null && hadAmount,
         notes: notes.trim(),
-        // PATCH: new photo replaces, Remove clears (""), otherwise omitted.
+        // PATCH: new photo replaces, Remove clears (null), otherwise omitted.
         ...photo.updateFields(),
       },
     });
