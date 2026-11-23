@@ -18,6 +18,8 @@ test("offline: entries log while offline, show pending, sync on reconnect", asyn
   await expect(page.getByText("Nothing logged today yet.")).toBeVisible();
   // First load has no controller yet; offline navigations need one.
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  // The controller only exists if the SW claimed this load, which is racy; a reload is the fix.
+  // eslint-disable-next-line playwright/no-conditional-in-test
   if (!(await page.evaluate(() => !!navigator.serviceWorker.controller))) {
     await page.reload();
     await expectToday(page, caregiver.babyName);

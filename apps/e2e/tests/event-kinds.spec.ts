@@ -91,11 +91,6 @@ test.describe("every event kind logs and persists", () => {
 
     test(`${kind}: form → Today → reload`, async ({ page, caregiver }) => {
       const driver = DRIVERS[kind];
-      if (!driver) {
-        throw new Error(
-          `Event kind "${kind}" is in the catalog but has no driver in event-kinds.spec.ts; add one.`,
-        );
-      }
       const token = `e2e-${kind}-${randomUUID().slice(0, 8)}`;
 
       await page.goto("/");
