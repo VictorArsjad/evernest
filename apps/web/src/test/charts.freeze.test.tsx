@@ -157,14 +157,14 @@ describe("Charts summary primaries", () => {
 });
 
 describe("Charts sleep totals", () => {
-  it("sums sleep by sleep-day key and averages over all 13 past window days", async () => {
+  it("sums sleep by sleep-day key and averages over past days with sleep data", async () => {
     renderAt("/charts", WORKED);
     await screen.findByText("8h 45m total");
 
     // 240 + 240 + 45 = 525 min = 8h 45m.
-    // Average: (240 + 240) / 13 past days = 36.9, shown as 37m. The 11 empty
-    // past days count as zeros. This is a frozen quirk, not a target.
-    expect(screen.getByText("37m /day avg")).toBeTruthy();
+    // Average: (240 + 240) / 2 past days with sleep data = 240 = 4h 0m.
+    // The 11 empty past days are skipped, like the other cards.
+    expect(screen.getByText("4h 0m /day avg")).toBeTruthy();
     expect(screen.getByText(/typical 12–16h for age/)).toBeTruthy();
   });
 });

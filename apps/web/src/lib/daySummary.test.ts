@@ -325,14 +325,17 @@ describe("sleepWindowTotals", () => {
     expect(r.avgMin).toBe(630);
   });
 
-  it("divides by all past window days, zero-sleep days included", () => {
-    // Pending product question: the other cards divide by past days WITH
-    // data; sleep divides by every past day. This pins the difference.
+  it("divides by past days that have sleep data, skipping zero-sleep days", () => {
     const r = sleepWindowTotals(
       [day("2026-11-19", 0), day("2026-11-20", 0), day("2026-11-21", 600), day("2026-11-22", 50)],
       "2026-11-22",
     );
-    expect(r.avgMin).toBe(200);
+    expect(r.avgMin).toBe(600);
+  });
+
+  it("averages zero when no past day has sleep data", () => {
+    const r = sleepWindowTotals([day("2026-11-21", 0), day("2026-11-22", 50)], "2026-11-22");
+    expect(r).toEqual({ totalMin: 50, avgMin: 0 });
   });
 
   it("includes today when it is the only day", () => {

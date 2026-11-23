@@ -247,18 +247,24 @@ export function formatDaySummary(
 export const chartTotals = summarize;
 
 // sleepWindowTotals: total across the window plus the /day average.
-// Unlike chartTotals, the average divides by ALL past days in the window
-// (zero-sleep days included) and excludes `todayYMD` (the partial
-// sleep-day). Falls back to including today when it is the only day.
+// Like chartTotals, the average excludes `todayYMD` (the partial
+// sleep-day) and divides by the past days that have data — here, at least
+// one closed sleep attributed to that sleep-day (minutes > 0). Falls back
+// to including today when it is the only day; zero when past days exist
+// but none has data.
 export function sleepWindowTotals(
   totals: readonly { date: string; minutes: number }[],
   todayYMD: string,
 ): { totalMin: number; avgMin: number } {
   const totalMin = totals.reduce((s, d) => s + d.minutes, 0);
   const pastDays = totals.filter((d) => d.date !== todayYMD);
-  const avgDenominator = pastDays.length > 0 ? pastDays.length : totals.length;
-  const avgNumerator =
-    pastDays.length > 0 ? pastDays.reduce((s, d) => s + d.minutes, 0) : totalMin;
-  const avgMin = avgDenominator > 0 ? avgNumerator / avgDenominator : 0;
+  let avgMin = 0;
+  if (pastDays.length === 0) {
+    avgMin = totals.length > 0 ? totalMin / totals.length : 0;
+  } else {
+    const withData = pastDays.filter((d) => d.minutes > 0);
+    avgMin =
+      withData.length > 0 ? withData.reduce((s, d) => s + d.minutes, 0) / withData.length : 0;
+  }
   return { totalMin, avgMin };
 }
