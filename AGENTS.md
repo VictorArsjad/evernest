@@ -58,6 +58,33 @@ make web-dev          # Vite on :5173, proxies /v1 to :8080
 Smoke checks before claiming done: `make lint && make api-test && make web-build`
 (matches CI). Don't push without those passing — CI will reject.
 
+## E2E (Playwright)
+
+`apps/e2e` — own package, not part of the web install or the API image. Runs the
+production-shaped build (SPA embedded in the Go binary, one origin) in Chromium
+(Pixel 7), Firefox (412x915 viewport) and WebKit (iPhone 15).
+
+```bash
+make db               # postgres must be up
+make e2e              # build, migrate evernest_e2e, run all 3 browsers headless
+make e2e-ui           # Playwright UI mode (time-travel, traces)
+cd apps/e2e && npx playwright test --project=webkit tests/foo.spec.ts   # one project/spec (after a make e2e build)
+cd apps/e2e && npx playwright show-report                               # last HTML report
+```
+
+- Server runs on `:8090` against the dedicated `evernest_e2e` database (never the
+  dev `evernest` db). `E2E_FRESH_DB=1 make e2e` drops and recreates it.
+  A running server on `:8090` is reused locally; rebuild (`make e2e`) after app changes.
+- CI: `e2e (chromium|firefox|webkit)` matrix jobs in `ci.yml`; on failure the HTML
+  report + traces are uploaded as `playwright-report-<browser>`.
+- **Seam rules:** assert only through the UI (role/label/text locators; `data-testid`
+  only where those can't reach). Use the public HTTP API only to set up data. No
+  test-only endpoints, no direct DB access, no injected tokens/storage. Each test
+  creates its own caregiver/household/baby so tests run in any order, in parallel.
+  Wait via auto-waiting assertions, never fixed sleeps.
+- **E2E NEVER runs against production.** The suite creates users and data; it only
+  targets the local `localhost:8090` server. Never point `baseURL` at the tailnet URL.
+
 ## Repo layout
 
 ```
@@ -68,6 +95,7 @@ apps/
   api/migrations/           golang-migrate SQL pairs
   api/internal/             eventstore + per-kind descriptors, store, auth, etc.
   web/                      Vite + React PWA
+  e2e/                      Playwright E2E suite (standalone package)
   web/src/lib/outbox.ts     IndexedDB-backed offline outbox (don't bypass for writes)
   web/src/routes/           TanStack Router routes
 infra/
