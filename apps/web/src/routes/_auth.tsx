@@ -10,7 +10,7 @@
 //      login form paints — so the user gets dropped into the app
 //      instead of being left staring at the login screen with no
 //      session needed.
-import { Outlet, createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { useAuthStore } from "../lib/authStore";
 import { anonSurfaceRedirect } from "../lib/authRedirect";
@@ -27,10 +27,16 @@ export const Route = createFileRoute("/_auth")({
 function AuthLayout() {
   const nav = useNavigate();
   const status = useAuthStore((s) => s.status);
+  const { next } = useSearch({ strict: false }) as { next?: string };
+  // Login/register with an invite `next` finish the accept themselves and
+  // then navigate; bouncing to "/" as soon as the session lands would race
+  // the accept and drop a new joiner into onboarding.
+  const finishingInvite = !!next && /^\/invite\/[A-Za-z0-9_-]+$/.test(next);
   useEffect(() => {
+    if (finishingInvite) return;
     const target = anonSurfaceRedirect(status);
     if (target) void nav({ to: target, replace: true });
-  }, [status, nav]);
+  }, [status, nav, finishingInvite]);
   return (
     <main className="flex flex-1 flex-col items-stretch justify-center p-6">
       <div className="mb-8 text-center">
