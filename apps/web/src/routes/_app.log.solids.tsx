@@ -116,7 +116,9 @@ function LogSolidsPage() {
 
   const onFoodKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" || e.key === ",") {
+      // Only add a chip: stop the form's submitOnEnter from also submitting.
       e.preventDefault();
+      e.stopPropagation();
       addFood(foodDraft.replace(/,$/, ""));
     } else if (e.key === "Backspace" && foodDraft === "" && foods.length > 0) {
       setFoods((prev) => prev.slice(0, -1));

@@ -188,16 +188,14 @@ describe("log/solids freeze", () => {
     expect(screen.queryByText(/HEIC photos aren't supported/)).toBeNull();
   });
 
-  it("create: Enter in the food field submits with the pre-Enter foods (stale closure, current behavior)", async () => {
-    // Surprise: the food input's Enter both adds a chip and bubbles to the
-    // form's submitOnEnter, which requests a submit in the same event. The
-    // submit reads the foods before the chip lands, so the first Enter
-    // submits an empty list and shows "Add at least one food".
+  it("create: Enter in the food field only adds a chip; it does not submit (APPROVED CHANGE solids-enter)", async () => {
     const r = await renderLogRoute("solids", CREATE_URL);
     fireEvent.change(foodInput(), { target: { value: "avocado" } });
     fireEvent.keyDown(foodInput(), { key: "Enter" });
-    await waitFor(() => expect(screen.getByText("Add at least one food")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Remove avocado" })).toBeTruthy();
+    expect(screen.queryByText("Add at least one food")).toBeNull();
     expect(mutations(r.calls)).toEqual([]);
+    expect(r.location()).not.toBe("/");
   });
 
   it("create: Backspace in an empty food field removes the last chip", async () => {
