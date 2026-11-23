@@ -27,11 +27,7 @@
 // drain or come back to it later; both cases work fine with foreground
 // replay.
 
-import {
-  type DBSchema,
-  type IDBPDatabase,
-  openDB,
-} from "idb";
+import { type DBSchema, type IDBPDatabase, openDB } from "idb";
 
 // --- types ---
 
@@ -126,7 +122,8 @@ export function _setTestConfig(opts: {
 }): void {
   if (opts.attemptCap !== undefined) attemptCap = opts.attemptCap;
   if (opts.backoffBaseMs !== undefined) backoffBaseMs = opts.backoffBaseMs;
-  if (opts.backoffCeilingMs !== undefined) backoffCeilingMs = opts.backoffCeilingMs;
+  if (opts.backoffCeilingMs !== undefined)
+    backoffCeilingMs = opts.backoffCeilingMs;
 }
 
 export function _resetTestConfig(): void {
@@ -200,6 +197,10 @@ function getDB(): Promise<IDBPDatabase<OutboxSchema>> {
 // For tests — close + drop the connection so a fresh fake-indexeddb run
 // starts from a clean slate.
 export async function _resetForTests(): Promise<void> {
+  // Retire any drain still in flight: without this it keeps looping on
+  // the module-level dispatcher against the fresh DB and sends the next
+  // test's records a second time.
+  generation += 1;
   if (dbPromise) {
     const db = await dbPromise;
     db.close();
@@ -333,27 +334,31 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 // past its last pickNextReady would otherwise never see the request, so
 // drainLoop re-runs a pass while this is set.
 let resyncRequested = false;
+// Bumped by _resetForTests. A drain started under an older generation
+// stops at its next step instead of acting on the reset state.
+let generation = 0;
 
 export function sync(): Promise<void> {
   if (draining) {
     resyncRequested = true;
     return draining;
   }
-  draining = drainLoop().finally(() => {
-    draining = null;
+  const run: Promise<void> = drainLoop(generation).finally(() => {
+    if (draining === run) draining = null;
   });
-  return draining;
+  draining = run;
+  return run;
 }
 
-async function drainLoop(): Promise<void> {
+async function drainLoop(gen: number): Promise<void> {
   do {
     resyncRequested = false;
-    await drainPass();
-  } while (resyncRequested && dispatcher);
+    await drainPass(gen);
+  } while (resyncRequested && dispatcher && gen === generation);
 }
 
-async function drainPass(): Promise<void> {
-  if (!dispatcher) return;
+async function drainPass(gen: number): Promise<void> {
+  if (!dispatcher || gen !== generation) return;
 
   const startCount = (await getPending()).length;
   let drainedAny = false;
@@ -362,7 +367,9 @@ async function drainPass(): Promise<void> {
   // remaining are scheduled for the future), or we hit a record that
   // can't proceed right now (5xx + backoff window not yet elapsed).
   while (true) {
+    if (gen !== generation) return;
     const next = await pickNextReady();
+    if (gen !== generation) return;
     if (!next) {
       // Either the queue is empty or every pending record is waiting
       // on its backoff timer. Schedule a wake-up for the earliest
@@ -370,7 +377,7 @@ async function drainPass(): Promise<void> {
       await schedulePendingWake();
       break;
     }
-    const handled = await processOne(next);
+    const handled = await processOne(next, gen);
     if (handled) drainedAny = true;
     // Loop continues; next iteration picks the new front of the queue.
   }
@@ -415,7 +422,7 @@ async function schedulePendingWake(): Promise<void> {
 }
 
 // Returns true if the record was processed (not waiting on a timer).
-async function processOne(record: OutboxRecord): Promise<boolean> {
+async function processOne(record: OutboxRecord, gen: number): Promise<boolean> {
   if (!dispatcher) return false;
   let result: DispatchResult;
   try {
@@ -433,6 +440,7 @@ async function processOne(record: OutboxRecord): Promise<boolean> {
       message: (err as Error)?.message ?? "dispatcher threw",
     };
   }
+  if (gen !== generation) return false;
 
   const db = await getDB();
   const tx = db.transaction(STORE, "readwrite");
@@ -509,9 +517,12 @@ export function backoffDelayFor(attempts: number): number {
 export async function retryDead(id?: number): Promise<void> {
   const db = await getDB();
   const tx = db.transaction(STORE, "readwrite");
-  const targets: OutboxRecord[] = id !== undefined
-    ? [await tx.store.get(id)].filter((r): r is OutboxRecord => !!r && r.status === "dead")
-    : (await tx.store.getAll()).filter((r) => r.status === "dead");
+  const targets: OutboxRecord[] =
+    id !== undefined
+      ? [await tx.store.get(id)].filter(
+          (r): r is OutboxRecord => !!r && r.status === "dead",
+        )
+      : (await tx.store.getAll()).filter((r) => r.status === "dead");
   for (const r of targets) {
     r.status = "pending";
     r.attempts = 0;
