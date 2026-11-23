@@ -368,6 +368,8 @@ export interface QueuedOpts<T> extends RequestOpts {
   // Required for non-GET requests so the outbox can dedupe a
   // double-tap of "Save" before the first send completes.
   idempotencyKey: string;
+  // Row id; keeps this write behind earlier queued writes for the same row.
+  entityId?: string;
   // Synthetic response returned to the caller when the request is
   // queued. For creates this is typically the full new row shape so
   // optimistic cache updates have something to write.
@@ -384,6 +386,7 @@ export async function apiQueued<T>(path: string, opts: QueuedOpts<T>): Promise<T
       path,
       body: opts.body,
       idempotencyKey: opts.idempotencyKey,
+      entityId: opts.entityId,
     });
     return opts.synthesize();
   }

@@ -93,7 +93,9 @@ docs/
 - **Canonical units in DB**, conversion on the FE only. Don't add a "user prefers
   oz" column to `bottle_feeds`.
 - **Never bypass the outbox** for FE writes — it's what makes the app work
-  offline. New event kinds need an outbox kind + replay handler.
+  offline. The outbox is generic (method + path + body), so a new event kind needs
+  no outbox kind or replay handler — add a descriptor to `defineEventKind` in
+  `apps/web/src/lib/eventKind.ts` (wired up in `lib/queries.ts`).
 - **Comments** — only when they explain non-obvious *why*. Don't narrate code.
 - **Mobile safe areas** — `apps/web/src/routes/__root.tsx` already pads the
  shell with `env(safe-area-inset-*)` so in-flow content clears the iOS
@@ -110,7 +112,7 @@ docs/
 
 | Task | Where to look |
 |---|---|
-| Add a new event kind (e.g. sleep) | `apps/api/migrations/` (new table) → `apps/api/internal/<kind>/` (a descriptor for the shared `apps/api/internal/eventstore/` module; wire it in `internal/api/router.go`) → `docs/api.openapi.yaml` (contract) → `apps/web/src/lib/outbox.ts` (kind) → `apps/web/src/routes/_app.log.<kind>.tsx` (form) |
+| Add a new event kind (e.g. sleep) | `apps/api/migrations/` (new table) → `apps/api/internal/<kind>/` (a descriptor for the shared `apps/api/internal/eventstore/` module; wire it in `internal/api/router.go`) → `docs/api.openapi.yaml` (contract) → `apps/web/src/lib/queries.ts` (descriptor passed to `defineEventKind`) → `apps/web/src/routes/_app.log.<kind>.tsx` (form) |
 | Tweak the BabyPlus importer | `apps/api/cmd/import-babyplus/{parse,importer}.go` + `*_test.go` |
 | Adjust the FE activity-chart range | `apps/web/src/routes/_app.charts.tsx` |
 | Work on the growth / WHO-percentile view | `apps/web/src/routes/_app.growth.tsx` + `apps/web/src/lib/who/` (bundled WHO LMS tables, percentile math, curve geometry — all pure + unit-tested) |

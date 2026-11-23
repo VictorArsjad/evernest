@@ -51,6 +51,9 @@ export interface OutboxRecord {
   // re-submission of the same form before replay, and to mark Recent
   // rows as "syncing" in the UI.
   idempotencyKey: string;
+  // Row the mutation targets. A record is held back while an earlier live
+  // record shares its entityId. Absent on legacy records: no ordering.
+  entityId?: string;
   attempts: number;
   lastError?: string;
   lastAttemptAt?: number;
@@ -203,6 +206,7 @@ export async function _resetForTests(): Promise<void> {
     dbPromise = null;
   }
   draining = null;
+  resyncRequested = false;
   if (retryTimer !== null) {
     clearTimeout(retryTimer);
     retryTimer = null;
@@ -259,6 +263,7 @@ export interface EnqueueInput {
   path: string;
   body?: unknown;
   idempotencyKey: string;
+  entityId?: string;
 }
 
 // Enqueue a mutation. If a record with the same idempotencyKey is
@@ -302,6 +307,7 @@ export async function enqueueMutation(
     path: input.path,
     body: input.body,
     idempotencyKey: input.idempotencyKey,
+    ...(input.entityId !== undefined ? { entityId: input.entityId } : {}),
     attempts: 0,
     status: "pending",
   };
@@ -323,9 +329,16 @@ export async function enqueueMutation(
 // backlog post-outage doesn't slam the API.
 let draining: Promise<void> | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
+// Set when sync() is called while a drain is in flight. A drain that is
+// past its last pickNextReady would otherwise never see the request, so
+// drainLoop re-runs a pass while this is set.
+let resyncRequested = false;
 
 export function sync(): Promise<void> {
-  if (draining) return draining;
+  if (draining) {
+    resyncRequested = true;
+    return draining;
+  }
   draining = drainLoop().finally(() => {
     draining = null;
   });
@@ -333,6 +346,13 @@ export function sync(): Promise<void> {
 }
 
 async function drainLoop(): Promise<void> {
+  do {
+    resyncRequested = false;
+    await drainPass();
+  } while (resyncRequested && dispatcher);
+}
+
+async function drainPass(): Promise<void> {
   if (!dispatcher) return;
 
   const startCount = (await getPending()).length;
@@ -364,7 +384,13 @@ async function drainLoop(): Promise<void> {
 async function pickNextReady(): Promise<OutboxRecord | null> {
   const pending = await getPending();
   const now = Date.now();
+  // pending is id-sorted and excludes dead records, so any earlier entry
+  // with the same entityId is a live one that must go first.
+  const seen = new Set<string>();
   for (const r of pending) {
+    const blocked = r.entityId !== undefined && seen.has(r.entityId);
+    if (r.entityId !== undefined) seen.add(r.entityId);
+    if (blocked) continue;
     if (!r.nextAttemptAt || r.nextAttemptAt <= now) return r;
   }
   return null;
