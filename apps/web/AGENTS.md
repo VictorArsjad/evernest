@@ -25,7 +25,13 @@ src/
   lib/eventKinds.ts   the ONE event-kind catalog (label, icon, photo alt, open-session, chart series); FeatureKey / RecentEvent / SeriesKey derive from it
   lib/eventKind.ts    defineEventKind: list/create/update/delete (+photo, +open-session) hooks per event kind
   lib/queries.ts      query keys, auth/household/settings hooks, one descriptor per event kind
+  lib/datetime.ts     datetime-local <-> ISO helpers (nowLocalDatetimeInput, isoToLocalDatetimeInput, localToISO); the only bridge, don't re-inline
+  lib/logForm.ts      LogForm shell hook for the /log/* routes: useLogForm (household -> babies -> active baby -> babyId, edit-row lookup from cache, Esc/Cancel -> "/", save/delete + navigate, error state), logSearchSchema, usePrefillOnce, useRestampOnFocus
+  lib/usePhotoField.ts + lib/photo.ts  photo picker state for diaper/note/solids (pendingPhoto/existingCleared, HEIC sniff, compress, preview URL revoke); per-route quirks are explicit options
   components/         shared presentational components
+  components/LogFormLayout.tsx  title/Cancel/form/error/Save/Delete chrome for /log/* routes; a route supplies only its fields (and `actions` to replace Save)
+  components/PhotoField.tsx     the "Photo (optional)" block, rendered from usePhotoField
+  components/DeleteEntryButton.tsx  two-tap inline delete confirm
   styles/             Tailwind entry + global css
 public/               PWA manifest, icons (regen via `npm run icons`)
 scripts/              build-time helpers (icon generation)
@@ -55,6 +61,14 @@ All server I/O goes through `lib/api.ts` and is wired into TanStack Query in
   seam**. Tries the real request first; on network failure / 5xx / expired-auth
   it enqueues into the offline outbox and returns the caller's `synthesize()`
   result so optimistic cache updates still run. Use for **every write**.
+
+**Log forms.** Each `routes/_app.log.<kind>.tsx` calls `useLogForm` (passing its
+create/update/delete hooks and cache `segment`) and renders `<LogFormLayout>`; it
+keeps only its fields, validation and the create/update bodies. Photo kinds add
+`usePhotoField` + `<PhotoField>`. The per-route quirks that predate the shell are
+pinned by `src/test/logRoutes/*.freeze.test.tsx` and surfaced as explicit options
+(`errorScope`, `heicPrecheck`, `resetInputOnPick`, `removedPreview`, `actions`) —
+don't "unify" them without a deliberate behavior change.
 
 **Adding a kind also means a row in `lib/eventKinds.ts`** (`EVENT_KIND_ROWS` + `EventKindRows`). `Record<EventKindName, …>` maps (e.g. `RecentRow`'s `BODIES`) then fail to compile until the new kind is handled. Still hand-listed: the Today tiles (`_app.index.tsx`), charts kind lists, `PRESETS`/`SERIES_LABELS` (palette), `mergeRecent`.
 
