@@ -91,23 +91,12 @@ cd apps/e2e && npx playwright show-report                               # last H
 - **Bugs found by E2E:** real app bugs may need app code changes, but those go in a
   separate `fix(web)` commit and its own PR off `master`, not in the E2E PR. The
   `data-testid`-only rule for app changes in E2E PRs otherwise stands.
-- **Setup helpers** (`apps/e2e/tests/fixtures.ts`): import `test, expect` from
-  `./fixtures` instead of `@playwright/test`. The `caregiver` fixture
-  (`{ email, password, householdId, babyId, babyName }`) registers a unique user,
-  creates a household and a baby through the public API using `context.request`, so
-  the refresh cookie lands in the page's context and `page.goto("/")` boots logged in
-  on Today (baby name is the `<h1>`). `createCaregiver(request, { babyName?,
-  householdName? })` does the same on any `APIRequestContext`; pass a separate
-  `playwrightRequest.newContext()` to get a caregiver with no session in the page
-  (e.g. to test the real login screen). See `tests/session.spec.ts`.
-- **Event seeding** (`apps/e2e/tests/seed.ts`): `seedEvents(request, caregiver)`
-  → `{ latestNote, diapers, growthWeightsG }`. Logs in with the caregiver's
-  credentials and POSTs, through the public API only, bottle feeds, diapers, sleeps,
-  nursing sessions (spread over the last ~4 days) and two growth measurements, using
-  client-generated UUID ids, canonical units (ml/cm/g) and UTC timestamps. The newest
-  bottle feed carries `latestNote` (shows in History's first day group). Growth needs a
-  date of birth: pass `createCaregiver(request, { dateOfBirth: "YYYY-MM-DD" })`. See
-  `tests/review-screens.spec.ts`.
+- **Setup helpers:** `tests/fixtures.ts` (import `test, expect` from `./fixtures`, not
+  `@playwright/test`), `tests/seed.ts`, `tests/helpers.ts`; examples in
+  `tests/session.spec.ts` and `tests/review-screens.spec.ts`. Non-obvious bits: setup
+  goes through `context.request` so the refresh cookie lands in the page's context and
+  `page.goto("/")` boots logged in; use a separate `playwrightRequest.newContext()` for a
+  caregiver with no session; Growth seeding needs a date of birth.
 - **E2E NEVER runs against production.** The suite creates users and data; it only
   targets the local `localhost:8090` server. Never point `baseURL` at the tailnet URL.
 
