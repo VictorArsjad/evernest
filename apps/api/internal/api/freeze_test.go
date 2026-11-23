@@ -1005,6 +1005,31 @@ var (
 	photoJPEG = []byte("\xff\xd8\xff-freeze-jpeg-bytes")
 )
 
+// A PATCH that sets photo_mime without photo is rejected exactly like create,
+// and leaves the stored photo untouched.
+func TestPatchPhotoMimeWithoutPhoto_422(t *testing.T) {
+	e := newEnv(t)
+	f := newFixture(t, e)
+	for _, k := range allKinds() {
+		if !k.photo {
+			continue
+		}
+		t.Run(k.name, func(t *testing.T) {
+			r := e.create(t, f.token, f.baby, k, merge(k.sample(fixedAt), map[string]any{"photo": b64(photoPNG), "photo_mime": "image/png"}))
+			mustStatus(t, r, http.StatusCreated)
+			id := fmt.Sprint(obj(t, r)["id"])
+
+			wantErr(t, e.patch(t, f.token, k, id, map[string]any{"photo_mime": "image/jpeg"}), 422, "validation_failed")
+
+			pg := e.call(t, http.MethodGet, "/v1/"+k.path+"/"+id+"/photo", f.token, nil)
+			mustStatus(t, pg, http.StatusOK)
+			if !bytes.Equal(pg.body, photoPNG) || pg.hdr.Get("Content-Type") != "image/png" {
+				t.Errorf("photo must be unchanged after rejected PATCH")
+			}
+		})
+	}
+}
+
 func b64(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
 
 func TestFreezePhoto_CreateGetPatchClear(t *testing.T) {
@@ -1049,12 +1074,9 @@ func TestFreezePhoto_CreateGetPatchClear(t *testing.T) {
 				t.Errorf("replaced photo: bytes/type mismatch (ct=%q)", pg2.hdr.Get("Content-Type"))
 			}
 
-			// photo_mime alone (no photo) is silently ignored: 200, photo unchanged.
-			mo := e.patch(t, f.token, k, id, map[string]any{"photo_mime": "image/png"})
-			mustStatus(t, mo, http.StatusOK)
-			got2 := obj(t, mo)
-			expectField(t, got2, "has_photo", true)
-			expectField(t, got2, "photo_mime", "image/jpeg")
+			// photo_mime alone (no photo) is rejected like create; photo unchanged.
+			// APPROVED CHANGE (photo_mime patch): was 200 / silently ignored.
+			wantErr(t, e.patch(t, f.token, k, id, map[string]any{"photo_mime": "image/png"}), 422, "validation_failed")
 
 			// photo "" clears photo and photo_mime.
 			cl := e.patch(t, f.token, k, id, map[string]any{"photo": ""})

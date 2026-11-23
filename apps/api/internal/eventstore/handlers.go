@@ -203,10 +203,16 @@ func (h *Handler[T]) patch(w http.ResponseWriter, r *http.Request) {
 		//   - "" (empty string)    → clear photo + photo_mime
 		//   - non-empty + mime     → replace
 		//   - non-empty + no mime  → 422 (validation_failed)
+		//   - mime without photo   → 422 (same as create)
 		var (
 			clear bool
 			photo decodedPhoto
 		)
+		if in.Photo == nil && in.PhotoMime != nil {
+			_, pp := decodePhoto(nil, in.PhotoMime)
+			pp.write(w)
+			return
+		}
 		if in.Photo != nil {
 			if *in.Photo == "" {
 				clear = true

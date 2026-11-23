@@ -1638,7 +1638,10 @@ paths:
       tags: [Sleeps]
       operationId: deleteSleep
       summary: Delete a sleep session
-      description: Idempotent. Open rows can be deleted ("started by mistake").
+      description: |
+        Open rows can be deleted ("started by mistake"). Returns `404` if no
+        row matches (unknown or already-deleted id). Clients replaying a
+        delete from an offline outbox should treat `404` as success.
       responses:
         "204":
           description: Deleted.
@@ -2262,7 +2265,11 @@ components:
         photo_mime:
           type: string
           enum: [image/jpeg, image/png, image/webp]
-          description: Required when `photo` is set to a non-empty string.
+          description: |
+            Required when `photo` is set to a non-empty string. Sending
+            `photo_mime` without `photo` is rejected with `422
+            validation_failed` (same as create); the stored photo is left
+            unchanged.
 
     SolidMeal:
       type: object
@@ -2405,7 +2412,11 @@ components:
         photo_mime:
           type: string
           enum: [image/jpeg, image/png, image/webp]
-          description: Required when `photo` is set to a non-empty string.
+          description: |
+            Required when `photo` is set to a non-empty string. Sending
+            `photo_mime` without `photo` is rejected with `422
+            validation_failed` (same as create); the stored photo is left
+            unchanged.
 
     Pumping:
       type: object
