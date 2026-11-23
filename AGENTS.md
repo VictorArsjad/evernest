@@ -129,3 +129,17 @@ docs/
   CLI you need. `docker exec evernest-api-1 import-babyplus …` is the path.
 - Don't read every file in this repo before answering. The README + this file
   + `docs/deploy.md` cover ~95% of the operational surface area.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on VictorArsjad/evernest, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles, each label named after its role (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.
