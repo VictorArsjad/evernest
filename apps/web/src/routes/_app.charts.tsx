@@ -24,12 +24,12 @@ import {
   formatLocalYMD,
   stacked2Layout,
   stackedDiaperLayout,
+  summarize,
   tooltipXPercent,
   type SparkBar,
 } from "../lib/charts";
 import {
   chartEndDate,
-  chartTotals,
   entryDayKeys,
   formatDaySummary,
   historyWindows,
@@ -497,7 +497,7 @@ function ChartGrid({
   // Pass `todayYMD` so the per-day averages exclude the in-progress
   // current day; otherwise the average would drift down as the day
   // ticks forward and reset every midnight.
-  const totals = useMemo(() => chartTotals(days, todayYMD), [days, todayYMD]);
+  const totals = useMemo(() => summarize(days, todayYMD), [days, todayYMD]);
   const nursing = useMemo(() => barLayout(days.map((d) => d.nursing_minutes)), [days]);
   const pumping = useMemo(() => barLayout(days.map((d) => d.pumping_ml)), [days]);
   const stacked = useMemo(

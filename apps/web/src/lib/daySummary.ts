@@ -2,7 +2,6 @@
 // Charts & History screen — query windows, daily totals, "last X" labels,
 // per-day history rollups and the /day averages. No React; the routes
 // fetch, call these, and render.
-import { summarize } from "./charts";
 import type { DayGroup } from "./groupByDay";
 import type { RecentEvent } from "./recentEvents";
 import { currentSleepDayBounds, sleepDayKey } from "./sleepDays";
@@ -231,13 +230,8 @@ export function formatDaySummary(
 
 // --- /day averages ---
 
-// chartTotals: window totals and per-/day averages for bottle, pumping,
-// nursing and diapers. Averages exclude the in-progress `todayYMD` and
-// divide by the past days that have a row (see charts.summarize).
-export const chartTotals = summarize;
-
 // sleepWindowTotals: total across the window plus the /day average.
-// Like chartTotals, the average excludes `todayYMD` (the partial
+// Like charts.summarize, the average excludes `todayYMD` (the partial
 // sleep-day) and divides by the past days that have data — here, at least
 // one closed sleep attributed to that sleep-day (minutes > 0). Falls back
 // to including today when it is the only day; zero when past days exist

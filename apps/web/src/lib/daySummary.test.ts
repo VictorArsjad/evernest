@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   chartEndDate,
-  chartTotals,
   entryDayKeys,
   formatDaySummary,
   historyWindows,
@@ -14,6 +13,7 @@ import {
   todayTotals,
   todayWindows,
 } from "./daySummary";
+import { summarize as chartTotals } from "./charts";
 import type { DayGroup } from "./groupByDay";
 import type { RecentEvent } from "./recentEvents";
 import type { BottleFeed, Growth, Nursing, Pumping, Sleep } from "./types";
