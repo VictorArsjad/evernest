@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/varsjad/evernest/apps/api/internal/testutil"
 
 	apirouter "github.com/varsjad/evernest/apps/api/internal/api"
 	"github.com/varsjad/evernest/apps/api/internal/config"
@@ -55,10 +56,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	defer cancel()
 	st, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
-		if os.Getenv("CI") == "true" {
-			t.Fatalf("postgres not reachable (%s): %v", cfg.DatabaseURL, err)
-		}
-		t.Skipf("postgres not reachable (%s): %v", cfg.DatabaseURL, err)
+		testutil.SkipOrFail(t, "postgres not reachable (%s): %v", cfg.DatabaseURL, err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(apirouter.NewRouter(cfg, st, logger))
@@ -162,10 +160,10 @@ func TestPatchBottleFeed(t *testing.T) {
 	// Create
 	occurred := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 	createRes := te.do(t, "POST", "/v1/babies/"+te.baby.String()+"/bottle-feeds", te.token, map[string]any{
-		"occurred_at":  occurred.Format(time.RFC3339),
-		"milk_source":  "formula",
-		"amount_ml":    60,
-		"notes":        "first try",
+		"occurred_at": occurred.Format(time.RFC3339),
+		"milk_source": "formula",
+		"amount_ml":   60,
+		"notes":       "first try",
 	})
 	if createRes.StatusCode != http.StatusCreated {
 		t.Fatalf("create: %d %s", createRes.StatusCode, readBody(createRes))
