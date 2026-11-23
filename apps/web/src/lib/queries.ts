@@ -15,6 +15,7 @@ import {
   openKeyFor,
   type ListHookOpts,
   newRowBase,
+  patchBody,
   type PhotoVars,
   updatedPhoto,
   updatedRowBase,
@@ -288,14 +289,7 @@ const bottle = defineEventKind<BottleFeed, CreateBottleFeedVars, UpdateBottleFee
     amount_ml: vars.amount_ml ?? existing?.amount_ml ?? 0,
     notes: editedText(vars.notes, existing?.notes),
   }),
-  updateBody: (vars) => {
-    const body: Record<string, unknown> = {};
-    if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
-    if (vars.milk_source !== undefined) body.milk_source = vars.milk_source;
-    if (vars.amount_ml !== undefined) body.amount_ml = vars.amount_ml;
-    if (vars.notes !== undefined) body.notes = vars.notes;
-    return body;
-  },
+  updateBody: (vars) => patchBody(vars, ["occurred_at", "milk_source", "amount_ml", "notes"]),
 });
 
 export const useBottleFeeds = bottle.useList;
@@ -346,13 +340,7 @@ const diaper = defineEventKind<Diaper, CreateDiaperVars, UpdateDiaperVars>({
     notes: editedText(vars.notes, existing?.notes),
     ...updatedPhoto(vars, existing),
   }),
-  updateBody: (vars) => {
-    const body: Record<string, unknown> = {};
-    if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
-    if (vars.type !== undefined) body.type = vars.type;
-    if (vars.notes !== undefined) body.notes = vars.notes;
-    return { ...body, ...updatePhotoBody(vars) };
-  },
+  updateBody: (vars) => ({ ...patchBody(vars, ["occurred_at", "type", "notes"]), ...updatePhotoBody(vars) }),
 });
 
 export const useDiapers = diaper.useList;
@@ -490,12 +478,7 @@ const note = defineEventKind<Note, CreateNoteVars, UpdateNoteVars>({
     body: vars.body ?? existing?.body ?? "",
     ...updatedPhoto(vars, existing),
   }),
-  updateBody: (vars) => {
-    const body: Record<string, unknown> = {};
-    if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
-    if (vars.body !== undefined) body.body = vars.body;
-    return { ...body, ...updatePhotoBody(vars) };
-  },
+  updateBody: (vars) => ({ ...patchBody(vars, ["occurred_at", "body"]), ...updatePhotoBody(vars) }),
 });
 
 export const useNotes = note.useList;
@@ -549,14 +532,7 @@ const pumping = defineEventKind<Pumping, CreatePumpingVars, UpdatePumpingVars>({
     duration_seconds: vars.duration_seconds ?? existing?.duration_seconds ?? null,
     notes: editedText(vars.notes, existing?.notes),
   }),
-  updateBody: (vars) => {
-    const body: Record<string, unknown> = {};
-    if (vars.occurred_at !== undefined) body.occurred_at = vars.occurred_at;
-    if (vars.amount_ml !== undefined) body.amount_ml = vars.amount_ml;
-    if (vars.duration_seconds !== undefined) body.duration_seconds = vars.duration_seconds;
-    if (vars.notes !== undefined) body.notes = vars.notes;
-    return body;
-  },
+  updateBody: (vars) => patchBody(vars, ["occurred_at", "amount_ml", "duration_seconds", "notes"]),
 });
 
 export const usePumpings = pumping.useList;
@@ -660,18 +636,17 @@ const nursing = defineEventKind<Nursing, CreateNursingVars, UpdateNursingVars, E
     right_duration_s: vars.right_duration_s ?? existing?.right_duration_s ?? 0,
     notes: editedText(vars.notes, existing?.notes),
   }),
-  updateBody: (vars) => {
-    const body: Record<string, unknown> = {};
-    if (vars.started_at !== undefined) body.started_at = vars.started_at;
-    if (vars.ended_at !== undefined) body.ended_at = vars.ended_at;
-    if (vars.starting_breast !== undefined) body.starting_breast = vars.starting_breast;
-    if (vars.clear_starting_breast) body.clear_starting_breast = true;
-    if (vars.nursing_side !== undefined) body.nursing_side = vars.nursing_side;
-    if (vars.left_duration_s !== undefined) body.left_duration_s = vars.left_duration_s;
-    if (vars.right_duration_s !== undefined) body.right_duration_s = vars.right_duration_s;
-    if (vars.notes !== undefined) body.notes = vars.notes;
-    return body;
-  },
+  updateBody: (vars) =>
+    patchBody(vars, [
+      "started_at",
+      "ended_at",
+      "starting_breast",
+      "clear_starting_breast",
+      "nursing_side",
+      "left_duration_s",
+      "right_duration_s",
+      "notes",
+    ]),
 });
 
 export const useNursings = nursing.useList;
@@ -755,16 +730,15 @@ const sleep = defineEventKind<Sleep, CreateSleepVars, UpdateSleepVars, EndSleepV
     location: editedText(vars.location, existing?.location),
     notes: editedText(vars.notes, existing?.notes),
   }),
-  updateBody: (vars) => {
-    const body: Record<string, unknown> = {};
-    if (vars.started_at !== undefined) body.started_at = vars.started_at;
-    if (vars.ended_at !== undefined) body.ended_at = vars.ended_at;
-    if (vars.sleep_type !== undefined) body.sleep_type = vars.sleep_type;
-    if (vars.clear_sleep_type) body.clear_sleep_type = true;
-    if (vars.location !== undefined) body.location = vars.location;
-    if (vars.notes !== undefined) body.notes = vars.notes;
-    return body;
-  },
+  updateBody: (vars) =>
+    patchBody(vars, [
+      "started_at",
+      "ended_at",
+      "sleep_type",
+      "clear_sleep_type",
+      "location",
+      "notes",
+    ]),
 });
 
 export const useSleeps = sleep.useList;
@@ -832,18 +806,17 @@ const growth = defineEventKind<Growth, CreateGrowthVars, UpdateGrowthVars>({
       : (vars.head_circumference_cm ?? existing?.head_circumference_cm ?? null),
     notes: editedText(vars.notes, existing?.notes),
   }),
-  updateBody: (vars) => {
-    const body: Record<string, unknown> = {};
-    if (vars.measured_at !== undefined) body.measured_at = vars.measured_at;
-    if (vars.weight_g !== undefined) body.weight_g = vars.weight_g;
-    if (vars.clear_weight_g) body.clear_weight_g = true;
-    if (vars.height_cm !== undefined) body.height_cm = vars.height_cm;
-    if (vars.clear_height_cm) body.clear_height_cm = true;
-    if (vars.head_circumference_cm !== undefined) body.head_circumference_cm = vars.head_circumference_cm;
-    if (vars.clear_head_circumference_cm) body.clear_head_circumference_cm = true;
-    if (vars.notes !== undefined) body.notes = vars.notes;
-    return body;
-  },
+  updateBody: (vars) =>
+    patchBody(vars, [
+      "measured_at",
+      "weight_g",
+      "clear_weight_g",
+      "height_cm",
+      "clear_height_cm",
+      "head_circumference_cm",
+      "clear_head_circumference_cm",
+      "notes",
+    ]),
 });
 
 export const useGrowths = growth.useList;

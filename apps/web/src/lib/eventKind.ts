@@ -299,6 +299,21 @@ export interface EventKindDescriptor<
   open?: OpenSessionDescriptor<Row & OpenRow, EndVars>;
 }
 
+// Body for a PATCH, keys emitted in the order listed. A plain key is copied
+// when it is not undefined; a `clear_*` key is a flag sent as `true` when set.
+export function patchBody<V extends object>(
+  vars: V,
+  keys: ReadonlyArray<keyof V & string>,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const k of keys) {
+    if (k.startsWith("clear_") ? vars[k] : vars[k] !== undefined) {
+      body[k] = k.startsWith("clear_") ? true : vars[k];
+    }
+  }
+  return body;
+}
+
 export function defineEventKind<
   Row extends EventRow & { ended_at?: string | null },
   CreateVars extends { babyId: string },
