@@ -10,8 +10,12 @@ test("session survives a reload and a new tab", async ({ page, context, baseURL 
   // Separate request context: its cookie jar is not the page's, so the page
   // starts logged out and must sign in through the real login screen.
   const api = await playwrightRequest.newContext({ baseURL });
-  const caregiver = await createCaregiver(api);
-  await api.dispose();
+  let caregiver;
+  try {
+    caregiver = await createCaregiver(api);
+  } finally {
+    await api.dispose();
+  }
 
   await page.goto("/");
   await page.getByLabel("Email").fill(caregiver.email);

@@ -1,10 +1,12 @@
+import { randomUUID } from "node:crypto";
+
 import { createCaregiver, expect, test } from "./fixtures";
 import { seedEvents } from "./seed";
 
 // Journey 5: seeded data renders on Charts, History, Growth and Settings.
 test("seeded data renders on the review screens", async ({ page, context }) => {
   const dob = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
-  const householdName = `Nest ${Date.now()}`;
+  const householdName = `Nest ${randomUUID()}`;
   const caregiver = await createCaregiver(context.request, { dateOfBirth: dob, householdName });
   const seeded = await seedEvents(context.request, caregiver);
 
