@@ -30,10 +30,15 @@ func (h *Handler[T]) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ins.Open && !h.spec.Open {
+		panic("eventstore: " + h.spec.Table + ": Insert.Open on a kind without Spec.Open")
+	}
+
 	var photo decodedPhoto
-	if h.spec.Photo && ins.Photo != nil {
+	if h.spec.Photo {
+		in := c.Body.(photoCarrier).photoIn()
 		var p *Problem
-		photo, p = decodePhoto(ins.Photo.Photo, ins.Photo.PhotoMime)
+		photo, p = decodePhoto(in.Photo, in.PhotoMime)
 		if p != nil {
 			p.write(w)
 			return
@@ -50,7 +55,7 @@ func (h *Handler[T]) create(w http.ResponseWriter, r *http.Request) {
 	// would-be row's id. There is a narrow TOCTOU window between two
 	// concurrent starters; a partial unique index would break outbox replay
 	// idempotency, so the narrow race is the accepted trade.
-	if h.spec.Open && ins.Open {
+	if ins.Open {
 		var existing uuid.UUID
 		err := h.store.Pool.QueryRow(r.Context(), `
 			SELECT id FROM `+h.spec.Table+`
@@ -179,7 +184,8 @@ func (h *Handler[T]) patch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.decodeBody(w, r, p.Body()) {
+	body := p.Body()
+	if !h.decodeBody(w, r, body) {
 		return
 	}
 	u, prob := p.Build()
@@ -190,7 +196,8 @@ func (h *Handler[T]) patch(w http.ResponseWriter, r *http.Request) {
 
 	args := append([]any{id}, u.Args...)
 	set := u.Set
-	if h.spec.Photo && u.Photo != nil {
+	if h.spec.Photo {
+		in := body.(photoCarrier).photoIn()
 		// Photo PATCH semantics:
 		//   - omitted              → leave columns alone
 		//   - "" (empty string)    → clear photo + photo_mime
@@ -200,12 +207,12 @@ func (h *Handler[T]) patch(w http.ResponseWriter, r *http.Request) {
 			clear bool
 			photo decodedPhoto
 		)
-		if u.Photo.Photo != nil {
-			if *u.Photo.Photo == "" {
+		if in.Photo != nil {
+			if *in.Photo == "" {
 				clear = true
 			} else {
 				var pp *Problem
-				photo, pp = decodePhoto(u.Photo.Photo, u.Photo.PhotoMime)
+				photo, pp = decodePhoto(in.Photo, in.PhotoMime)
 				if pp != nil {
 					pp.write(w)
 					return

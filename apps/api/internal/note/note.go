@@ -66,9 +66,8 @@ var spec = eventstore.Spec[Note]{
 				return eventstore.Insert{}, eventstore.Invalid("body must not be empty")
 			}
 			return eventstore.Insert{
-				ID:    req.ID,
-				Args:  []any{req.OccurredAt, body},
-				Photo: &req.PhotoIn,
+				ID:   req.ID,
+				Args: []any{req.OccurredAt, body},
 			}, nil
 		})
 	},
@@ -86,7 +85,7 @@ var spec = eventstore.Spec[Note]{
 			set := eventstore.NewSet(2).
 				Coalesce("occurred_at", req.OccurredAt).
 				Optional("body", "", bodyPresent, bodyValue)
-			return eventstore.Update{Set: set.SQL(), Args: set.Args(), Photo: &req.PhotoIn}, nil
+			return eventstore.Update{Set: set.SQL(), Args: set.Args()}, nil
 		})
 	},
 }

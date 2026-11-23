@@ -66,7 +66,7 @@ never build a separate router. `router.go` carries an import-cycle note:
   `httpx.DecodeJSON` uses `DisallowUnknownFields`, so any field the PATCH body
   doesn't declare (including `source` and `id`) is a 400 `bad_request`. For
   nullable text like `notes`, follow the "present-flag + NULLIF(value,'')"
-  convention (`eventstore.Text`); Go's JSON decoder can't tell "absent" from
+  convention (`eventstore.Set.Text`); Go's JSON decoder can't tell "absent" from
   "explicit null" on a `*string`.
 - **Request bodies are capped** at 3 MiB for every kind (413
   `payload_too_large`).

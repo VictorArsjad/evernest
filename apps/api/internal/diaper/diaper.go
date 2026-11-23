@@ -59,9 +59,8 @@ var spec = eventstore.Spec[Diaper]{
 	NewCreate: func() eventstore.Create {
 		return eventstore.CreateOf(func(req *createReq) (eventstore.Insert, *eventstore.Problem) {
 			return eventstore.Insert{
-				ID:    req.ID,
-				Args:  []any{req.OccurredAt, req.Type, req.Notes},
-				Photo: &req.PhotoIn,
+				ID:   req.ID,
+				Args: []any{req.OccurredAt, req.Type, req.Notes},
 			}, nil
 		})
 	},
@@ -72,7 +71,7 @@ var spec = eventstore.Spec[Diaper]{
 				Coalesce("occurred_at", req.OccurredAt).
 				Coalesce("type", req.Type).
 				Text("notes", req.Notes)
-			return eventstore.Update{Set: set.SQL(), Args: set.Args(), Photo: &req.PhotoIn}, nil
+			return eventstore.Update{Set: set.SQL(), Args: set.Args()}, nil
 		})
 	},
 }

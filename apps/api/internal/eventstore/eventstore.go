@@ -19,6 +19,8 @@ package eventstore
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -52,10 +54,13 @@ type Spec[T any] struct {
 	InsertCols string
 
 	// Photo enables the inline photo pipeline: the photo/photo_mime columns,
-	// the GET .../photo route and photo handling on create and PATCH.
+	// the GET .../photo route and photo handling on create and PATCH. The
+	// create and PATCH request structs must embed PhotoIn (and non-Photo
+	// kinds must not); New panics otherwise.
 	Photo bool
 	// Open marks start-now/end-later kinds: the table has started_at and
 	// ended_at, at most one open row per baby, and a GET .../open route.
+	// Only Open kinds may return Insert.Open.
 	Open bool
 
 	Scan      func(Scanner) (T, error)
@@ -91,6 +96,16 @@ type PhotoIn struct {
 	PhotoMime *string `json:"photo_mime,omitempty"`
 }
 
+// photoCarrier is satisfied by every request struct that embeds PhotoIn.
+type photoCarrier interface{ photoIn() *PhotoIn }
+
+func (p *PhotoIn) photoIn() *PhotoIn { return p }
+
+func carriesPhoto(body any) bool {
+	_, ok := body.(photoCarrier)
+	return ok
+}
+
 // Create is one create request: Body is decoded and struct-validated, then
 // Build applies the kind's extra rules.
 type Create struct {
@@ -100,10 +115,9 @@ type Create struct {
 
 // Insert is what a kind returns for a validated create request.
 type Insert struct {
-	ID    *uuid.UUID // client-supplied id; nil/zero → server generates a v7
-	Args  []any      // values for Spec.InsertCols, in order
-	Photo *PhotoIn   // Photo kinds only
-	Open  bool       // the new row is an open session
+	ID   *uuid.UUID // client-supplied id; nil/zero → server generates a v7
+	Args []any      // values for Spec.InsertCols, in order
+	Open bool       // the new row is an open session (Open kinds only)
 }
 
 // CreateOf adapts a typed build func to a Create. The request struct is
@@ -130,7 +144,6 @@ type Update struct {
 	// Where is an extra guard appended after "WHERE id = $1", e.g.
 	// "AND ended_at IS NOT NULL".
 	Where string
-	Photo *PhotoIn // Photo kinds only
 	// NoRows is returned when the guarded UPDATE matched nothing. Nil means
 	// an internal error, as for a row deleted mid-flight.
 	NoRows *Problem
@@ -155,7 +168,21 @@ type Handler[T any] struct {
 	v      *validator.Validate
 }
 
+// New panics when the Spec is internally inconsistent (a programmer error
+// caught at startup): Photo disagreeing with the request structs, or Open
+// without started_at/ended_at insert columns.
 func New[T any](spec Spec[T], st *store.Store, logger *slog.Logger) *Handler[T] {
+	if got := carriesPhoto(spec.NewCreate().Body); got != spec.Photo {
+		panic("eventstore: " + spec.Table + ": Spec.Photo=" + strconv.FormatBool(spec.Photo) +
+			" but create request embeds PhotoIn=" + strconv.FormatBool(got))
+	}
+	if got := carriesPhoto(spec.NewPatch().Body()); got != spec.Photo {
+		panic("eventstore: " + spec.Table + ": Spec.Photo=" + strconv.FormatBool(spec.Photo) +
+			" but PATCH request embeds PhotoIn=" + strconv.FormatBool(got))
+	}
+	if spec.Open && (!strings.Contains(spec.InsertCols, "started_at") || !strings.Contains(spec.InsertCols, "ended_at")) {
+		panic("eventstore: " + spec.Table + ": Spec.Open requires started_at and ended_at in InsertCols")
+	}
 	return &Handler[T]{
 		spec:   spec,
 		store:  st,

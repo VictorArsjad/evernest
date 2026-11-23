@@ -87,9 +87,8 @@ var spec = eventstore.Spec[SolidMeal]{
 				}
 			}
 			return eventstore.Insert{
-				ID:    req.ID,
-				Args:  []any{req.OccurredAt, foods, req.Reaction, req.AmountG, req.Notes},
-				Photo: &req.PhotoIn,
+				ID:   req.ID,
+				Args: []any{req.OccurredAt, foods, req.Reaction, req.AmountG, req.Notes},
 			}, nil
 		})
 	},
@@ -116,7 +115,7 @@ var spec = eventstore.Spec[SolidMeal]{
 				Text("reaction", req.Reaction).
 				Clearable("amount_g", "numeric", req.ClearAmountG, req.AmountG).
 				Text("notes", req.Notes)
-			return eventstore.Update{Set: set.SQL(), Args: set.Args(), Photo: &req.PhotoIn}, nil
+			return eventstore.Update{Set: set.SQL(), Args: set.Args()}, nil
 		})
 	},
 }
