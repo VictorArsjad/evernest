@@ -51,6 +51,8 @@ export function usePhotoField(o: PhotoFieldOptions) {
     o.isEditMode && !!o.existingHasPhoto && !existingCleared && !pendingPhoto,
   );
 
+  // The `&& !existingCleared` guard is load-bearing: a disabled query keeps its
+  // cached data, so without it a removed photo stays on screen (diaper/note bug).
   // After Remove (or while a replacement is pending) the saved image is hidden.
   const previewUrl =
     pendingPhoto?.previewUrl ?? (existingPhotoUrl && !existingCleared ? existingPhotoUrl : null);
