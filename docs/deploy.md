@@ -1,5 +1,8 @@
 # Deploy pipeline (CP7)
 
+> Setting up your own instance? Follow [self-host.md](./self-host.md). This
+> file is the maintainer's CI/Portainer runbook.
+
 This is the operational runbook for the Evernest deploy stack. The design
 notes (why same-origin SPA vs. a separate FE host, why Tailscale vs. Caddy,
 public-access flip plan) live alongside the rest of the engineering plans;

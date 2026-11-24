@@ -4,114 +4,165 @@
 
 # Evernest
 
-A baby tracker for households — feedings, sleep, diapers, growth, and charts,
-shared across caregivers.
+A shared baby tracker for households: feedings, sleep, diapers, and growth, with charts.
 
 <p align="center">
-  <img src="docs/screenshots/today.png" alt="Today hub" width="280" />
+  <img src="docs/screenshots/today.png" alt="Today screen" width="280" />
 </p>
 
 <p align="center"><em>One glance at the day. Tap a tile to log.</em></p>
+
+## Why
+
+In the newborn weeks, every caregiver asks the same question: when did the baby
+last eat? Evernest gives the whole household one log on their phones. Anyone can
+record a feed, a diaper, or a nap in a tap, and everyone else sees it right
+away. You host it yourself, so your baby's data stays on your own server.
+
+## Get it
+
+There is no app store build and no public hosted instance. Evernest runs on a
+server you control (a home server or a small VPS) and you reach it from your
+phone over [Tailscale](https://tailscale.com).
+
+1. Set up the server. Follow [docs/self-host.md](docs/self-host.md).
+2. Open your Evernest address in the phone's browser and create an account.
+3. Install it to the home screen. On iOS, tap **Share → Add to Home Screen** in
+   Safari. On Android, tap **Install app** in Chrome.
+4. Invite the other caregivers from **Settings** with a link.
 
 ## Features
 
 ### Today
 
-<p align="center">
-  <img src="docs/screenshots/today-banner.png" alt="Today banner with two-row daily totals" width="420" />
-</p>
-
-<p align="center"><em>Busy day? Daily totals wrap to two rows instead of crowding one line.</em></p>
-
-See when baby last ate or had a diaper change, today's totals, and a recent
-activity list. Log bottle, nursing, pumping, diaper, growth, sleep, or a note
+See when the baby last ate or had a diaper change, today's totals, and the
+latest entries. Log a bottle, nursing, pumping, diaper, solids, growth, sleep, or a note
 in one tap.
 
-### Charts & History
-
 <p align="center">
-  <img src="docs/screenshots/charts.png" alt="Charts and History" width="240" />
+  <img src="docs/screenshots/today-banner.png" alt="Today banner with daily totals on two rows" width="420" />
 </p>
 
-Daily trends for bottle, nursing, pumping, diapers, and sleep over 7 / 14 / 30
-days, with a day-by-day history of every entry underneath.
+### Charts and history
+
+Daily trends for bottle, nursing, pumping, diapers, and sleep over 7, 14, or 30
+days, with every entry listed day by day underneath.
+
+<p align="center">
+  <img src="docs/screenshots/charts.png" alt="Charts and history" width="240" />
+</p>
 
 ### Growth
+
+Weight, length, and head circumference plotted against the WHO Child Growth
+Standards percentiles for your baby's age and sex.
 
 <p align="center">
   <img src="docs/screenshots/growth.png" alt="Growth percentiles" width="240" />
 </p>
 
-Weight, length, and head circumference plotted against WHO Child Growth
-Standards percentiles for your baby's age and sex.
+### Works offline
 
-### Log anything
+Quick forms for every kind of entry. With no signal, entries save on the phone
+and sync when you are back online.
 
 <p align="center">
-  <img src="docs/screenshots/log.png" alt="Log bottle feed" width="240" />
+  <img src="docs/screenshots/log.png" alt="Log a bottle feed" width="240" />
 </p>
 
-Quick forms for every event kind. Works offline — entries sync when you're
-back online. Install as a PWA on iOS or Android.
+### Household
 
-### Household & settings
+Invite co-caregivers with a link, track more than one baby, and pick display
+units (ml or oz, cm or in, kg or lb).
 
 <p align="center">
   <img src="docs/screenshots/settings.png" alt="Settings" width="240" />
 </p>
 
-Invite co-caregivers with a link, track more than one baby, and pick display
-units (ml/oz, cm/in, kg/lb).
+### Switching from BabyPlus
 
-## Quick start
+Bring your history with you. Export from BabyPlus and import the file; see
+[docs/import-babyplus.md](docs/import-babyplus.md).
+
+## System requirements
+
+- **Phone:** iOS Safari or Android Chrome. Any modern desktop browser works too.
+- **Server:** an x86-64 Linux host with Docker and Docker Compose.
+- **Network:** a free Tailscale account. Tailscale supplies the HTTPS address
+  the app needs to install and keep you signed in.
+
+## Privacy and data
+
+- **What is stored:** your account, household, babies, and every entry, in a
+  Postgres database on your server. The phone keeps a queue of unsynced entries
+  until the server confirms them.
+- **What leaves your server:** nothing, unless you turn on these optional
+  settings:
+  - Off-site backups. Nightly database dumps are kept on the server (7 daily,
+    4 weekly, 6 monthly). If you set `RCLONE_REMOTE`, a copy is encrypted with
+    `rclone crypt` and uploaded to your Google Drive.
+  - A health-check ping after each backup, if you set `HEALTHCHECK_URL`.
+- **Who can reach it:** only devices on your tailnet. The database has no open
+  port.
+- **Export and delete:** you can delete single entries in the app. There is no
+  in-app export or account deletion yet. The full data is in your database:
+  `make db-backup` writes a Postgres dump.
+- **Update and remove:** see [Update](docs/self-host.md#update) and
+  [Remove](docs/self-host.md#remove) in the hosting guide.
+
+## Support
+
+Report bugs and ask questions in
+[GitHub issues](https://github.com/VictorArsjad/evernest/issues).
+
+## Contributing
+
+**Stack:** Go API (`chi`, `pgx`) with Postgres 16, and a Vite + React +
+TypeScript PWA. In production the API binary serves the web app from the same
+origin.
+
+**Prerequisites:** Docker, Go 1.26, Node 22 (see `.nvmrc`), and the
+[golang-migrate](https://github.com/golang-migrate/migrate) CLI.
 
 ```bash
-make env-init      # copy .env.example -> .env
-make db            # start postgres in docker
+make env-init      # copy .env.example to .env
+make db            # start Postgres in Docker
 make migrate-up    # apply schema migrations
 make web-install   # install web dependencies
 ```
 
-Two terminals:
+Then, in two terminals:
 
 ```bash
 make api-run       # API on :8080
-make web-dev       # Vite on :5173 (proxies /v1 to the API)
+make web-dev       # web on :5173, proxies /v1 to the API
 ```
 
-Open <http://localhost:5173>, create an account, set up your household + baby,
+Open <http://localhost:5173>, create an account, set up a household and a baby,
 and log a bottle feed.
 
+Before you open a PR, run the same checks as CI:
+
 ```bash
-make lint && make api-test && make web-build   # smoke before a PR
+make lint && make api-test && make web-build
 ```
 
-| Task | Command |
-| --- | --- |
-| Start db | `make db` |
-| Run API | `make api-run` |
-| Run web | `make web-dev` |
-| Lint / test | `make lint` / `make test` |
-| New migration | `make migrate-new name=add_xyz` |
-| Import BabyPlus | `make import-babyplus FILE=… HOUSEHOLD=…` |
+Run `make help` for every target (migrations, imports, backups, images).
 
-Run `make help` for the full target list.
-
-## Repo layout
-
-```
+```text
 apps/
-  api/      Go backend
-  web/      Vite + React + TS PWA
-infra/     docker compose + Dockerfiles
-docs/      OpenAPI, schema, deploy, screenshots
+  api/     Go backend, migrations, and the BabyPlus importer
+  web/     Vite + React PWA
+infra/     Docker Compose files and Dockerfiles
+docs/      API contract, schema, deploy runbook, screenshots
 ```
 
-## See also
+Further reading:
 
-- [AGENTS.md](AGENTS.md) — contributor briefing
-- [docs/deploy.md](docs/deploy.md) — deploy + backups
-- [docs/schema.md](docs/schema.md) — database schema
-- [docs/api.openapi.yaml](docs/api.openapi.yaml) — HTTP contract
-- [docs/import-babyplus.md](docs/import-babyplus.md) — BabyPlus import
-- [apps/web/public/icons/README.md](apps/web/public/icons/README.md) — PWA icons
+- [AGENTS.md](AGENTS.md): architecture, invariants, and where to start for common changes
+- [docs/schema.md](docs/schema.md): database schema
+- [docs/api.openapi.yaml](docs/api.openapi.yaml): HTTP contract
+
+## License
+
+[MIT](LICENSE)
