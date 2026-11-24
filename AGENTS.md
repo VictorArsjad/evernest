@@ -75,6 +75,9 @@ cd apps/e2e && npx playwright show-report                               # last H
 - Server runs on `:8090` against the dedicated `evernest_e2e` database (never the
   dev `evernest` db). `E2E_FRESH_DB=1 make e2e` drops and recreates it.
   A running server on `:8090` is reused locally; rebuild (`make e2e`) after app changes.
+  Parallel worktrees need a unique port and DB each, e.g.
+  `E2E_PORT=8091 E2E_DB_NAME=evernest_e2e_<suffix> make e2e` (locally the DB name must be
+  `evernest_e2e` or `evernest_e2e_<suffix>`).
 - CI: `e2e (chromium|firefox|webkit)` matrix jobs in `ci.yml`; on failure the HTML
   report + traces are uploaded as `playwright-report-<browser>`.
 - **Seam rules:** assert only through the UI (role/label/text locators; `data-testid`
@@ -88,23 +91,12 @@ cd apps/e2e && npx playwright show-report                               # last H
 - **Bugs found by E2E:** real app bugs may need app code changes, but those go in a
   separate `fix(web)` commit and its own PR off `master`, not in the E2E PR. The
   `data-testid`-only rule for app changes in E2E PRs otherwise stands.
-- **Setup helpers** (`apps/e2e/tests/fixtures.ts`): import `test, expect` from
-  `./fixtures` instead of `@playwright/test`. The `caregiver` fixture
-  (`{ email, password, householdId, babyId, babyName }`) registers a unique user,
-  creates a household and a baby through the public API using `context.request`, so
-  the refresh cookie lands in the page's context and `page.goto("/")` boots logged in
-  on Today (baby name is the `<h1>`). `createCaregiver(request, { babyName?,
-  householdName? })` does the same on any `APIRequestContext`; pass a separate
-  `playwrightRequest.newContext()` to get a caregiver with no session in the page
-  (e.g. to test the real login screen). See `tests/session.spec.ts`.
-- **Event seeding** (`apps/e2e/tests/seed.ts`): `seedEvents(request, caregiver)`
-  → `{ latestNote, diapers, growthWeightsG }`. Logs in with the caregiver's
-  credentials and POSTs, through the public API only, bottle feeds, diapers, sleeps,
-  nursing sessions (spread over the last ~4 days) and two growth measurements, using
-  client-generated UUID ids, canonical units (ml/cm/g) and UTC timestamps. The newest
-  bottle feed carries `latestNote` (shows in History's first day group). Growth needs a
-  date of birth: pass `createCaregiver(request, { dateOfBirth: "YYYY-MM-DD" })`. See
-  `tests/review-screens.spec.ts`.
+- **Setup helpers:** `tests/fixtures.ts` (import `test, expect` from `./fixtures`, not
+  `@playwright/test`), `tests/seed.ts`, `tests/helpers.ts`; examples in
+  `tests/session.spec.ts` and `tests/review-screens.spec.ts`. Non-obvious bits: setup
+  goes through `context.request` so the refresh cookie lands in the page's context and
+  `page.goto("/")` boots logged in; use a separate `playwrightRequest.newContext()` for a
+  caregiver with no session; Growth seeding needs a date of birth.
 - **E2E NEVER runs against production.** The suite creates users and data; it only
   targets the local `localhost:8090` server. Never point `baseURL` at the tailnet URL.
 

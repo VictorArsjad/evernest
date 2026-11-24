@@ -23,8 +23,13 @@ API_IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 
 # Pinned tool versions. KEEP IN SYNC with .github/workflows/ci.yml — both
 # local `make api-lint` and CI must run the same golangci-lint binary or
-# "passes locally, fails in CI" is back on the menu.
+# "passes locally, fails in CI" is back on the menu. Built from source with the
+# local Go with a newer pinned golang.org/x/tools: the prebuilt release binary crashes
+# when local Go is newer than the Go it was built with, and the x/tools pinned by
+# golangci-lint cannot read a newer Go's export data.
 GOLANGCI_LINT_VERSION ?= v2.12.2
+# Must be able to read export data of the newest local Go; bump with Go upgrades.
+GOLANGCI_XTOOLS_VERSION ?= v0.53.0
 TOOLS_BIN := apps/api/.tools/bin
 GOLANGCI_LINT := $(TOOLS_BIN)/golangci-lint
 
@@ -68,8 +73,10 @@ api-test: ## Run Go tests with race detector
 $(GOLANGCI_LINT):
 	@echo "==> installing golangci-lint $(GOLANGCI_LINT_VERSION) into $(TOOLS_BIN)"
 	@mkdir -p $(TOOLS_BIN)
-	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/$(GOLANGCI_LINT_VERSION)/install.sh \
-		| sh -s -- -b $(TOOLS_BIN) $(GOLANGCI_LINT_VERSION)
+	@set -e; tmp=$$(mktemp -d); trap 'rm -rf $$tmp' EXIT; cd $$tmp; \
+		go mod init tools >/dev/null 2>&1; \
+		go get github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) golang.org/x/tools@$(GOLANGCI_XTOOLS_VERSION); \
+		go build -o $(abspath $(GOLANGCI_LINT)) github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 
 api-lint: $(GOLANGCI_LINT) ## golangci-lint (pinned version, identical to CI)
 	@INSTALLED=$$($(GOLANGCI_LINT) version --short 2>/dev/null || echo missing); \
