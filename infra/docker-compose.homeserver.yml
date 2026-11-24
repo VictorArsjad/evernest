@@ -2,12 +2,12 @@
 #
 # Pulls the published API image from GHCR (runs migrations on boot), Postgres
 # for storage, and a Tailscale sidecar for HTTPS ingress on your tailnet.
-# The web app is served separately (e.g. GitHub Pages); point CORS / invite
-# links at that origin in .env.
+# The API also serves the web app, so CORS / invite links point at the same
+# ts.net origin in .env.
 #
-# Prerequisites:
+# Full walkthrough: docs/self-host.md. Short form:
 #   1. Copy infra/.env.homeserver.example → .env (repo root or alongside this file)
-#   2. docker login ghcr.io   # read:packages PAT if the image is private
+#   2. touch infra/secrets/rclone.conf   # unless offsite backups are set up
 #   3. docker compose -f infra/docker-compose.homeserver.yml --env-file .env up -d
 #
 # Smoke-check (from any tailnet device):
